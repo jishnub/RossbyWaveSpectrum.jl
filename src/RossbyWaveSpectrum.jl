@@ -297,15 +297,16 @@ function twoΩcrossv(nr, nℓ, m, operators = basic_operators(nr, nℓ))
         ℓℓp1 = ℓ*(ℓ+1);
         @. B = D2Dr2 - ℓ*(ℓ+1) * onebyr2_cheby
         B2 = Q' * B * Q;
+        F = lu!(B2)
         if ℓ-1 in ℓs
             @. Cℓm1 = DDr - (ℓ-1)*ℓ * onebyr_cheby
             @. Cℓm1 = -2(α⁺ℓm(ℓ-1,m)*(ℓ-1)/(ℓ+1) * DDr_minus_2byr + γ⁺ℓm(ℓ-1, m)/ℓℓp1 * Cℓm1)
-            BinvCℓm1 .= Q * (B2 \ (Q' * Cℓm1));
+            BinvCℓm1 .= Q * (F \ (Q' * Cℓm1));
         end
         if ℓ+1 in ℓs
             @. Cℓp1 = DDr - (ℓ+1)*(ℓ+2) * onebyr_cheby
             @. Cℓp1 = -2(α⁻ℓm(ℓ+1,m)*(ℓ+2)/ℓ * DDr_minus_2byr + γ⁻ℓm(ℓ+1, m)/ℓℓp1 * Cℓp1)
-            BinvCℓp1 = Q * (B2 \ (Q' * Cℓp1));
+            BinvCℓp1 .= Q * (F \ (Q' * Cℓp1));
         end
 
         ABℓ′top = (ℓ - minimum(m)) * nchebyr + 1;
