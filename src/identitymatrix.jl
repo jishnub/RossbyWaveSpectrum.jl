@@ -3,6 +3,8 @@ Base.size(r::IdentityMatrix) = (r.n, r.n)
 Base.axes(r::IdentityMatrix) = (Base.OneTo(r.n),Base.OneTo(r.n))
 Base.length(r::IdentityMatrix) = r.n^2
 Base.getindex(r::IdentityMatrix, i::Int, j::Int) = i == j
+Base.:(==)(A::IdentityMatrix, I::UniformScaling) = true
+Base.:(==)(I::UniformScaling, A::IdentityMatrix) = true
 Base.inv(I::IdentityMatrix) = I
 Base.one(I::IdentityMatrix) = I
 Base.zero(I::IdentityMatrix) = Diagonal(Zeros(I.n))
@@ -31,29 +33,29 @@ Base.:(*)(x::Number, I::IdentityMatrix) = x * Eye(I.n)
 Base.:(*)(I::IdentityMatrix, x::Number) = Eye(I.n) * x
 Base.:(/)(I::IdentityMatrix, x::Number) = Eye(I.n) / x
 
-function Base.:(*)(I::IdentityMatrix, V::AbstractVector)
-    if I.n != length(V)
-        throw(DimensionMismatch("second dimension of I, $(I.n), does not match length of V, $(length(V))"))
-    end
-    return V
+function size_check(A, B)
+    @noinline throw_dimerr(sA1, sB1) = throw(DimensionMismatch("second dimension of A, $sA1, does not match first dimension of B, $sB1"))
+    size(A, 2) == size(B, 1) || throw_dimerr(size(A, 2), size(B, 1))
+    return nothing
 end
 
-function Base.:(*)(I::IdentityMatrix, M::AbstractMatrix)
-    sizeB1 = size(M, 1)
-    if I.n != sizeB1
-        throw(DimensionMismatch("second dimension of I, $(I.n), does not match first dimension of M, $sizeB1"))
-    end
-    M
-end
-function Base.:(*)(M::AbstractMatrix, I::IdentityMatrix)
-    sizeM2 = size(M, 2)
-    if I.n != sizeM2
-        throw(DimensionMismatch("second dimension of M, $sizeM2, does not match first dimension of I, $(I.n)"))
-    end
-    M
+Base.:*(I::IdentityMatrix, V::AbstractVector) = (size_check(I, V); V)
+Base.:*(I::IdentityMatrix, M::AbstractMatrix) = (size_check(I, M); M)
+Base.:*(M::AbstractMatrix, I::IdentityMatrix) = (size_check(M, I); M)
+Base.:*(I::IdentityMatrix, M::Diagonal) = (size_check(I, M); M)
+Base.:*(M::Diagonal, I::IdentityMatrix) = (size_check(M, I); M)
+
+function LinearAlgebra.kron(I::IdentityMatrix, D::Diagonal)
+    d = diag(D)
+    Diagonal(repeat(d, I.n))
 end
 
-function Base.broadcasted(S::Broadcast.DefaultArrayStyle{2}, ::typeof(*), I::IdentityMatrix, J::IdentityMatrix)
+function LinearAlgebra.kron(D::Diagonal, I::IdentityMatrix)
+    d = diag(D)
+    Diagonal(kron(d, Ones(I.n)))
+end
+
+function Base.broadcasted(::Broadcast.DefaultArrayStyle{2}, ::typeof(*), I::IdentityMatrix, J::IdentityMatrix)
     I.n == J.n || throw(DimensionMismatch("dimensions of I, $(size(I)), are incompatible with that of J, $(size(J))"))
     I
 end
@@ -62,13 +64,13 @@ Base.broadcasted(::Broadcast.DefaultArrayStyle{2}, ::typeof(*), I::IdentityMatri
 Base.broadcasted(::Broadcast.DefaultArrayStyle{2}, ::typeof(^), I::IdentityMatrix, x::Number) = I
 Base.broadcasted(::Broadcast.DefaultArrayStyle{2}, ::typeof(Base.literal_pow), ::Base.RefValue, I::IdentityMatrix, x::Base.RefValue{<:Val}) = I
 
-const KroneckerProductIdentity1{R} = Kronecker.KroneckerProduct{<:Any, IdentityMatrix, R}
-const KroneckerProductIdentityDiagonal1{R} = Kronecker.KroneckerProduct{<:Any, <:Union{IdentityMatrix, Diagonal}, R}
-const KroneckerProductIdentity2{R} = Kronecker.KroneckerProduct{<:Any, R, IdentityMatrix}
-const KroneckerProductIdentityDiagonal2{R} = Kronecker.KroneckerProduct{<:Any, R, <:Union{IdentityMatrix, Diagonal}}
+const KroneckerProductIdentity1{R<:AbstractMatrix} = Kronecker.KroneckerProduct{<:Any, IdentityMatrix, R}
+const KroneckerProductIdentityDiagonal1{R<:AbstractMatrix} = Kronecker.KroneckerProduct{<:Any, <:Union{IdentityMatrix, Diagonal}, R}
+const KroneckerProductIdentity2{R<:AbstractMatrix} = Kronecker.KroneckerProduct{<:Any, R, IdentityMatrix}
+const KroneckerProductIdentityDiagonal2{R<:AbstractMatrix} = Kronecker.KroneckerProduct{<:Any, R, <:Union{IdentityMatrix, Diagonal}}
 const KroneckerProductIdentity12 = Kronecker.KroneckerProduct{<:Any, IdentityMatrix, IdentityMatrix}
 const KroneckerProductIdentityDiagonal12 = Kronecker.KroneckerProduct{<:Any, <:Union{IdentityMatrix, Diagonal}, <:Union{IdentityMatrix, Diagonal}}
-const KroneckerProductIdentity{R} = Union{KroneckerProductIdentity1{R}, KroneckerProductIdentity2{R}}
+const KroneckerProductIdentity{R<:AbstractMatrix} = Union{KroneckerProductIdentity1{R}, KroneckerProductIdentity2{R}}
 
 getnonidentity(K::KroneckerProductIdentity1) = first(getmatrices(K))
 getidentity(K::KroneckerProductIdentity1) = last(getmatrices(K))
@@ -126,6 +128,12 @@ function Base.:(*)(x::Number, K::KroneckerProductIdentity1)
     A, B = getmatrices(K)
     kronecker(A, x*B)
 end
+
+Base.:*(D::Diagonal, K::KroneckerProductIdentity{<:Diagonal}) = D * Diagonal(K)
+Base.:*(K::KroneckerProductIdentity{<:Diagonal}, D::Diagonal) = Diagonal(K) * D
+
+Base.:*(M::Matrix, K::KroneckerProductIdentity) = M * collect(K)
+Base.:*(K::KroneckerProductIdentity, M::Matrix) = collect(K) * M
 
 function Base.:(/)(K::KroneckerProductIdentity1, x::Number)
     A, B = getmatrices(K)
@@ -234,9 +242,32 @@ function LinearAlgebra.diag(K::KroneckerProductIdentity)
     kron(diag(A), diag(B))
 end
 
-function Base.:*(D::Diagonal, K::KroneckerProductIdentity)
-    D * Diagonal(diag(K))
+function Base.showarg(io::IO, K::KroneckerProductIdentity, toplevel)
+    A, B = getmatrices(K)
+    if !toplevel
+        print(io, "::")
+    end
+    print(io, nameof(typeof(K)), "(")
+    Base.showarg(io, A, false)
+    print(io, ", ")
+    Base.showarg(io, B, false)
+    print(io, ")")
 end
-function Base.:*(K::KroneckerProductIdentity, D::Diagonal)
-    Diagonal(diag(K)) * D
+
+struct OneHotVector{T} <: AbstractVector{T}
+    n :: Int
+    i :: Int
+end
+OneHotVector(n, i) = OneHotVector{Int}(n, i)
+OneHotVector(i) = OneHotVector{Int}(i, i)
+Base.size(v::OneHotVector) = (v.n,)
+Base.length(v::OneHotVector) = v.n
+Base.getindex(v::OneHotVector{T}, i::Int) where {T} = T(v.i == i)
+
+Base.getindex(I::IdentityMatrix, ::Colon, j::Int) = OneHotVector(I.n, j)
+Base.getindex(I::IdentityMatrix, j::Int, ::Colon) = OneHotVector(I.n, j)
+Base.getindex(I::IdentityMatrix, ::Colon, ::Colon) = I
+
+function Base.replace_in_print_matrix(O::OneHotVector, i::Integer, j::Integer, s::AbstractString)
+    i == O.i ? s : Base.replace_with_centered_mark(s)
 end

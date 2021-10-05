@@ -1,59 +1,28 @@
 using Test
 using LinearAlgebra
 using RossbyWaveSpectrum
-using RossbyWaveSpectrum: ForwardTransform, InverseTransform, IdentityMatrix
+using RossbyWaveSpectrum: ForwardTransform, InverseTransform, IdentityMatrix, OneHotVector
 using UnPack
 using Polynomials: ChebyshevT
 using Kronecker
+using QuadGK
+using SphericalHarmonics
+using ForwardDiff
 
-struct OneHotVector{T} <: AbstractVector{T}
-    n :: Int
-    i :: Int
-end
-OneHotVector(n, i) = OneHotVector{Int}(n, i)
-OneHotVector(i) = OneHotVector{Int}(i, i)
-Base.size(v::OneHotVector) = (v.n,)
-Base.length(v::OneHotVector) = v.n
-Base.getindex(v::OneHotVector{T}, i::Int) where {T} = T(v.i == i)
+nr = 4; nℓ = 6;
+operators = RossbyWaveSpectrum.basic_operators(nr, nℓ);
+(; coordinates) = operators;
+(; r) = coordinates;
+(; params) = operators;
+(; nchebyr, r_in, r_out, Δr) = params;
+nparams = nchebyr * nℓ;
+r_mid = (r_out + r_in)/2;
 
 @testset "chebyshev" begin
-    nr = 4; ntheta = 6;
-    @unpack nchebytheta, nchebyr, r_in, r_out, Δr = RossbyWaveSpectrum.parameters(nr, ntheta)
-    r_mid = (r_out + r_in)/2
-
     r, Tcrfwd, Tcrinv = RossbyWaveSpectrum.chebyshev_forward_inverse(nr, r_in, r_out)
-    costheta, Tcthetafwd, Tcthetainv = RossbyWaveSpectrum.chebyshev_forward_inverse(ntheta)
-    costheta2, Tcthetafwd2, Tcthetainv2 = RossbyWaveSpectrum.reverse_theta(costheta, Tcthetafwd, Tcthetainv)
-    theta = acos.(costheta)
-    sintheta = sin.(theta);
-
-    operators = RossbyWaveSpectrum.basic_operators(nr, ntheta)
-
     @testset "forward-inverse in r" begin
         @test Tcrfwd * Tcrinv ≈ Tcrinv * Tcrfwd ≈ I
         @test parent(Tcrfwd) * parent(Tcrinv) ≈ parent(Tcrinv) * parent(Tcrfwd) ≈ I
-    end
-    @testset "forward-inverse in theta" begin
-        @test Tcthetafwd * Tcthetainv ≈ Tcthetainv * Tcthetafwd ≈ I
-        @test parent(Tcthetafwd) * parent(Tcthetainv) ≈ parent(Tcthetainv) * parent(Tcthetafwd) ≈ I
-        @test Tcthetafwd2 * Tcthetainv2 ≈ Tcthetainv2 * Tcthetafwd2 ≈ I
-        @test parent(Tcthetafwd2) * parent(Tcthetainv2) ≈ parent(Tcthetainv2) * parent(Tcthetafwd2) ≈ I
-    end
-    @testset "fullinv & fullinv" begin
-        @unpack transforms = operators;
-        @unpack fullfwd, fullinv = transforms;
-        @test fullfwd * fullinv ≈ I
-        @test collect(fullfwd) * collect(fullinv) ≈ I
-        @test fullinv * fullfwd ≈ I
-        @test collect(fullinv) * collect(fullfwd) ≈ I
-
-        @testset "operators" begin
-            @unpack trig_functions = operators;
-            @unpack identities = operators;
-            @unpack Ir, Itheta = identities;
-            @unpack sintheta_mat, sintheta = trig_functions;
-            @test sintheta_mat ≈ fullfwd * kronecker(Ir, Diagonal(sintheta)) * fullinv
-        end
     end
     @testset "derivatives" begin
         ∂ = RossbyWaveSpectrum.chebyshevderiv(nr);
@@ -108,69 +77,85 @@ Base.getindex(v::OneHotVector{T}, i::Int) where {T} = T(v.i == i)
                 end
             end
         end
+    end
+end
 
-        ∂ = RossbyWaveSpectrum.chebyshevderiv(ntheta); ∂θ = ∂;
-        @testset "derivative wrt θ" begin
-            f = [0; 1; zeros(ntheta-2)] # Chebyshev coefficients of cosθ
-            @test Tcthetainv * f ≈ costheta
-            p = ChebyshevT(f)
-            for θi in LinRange(0, pi, 20)
-                @test p(cos(θi)) ≈ cos(θi) atol=1e-10 rtol=1e-10
-            end
-            ∂θf = ∂θ * f
-            @test ∂θf[1] == 1
-            @test all(x -> isapprox(x, 0, atol=1e-10), @view ∂θf[2:end])
-        end
+@testset "boundary conditions constraint" begin
 
-        @testset "laplacian" begin
-            @testset "theta component" begin
-                local n = 8
-                M = RossbyWaveSpectrum.laplacianh_theta(n)
+    M = RossbyWaveSpectrum.constraintmatrix(operators, nℓ)
 
-                @testset "n=0" begin
-                    f = OneHotVector(n, 1)
-                    Lf = M * f
-                    @test all(iszero(Lf))
-                end
+    Vrones = kron(rand(nℓ), ones(nr));
+    v_Vrones = [Vrones; rand(nparams)];
+    @test length(v_Vrones) == size(M,2)
 
-                @testset "n=1" begin
-                    f = OneHotVector(n, 2)
-                    Lf = M * f
-                    @test iszero(Lf[1])
-                    @test Lf[2] == -2
-                    @test all(iszero, @view Lf[3:end])
-                end
+    Vrflip = kron(rand(nℓ), [(-1)^n for n = 0:nr-1]);
+    v_Vrflip = [Vrflip; rand(nparams)];
+    @test length(v_Vrflip) == size(M,2)
 
-                @testset "n=2" begin
-                    f = OneHotVector(n, 3)
-                    Lf = M * f
-                    @test Lf[1] == -2
-                    @test Lf[2] == 0
-                    @test Lf[3] == -6
-                    @test all(iszero, @view Lf[4:end])
-                end
+    # ∑_n Wkn = 0
+    Wrflip = kron(rand(nℓ), [(-1)^n for n = 0:nr-1]);
+    v_Wrflip = [rand(nparams); Wrflip];
+    @test length(v_Wrflip) == size(M,2)
+    @test (M*v_Wrflip)[3] ≈ 0 atol=1e-14
 
-                @testset "n=3" begin
-                    f = OneHotVector(n, 4)
-                    Lf = M * f
-                    @test Lf[1] == 0
-                    @test Lf[2] == -6
-                    @test Lf[3] == 0
-                    @test Lf[4] == -12
-                    @test all(iszero, @view Lf[5:end])
-                end
+    # ∑_n (-1)^n * Wkn = 0
+    Wrones = kron(rand(nℓ), ones(nr));
+    v_Wrones = [rand(nparams); Wrones];
+    @test length(v_Wrones) == size(M,2)
+    @test (M*v_Wrones)[4] ≈ 0 atol=1e-14
+end
 
-                @testset "n=4" begin
-                    f = OneHotVector(n, 5)
-                    Lf = M * f
-                    @test Lf[1] == -4
-                    @test Lf[2] == 0
-                    @test Lf[3] == -8
-                    @test Lf[4] == 0
-                    @test Lf[5] == -20
-                    @test all(iszero, @view Lf[6:end])
-                end
-            end
+@testset "invert B" begin
+
+end
+
+@testset "trig matrices in Legendre basis" begin
+    m = 2;
+    M1 = RossbyWaveSpectrum.cosθ_operator(nℓ, m)
+    M2 = RossbyWaveSpectrum.sinθdθ_operator(nℓ, m)
+    M12 = M1^2
+    M22 = M2^2
+    M1M2 = M1*M2
+    Plm(θ, l, m) = SphericalHarmonics.associatedLegendre(θ, l, m, norm = SphericalHarmonics.Orthonormal())
+    sinθdθPlm(θ, l, m) = sin(θ) * ForwardDiff.derivative(θ -> Plm(θ, l, m), θ)
+    sinθdθsinθdθPlm(θ, l, m) = sin(θ) * ForwardDiff.derivative(θ-> sinθdθPlm(θ, l, m), θ)
+    rtol = 5e-2
+    @testset "cosθ" begin
+        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
+            int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*cos(θ)*Plm(θ, l′, m), 0, pi, rtol=rtol)
+            @test M1[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
         end
     end
+    @testset "cos²θ" begin
+        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
+            int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*cos(θ)^2*Plm(θ, l′, m), 0, pi, rtol=rtol)
+            @test M12[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
+        end
+    end
+    @testset "sinθdθ" begin
+        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
+            int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*sinθdθPlm(θ, l′, m), 0, pi, rtol=rtol)
+            @test M2[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
+        end
+    end
+    @testset "sinθdθ*sinθdθ" begin
+        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
+            int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*sinθdθsinθdθPlm(θ, l′, m), 0, pi, rtol=rtol)
+            @test M22[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
+        end
+    end
+end
+
+@testset "eigenvalues" begin
+    C = RossbyWaveSpectrum.constraintmatrix(operators, nℓ);
+
+    m = 5
+    M = RossbyWaveSpectrum.twoΩcrossv(nr, nℓ, m, operators);
+
+    M_constrained = [M C'
+                     C zeros(size(C, 1), size(M,2) + size(C, 1) - size(C,2))];
+
+    λ, v = RossbyWaveSpectrum.filter_eigenvalues(RossbyWaveSpectrum.uniform_rotation_spectrum, nr, nℓ, m);
+    @test M * v ≈ v * Diagonal(λ) rtol=1e-2
+    @test all(x -> isapprox(x, 0, atol=1e-5), C * v)
 end

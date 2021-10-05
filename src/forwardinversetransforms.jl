@@ -1,41 +1,52 @@
-struct ForwardTransform{T, A <: AbstractMatrix{T}} <: AbstractMatrix{T}
+abstract type Transform{T} <: AbstractMatrix{T} end
+struct ForwardTransform{T, A <: AbstractMatrix{T}} <: Transform{T}
     a :: A
 end
-struct InverseTransform{T, A <: AbstractMatrix{T}} <: AbstractMatrix{T}
+struct InverseTransform{T, A <: AbstractMatrix{T}} <: Transform{T}
     a :: A
 end
-Base.parent(F::ForwardTransform) = F.a
-Base.parent(F::InverseTransform) = F.a
-for T in [:ForwardTransform, :InverseTransform]
-    for f in [:size, :axes, :length]
-        @eval Base.$f(F::$T) = $f(parent(F))
+Base.parent(F::Transform) = F.a
+
+function Base.showarg(io::IO, T::Transform, toplevel)
+    if !toplevel
+        print(io, "::")
     end
-    @eval Base.getindex(A::$T, i::Int, j::Int) = parent(A)[i, j]
-    @eval Base.getindex(A::$T, i::Int) = parent(A)[i]
-    @eval Base.:(*)(A::$T, B::AbstractMatrix) = parent(A) * B
-    @eval Base.:(*)(A::$T, B::Diagonal) = parent(A) * B
-    @eval function Base.:(*)(M::$T, I::IdentityMatrix)
-        sizeM2 = size(M, 2)
-        if I.n != sizeM2
-            throw(DimensionMismatch("second dimension of M, $sizeM2, does not match first dimension of I, $(I.n)"))
-        end
-        M
+    print(io, nameof(typeof(T)))
+    if toplevel
+        print(io, "(")
+        Base.showarg(io, parent(T), false)
+        print(io, ")")
     end
-    @eval Base.:(*)(A::AbstractMatrix, B::$T) = A * parent(B)
-    @eval function Base.:(*)(I::IdentityMatrix, M::$T)
-        sizeB1 = size(M, 1)
-        if I.n != sizeB1
-            throw(DimensionMismatch("second dimension of I, $(I.n), does not match first dimension of M, $sizeB1"))
-        end
-        M
-    end
-    @eval Base.:(*)(A::Diagonal, B::$T) = A * parent(B)
-    @eval Base.:(*)(A::$T, V::AbstractVector) = parent(A) * V
-    @eval Base.:(*)(A::AbstractVector, B::$T) = A * parent(B)
-    @eval Base.:(*)(A::$T, B::$T) = parent(A) * parent(A)
-    @eval Base.:(*)(A::$T, B::LinearAlgebra.AbstractTriangular) = parent(A) * B
-    @eval Base.:(*)(A::LinearAlgebra.AbstractTriangular, B::$T) = A * parent(B)
 end
+
+for f in [:size, :axes, :length]
+    @eval Base.$f(F::Transform) = $f(parent(F))
+end
+@eval Base.getindex(A::Transform, i::Int, j::Int) = parent(A)[i, j]
+@eval Base.getindex(A::Transform, i::Int) = parent(A)[i]
+@eval Base.:(*)(A::Transform, B::AbstractMatrix) = parent(A) * B
+@eval Base.:(*)(A::Transform, B::Diagonal) = parent(A) * B
+@eval function Base.:(*)(M::Transform, I::IdentityMatrix)
+    sizeM2 = size(M, 2)
+    if I.n != sizeM2
+        throw(DimensionMismatch("second dimension of M, $sizeM2, does not match first dimension of I, $(I.n)"))
+    end
+    M
+end
+@eval Base.:(*)(A::AbstractMatrix, B::Transform) = A * parent(B)
+@eval function Base.:(*)(I::IdentityMatrix, M::Transform)
+    sizeB1 = size(M, 1)
+    if I.n != sizeB1
+        throw(DimensionMismatch("second dimension of I, $(I.n), does not match first dimension of M, $sizeB1"))
+    end
+    M
+end
+@eval Base.:(*)(A::Diagonal, B::Transform) = A * parent(B)
+@eval Base.:(*)(A::Transform, V::AbstractVector) = parent(A) * V
+@eval Base.:(*)(A::AbstractVector, B::Transform) = A * parent(B)
+@eval Base.:(*)(A::Transform, B::Transform) = parent(A) * parent(A)
+@eval Base.:(*)(A::Transform, B::AbstractTriangular) = parent(A) * B
+@eval Base.:(*)(A::AbstractTriangular, B::Transform) = A * parent(B)
 
 function Base.:(*)(F::ForwardTransform, I::InverseTransform)
     if size(F, 2) != size(I, 1)
@@ -57,3 +68,6 @@ end
 
 Base.:*(K::Kronecker.GeneralizedKroneckerProduct, M::ForwardTransform) = K * collect(M)
 Base.:*(K::Kronecker.GeneralizedKroneckerProduct, M::InverseTransform) = K * collect(M)
+
+Base.:*(M::Matrix, K::Kronecker.KroneckerProduct{<:Any, <:InverseTransform, <:InverseTransform}) = M * collect(K)
+Base.:*(K::Kronecker.KroneckerProduct{<:Any, <:ForwardTransform, <:ForwardTransform}, M::Matrix) = collect(K) * M
