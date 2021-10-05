@@ -236,16 +236,14 @@ function basic_operators(nr, nℓ)
     # scratch matrices
     # B = D2Dr2 - ℓ(ℓ+1)/r^2
     B = zero(D2Dr2);
-    Cℓm1 = zero(DDr);
-    Cℓp1 = zero(DDr);
-    BinvCℓm1 = zero(DDr);
-    BinvCℓp1 = zero(DDr);
+    Cℓ′ = zero(DDr);
+    BinvCℓ′ = zero(DDr);
 
     coordinates = (; r);
     transforms = (; Tcrfwd, Tcrinv);
     rad_terms = (; onebyr, onebyr_cheby, ηρ, onebyr2_cheby);
     diff_operators = (; DDr, D2Dr2, DDr_minus_2byr);
-    scratch = (; B, Cℓm1, Cℓp1, BinvCℓm1, BinvCℓp1);
+    scratch = (; B, Cℓ′, BinvCℓ′);
 
     (; rad_terms, diff_operators, transforms, coordinates, params, scratch)
 end
@@ -276,7 +274,7 @@ function twoΩcrossv(nr, nℓ, m, operators = basic_operators(nr, nℓ))
 
     (; DDr, D2Dr2, DDr_minus_2byr) = diff_operators;
     (; onebyr_cheby, onebyr2_cheby) = rad_terms;
-    (; B, Cℓm1, Cℓp1, BinvCℓm1, BinvCℓp1) = scratch;
+    (; B, Cℓ′, BinvCℓ′) = scratch;
 
     nparams = nchebyr * nℓ;
     ℓmin = m;
@@ -287,36 +285,31 @@ function twoΩcrossv(nr, nℓ, m, operators = basic_operators(nr, nℓ))
     A = zeros(nparams, nparams);
     C = zeros(nparams, nparams);
 
-    Carrs = (Cℓm1, Cℓp1);
-    BinvCarrs = (BinvCℓm1, BinvCℓp1);
-
     (; MWn) = constraintmatrix(operators);
     Q = constraintnullspacematrix(MWn);
 
+    C1 = DDr_minus_2byr
+
+    cosθ = OffsetArray(cosθ_operator(nℓ, m), ℓs, ℓs)
+    sinθdθ = OffsetArray(sinθdθ_operator(nℓ, m), ℓs, ℓs)
+
     for ℓ in ℓs
-        ℓℓp1 = ℓ*(ℓ+1);
         @. B = D2Dr2 - ℓ*(ℓ+1) * onebyr2_cheby
         B2 = Q' * B * Q;
-        if ℓ-1 in ℓs
-            @. Cℓm1 = DDr - (ℓ-1)*ℓ * onebyr_cheby
-            @. Cℓm1 = -2(α⁺ℓm(ℓ-1,m)*(ℓ-1)/(ℓ+1) * DDr_minus_2byr + γ⁺ℓm(ℓ-1, m)/ℓℓp1 * Cℓm1)
-            BinvCℓm1 .= Q * (B2 \ (Q' * Cℓm1));
-        end
-        if ℓ+1 in ℓs
-            @. Cℓp1 = DDr - (ℓ+1)*(ℓ+2) * onebyr_cheby
-            @. Cℓp1 = -2(α⁻ℓm(ℓ+1,m)*(ℓ+2)/ℓ * DDr_minus_2byr + γ⁻ℓm(ℓ+1, m)/ℓℓp1 * Cℓp1)
-            BinvCℓp1 = Q * (B2 \ (Q' * Cℓp1));
-        end
-
+        F = lu!(B2)
         ABℓ′top = (ℓ - minimum(m)) * nchebyr + 1;
         ACℓ′vertinds = range(ABℓ′top, length = nr);
-        for (ℓ′ind, ℓ′) in enumerate(ℓ-1:2:ℓ+1)
+
+        for ℓ′ in ℓ-1:2:ℓ+1
             ℓ′ in ℓs || continue
+            @. Cℓ′ = DDr - ℓ′*(ℓ′+1) * onebyr_cheby
+            @. Cℓ′ = -2/(ℓ*(ℓ+1))*(ℓ′*(ℓ′+1)*C1*cosθ[ℓ, ℓ′] + Cℓ′*sinθdθ[ℓ, ℓ′])
+            BinvCℓ′ .= Q * (F \ (Q' * Cℓ′))
             ABℓ′left = (ℓ′ - minimum(m)) * nchebyr + 1
             ACℓ′horinds = range(ABℓ′left, length = nr);
             ACℓ′ℓ′inds = CartesianIndices((ACℓ′vertinds, ACℓ′horinds));
-            A[ACℓ′ℓ′inds] .= Carrs[ℓ′ind]
-            C[ACℓ′ℓ′inds] .= BinvCarrs[ℓ′ind]
+            A[ACℓ′ℓ′inds] .= Cℓ′
+            C[ACℓ′ℓ′inds] .= BinvCℓ′
         end
     end
 
@@ -696,13 +689,14 @@ function save_eigenvalues(f, nr, nℓ, mr;
     jldsave(fname; lam, vec)
 end
 
-plot_eigenvalues_singlem(m, lam) = plot.(m, lam, marker = "o", ms = 3)
+plot_eigenvalues_singlem(m, lam) = plot.(m, lam, marker = "o", ms = 4, mfc = "lightcoral", mec= "firebrick")
 
 function plot_rossby_ridges(mr)
     plot(mr, rossby_ridge.(mr), color = "k", label="ℓ = m")
     linecolors = ["r", "b", "g"]
     for (Δℓind, Δℓ) in enumerate(1:3)
-        plot(mr, (m -> rossby_ridge(m, m+Δℓ)).(mr), color = linecolors[Δℓind], label="ℓ = m + $Δℓ")
+        plot(mr, (m -> rossby_ridge(m, m+Δℓ)).(mr), color = linecolors[Δℓind], label="ℓ = m + $Δℓ",
+        marker="None")
     end
     # plot(mr, 1.5 .*rossby_ridge.(mr) .- mr, color = "green", label = "-m + 1.5 * 2/(m+1)")
 end
@@ -724,6 +718,7 @@ function plot_eigenvalues(lam::AbstractArray, mr)
     plot_rossby_ridges(mr)
     xlabel("m", fontsize = 12)
     ylabel(L"\omega/\Omega", fontsize = 12)
+    ylim(0.5*2/(maximum(mr)+1), 1.1*2/(minimum(mr)+1))
     legend(loc=1)
 end
 
