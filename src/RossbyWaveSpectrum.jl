@@ -699,15 +699,15 @@ end
 plot_eigenvalues_singlem(m, lam) = plot.(m, lam, marker = "o", ms = 3)
 
 function plot_rossby_ridges(mr)
-    plot(mr, rossby_ridge.(mr), color = "k", label="2/(m+1)")
-    plot(mr, (m -> rossby_ridge(m, m+1)).(mr), color = "r", label="2m/((m+1)(m+2))")
-    plot(mr, (m -> rossby_ridge(m, m+2)).(mr), color = "b", label="2m/((m+2)(m+3))")
-    plot(mr, (m -> rossby_ridge(m, m+3)).(mr), color = "g", label="2m/((m+3)(m+4))")
+    plot(mr, rossby_ridge.(mr), color = "k", label="ℓ = m")
+    linecolors = ["r", "b", "g"]
+    for (Δℓind, Δℓ) in enumerate(1:3)
+        plot(mr, (m -> rossby_ridge(m, m+Δℓ)).(mr), color = linecolors[Δℓind], label="ℓ = m + $Δℓ")
+    end
     # plot(mr, 1.5 .*rossby_ridge.(mr) .- mr, color = "green", label = "-m + 1.5 * 2/(m+1)")
 end
 
 function plot_eigenvalues(f, nr, nℓ, mr::AbstractVector; operators = basic_operators(nr, nℓ), atol_constraint = 1e-5, Δl_cutoff = 5)
-    figure()
     λv = filter_eigenvalues_mrange(f, nr, nℓ, mr; operators, atol_constraint, Δl_cutoff)
     lam = map(first, λv)
     plot_eigenvalues(lam, mr)
