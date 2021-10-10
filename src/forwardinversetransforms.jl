@@ -66,6 +66,8 @@ function Base.:(*)(I::InverseTransform, F::ForwardTransform)
     IdentityMatrix(size(F, 1))
 end
 
+LinearAlgebra.factorize(T::Transform) = factorize(parent(T))
+
 Base.:*(K::Kronecker.GeneralizedKroneckerProduct, M::ForwardTransform) = K * collect(M)
 Base.:*(K::Kronecker.GeneralizedKroneckerProduct, M::InverseTransform) = K * collect(M)
 

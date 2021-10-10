@@ -231,10 +231,36 @@ function Base.:-(I::UniformScaling, K::KroneckerProductIdentity1)
     A, B = getmatrices(K)
     kronecker(A, I - B)
 end
+function Base.:-(K::KroneckerProductIdentity1, I::UniformScaling)
+    A, B = getmatrices(K)
+    kronecker(A, B - I)
+end
 
 function Base.:-(I::UniformScaling, K::KroneckerProductIdentity2)
     A, B = getmatrices(K)
     kronecker(I - A, B)
+end
+function Base.:-(K::KroneckerProductIdentity2, I::UniformScaling)
+    A, B = getmatrices(K)
+    kronecker(A - I, B)
+end
+
+function Base.:+(I::UniformScaling, K::KroneckerProductIdentity1)
+    A, B = getmatrices(K)
+    kronecker(A, I + B)
+end
+function Base.:+(K::KroneckerProductIdentity1, I::UniformScaling)
+    A, B = getmatrices(K)
+    kronecker(A, B + I)
+end
+
+function Base.:+(I::UniformScaling, K::KroneckerProductIdentity2)
+    A, B = getmatrices(K)
+    kronecker(I + A, B)
+end
+function Base.:+(K::KroneckerProductIdentity2, I::UniformScaling)
+    A, B = getmatrices(K)
+    kronecker(A + I, B)
 end
 
 function LinearAlgebra.diag(K::KroneckerProductIdentity)
