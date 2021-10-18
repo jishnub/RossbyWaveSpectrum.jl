@@ -1,4 +1,5 @@
 [deps]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 Kronecker = "2c470bb0-bcc8-11e8-3dad-c9649493f05e"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -9,3 +10,14 @@ SphericalHarmonics = "c489a379-e885-57ff-9236-bd896d33c250"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
 WignerSymbols = "9f57e263-0b3d-5e2e-b1be-24f2bb48858b"
+
+[compat]
+Aqua = "0.5"
+ForwardDiff = "0.10.20"
+Kronecker = "0.4, 0.5"
+OffsetArrays = "1"
+Polynomials = "2"
+QuadGK = "2"
+SphericalHarmonics = "0.1"
+UnPack = "1"
+WignerSymbols = "2"

@@ -48,12 +48,6 @@ git-tree-sha1 = "8d954297bc51cc64f15937c2093799c3617b73e4"
 uuid = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 version = "1.10.0"
 
-[[deps.ClusterManagers]]
-deps = ["Distributed", "Logging", "Pkg", "Sockets"]
-git-tree-sha1 = "4d0c229c45a898b0f04711472e1de4d2ee181a90"
-uuid = "34f1f09b-3a8b-5176-ab39-66d58a4d544e"
-version = "0.4.2"
-
 [[deps.ColorTypes]]
 deps = ["FixedPointNumbers", "Random"]
 git-tree-sha1 = "024fe24d83e4a5bf5fc80501a314ce0d1aa35597"
@@ -269,9 +263,7 @@ version = "0.21.2"
 
 [[deps.Kronecker]]
 deps = ["LinearAlgebra", "NamedDims", "SparseArrays", "StatsBase"]
-git-tree-sha1 = "23d3edb01a6b9b3472f235db44745f2baebcb462"
-repo-rev = "bleeding_edge"
-repo-url = "https://github.com/jishnub/Kronecker.jl"
+path = "dev/Kronecker"
 uuid = "2c470bb0-bcc8-11e8-3dad-c9649493f05e"
 version = "0.5.0"
 
@@ -415,12 +407,6 @@ git-tree-sha1 = "a965dd53ccaa69010d62851ab73d4e0c3d098314"
 uuid = "9b87118b-4619-50d2-8e1e-99f35a4d4d9d"
 version = "1.7.6"
 
-[[deps.ParallelUtilities]]
-deps = ["DataStructures", "Distributed", "SplittablesBase"]
-git-tree-sha1 = "704ef2c93e301b6469ba63103a4e7bf935e6990c"
-uuid = "fad6cfc8-4f83-11e9-06cc-151124046ad0"
-version = "0.8.6"
-
 [[deps.Parsers]]
 deps = ["Dates"]
 git-tree-sha1 = "98f59ff3639b3d9485a03a72f3ab35bab9465720"
@@ -521,12 +507,6 @@ version = "0.7.1"
 deps = ["Distributed", "Mmap", "Random", "Serialization"]
 uuid = "1a1011a3-84de-559e-8e89-a11a2f7dc383"
 
-[[deps.SlurmClusterManager]]
-deps = ["Distributed"]
-git-tree-sha1 = "92cc8669531ff122cc35ba4a0d5f8fd483c9cb34"
-uuid = "c82cd089-7bf7-41d7-976b-6b5d413cbe0a"
-version = "0.1.1"
-
 [[deps.Sockets]]
 uuid = "6462fe0b-24de-5631-8697-dd941f90decc"
 
@@ -562,12 +542,6 @@ deps = ["IrrationalConstants", "Printf", "Setfield", "SpecialFunctions", "Spheri
 git-tree-sha1 = "63b917d3cc14c6886fe3609529346c1e6c03b7b0"
 uuid = "c489a379-e885-57ff-9236-bd896d33c250"
 version = "0.1.18"
-
-[[deps.SplittablesBase]]
-deps = ["Setfield", "Test"]
-git-tree-sha1 = "39c9f91521de844bad65049efd4f9223e7ed43f9"
-uuid = "171d559e-b47b-412a-8079-5efa626c420e"
-version = "0.1.14"
 
 [[deps.StaticArrays]]
 deps = ["LinearAlgebra", "Random", "Statistics"]
@@ -658,11 +632,6 @@ deps = ["HalfIntegers", "LRUCache", "Primes", "RationalRoots"]
 git-tree-sha1 = "960e5f708871c1d9a28a7f1dbcaf4e0ee34ee960"
 uuid = "9f57e263-0b3d-5e2e-b1be-24f2bb48858b"
 version = "2.0.0"
-
-[[deps.ZChop]]
-git-tree-sha1 = "f085835a64a66e2e91ef0faa0704c30561ccd0fa"
-uuid = "8603256b-76ad-53fe-b511-38a38e6437cd"
-version = "0.3.4"
 
 [[deps.Zlib_jll]]
 deps = ["Libdl"]

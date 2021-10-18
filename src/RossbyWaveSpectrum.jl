@@ -20,6 +20,7 @@ using FastTransforms
 using FastGaussQuadrature
 using SphericalHarmonics
 using Trapz
+using TimerOutputs
 using WignerSymbols
 
 export datadir
@@ -547,29 +548,29 @@ function apply_radial_operator(op_cheby, ΔΩ_r_ℓℓ′, m, operators)
     return PaddedMatrix(op_ΔΩ_kk′_ℓℓ′, nparams)
 end
 
-function vorticity_terms(ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, ΔΩ_r_Legendre, m, C, Sd, operators)
+function vorticity_terms(ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, ΔΩ_r_Legendre, m, Cosθ, Sinθdθ, operators)
     (; identities, coordinates, diff_operators) = operators;
     (; Ir, Iℓ) = identities;
     (; r_cheby) = coordinates;
-    (; ddr) = diff_operators
+    (; ddr) = diff_operators;
 
-    S2 = I - C^2;
-    CI = C ⊗ Ir;
-    S2I = S2 ⊗ Ir;
-    SdI = Sd ⊗ Ir;
+    Sin²θ = I - Cosθ^2;
+    CosθI = Cosθ ⊗ Ir;
+    Sin²θI = Sin²θ ⊗ Ir;
+    SinθdθI = Sinθdθ ⊗ Ir;
 
-    sinθ_dθ_ΔΩ_kk′_ℓℓ′ = SdI*ΔΩ_kk′_ℓℓ′ - ΔΩ_kk′_ℓℓ′*SdI;
+    sinθ_dθ_ΔΩ_kk′_ℓℓ′ = SinθdθI*ΔΩ_kk′_ℓℓ′ - ΔΩ_kk′_ℓℓ′*SinθdθI;
 
-    ωΩr = 2CI*ΔΩ_kk′_ℓℓ′ + sinθ_dθ_ΔΩ_kk′_ℓℓ′;
+    ωΩr = 2CosθI*ΔΩ_kk′_ℓℓ′ + sinθ_dθ_ΔΩ_kk′_ℓℓ′;
     ddr_ΔΩ_kk′_ℓℓ′ = apply_radial_operator(ddr, ΔΩ_r_ℓℓ′, m, operators);
-    drωΩr = (2CI + SdI)*ddr_ΔΩ_kk′_ℓℓ′ - ddr_ΔΩ_kk′_ℓℓ′*SdI;
+    drωΩr = (2CosθI + SinθdθI)*ddr_ΔΩ_kk′_ℓℓ′ - ddr_ΔΩ_kk′_ℓℓ′*SinθdθI;
 
     rddr_ΔΩ_kk′_ℓℓ′ = (Iℓ ⊗ r_cheby) * ddr_ΔΩ_kk′_ℓℓ′;
     ωΩθ_by_sinθ = -2ΔΩ_kk′_ℓℓ′ - rddr_ΔΩ_kk′_ℓℓ′;
 
-    sinθ_ωΩθ =  S2I * ωΩθ_by_sinθ;
-    dθ_ωΩθ = (CI + SdI)*ωΩθ_by_sinθ - ωΩθ_by_sinθ*SdI;
-    cotθ_ωΩθ = CI * ωΩθ_by_sinθ;
+    sinθ_ωΩθ =  Sin²θI * ωΩθ_by_sinθ;
+    dθ_ωΩθ = (CosθI + SinθdθI)*ωΩθ_by_sinθ - ωΩθ_by_sinθ*SinθdθI;
+    cotθ_ωΩθ = CosθI * ωΩθ_by_sinθ;
 
     invsinθ_dθ_ωΩr = invsinθ_dθ_ωΩr_operator(ΔΩ_r_Legendre, m, operators);
 
@@ -857,33 +858,6 @@ function plot_eigenvalues_shfilter(fname::String, mr; operators, Δl_cutoff = 5,
     end
     figure()
     plot_eigenvalues(lam, mr)
-end
-
-function remove_spurious_eigenvalues(fname1, fname2, rtol=1e-3)
-    lam1 = jldopen(fname1, "r")["lam"]::Vector{Vector{Float64}}
-    lam2 = jldopen(fname2, "r")["lam"]::Vector{Vector{Float64}}
-    lam = similar(lam1)
-    for (ind, (l1, l2)) in enumerate(zip(lam1, lam2))
-        lam_i = eltype(first(lam1))[]
-        for l1_i in l1, l2_i in l2
-            if isapprox(l1_i, l2_i, rtol=rtol)
-                push!(lam_i, l1_i)
-            end
-        end
-        lam[ind] = lam_i
-    end
-    return lam
-end
-
-function plot_eigenvalues_remove_spurious(fname1, fname2, mr, rtol=1e-3)
-    lam_filt = remove_spurious_eigenvalues(fname1, fname2, rtol)
-    for (m, lam) in zip(mr, lam_filt)
-        plot(fill(m, length(lam)), lam, "o")
-    end
-    plot(mr, 1.5 .*rossby_ridge.(mr) .- mr, color = "green", label = "-m + 1.5 * 2/(m+1)")
-    xlabel("m", fontsize = 12)
-    ylabel(L"\omega/\Omega", fontsize = 12)
-    legend()
 end
 
 function eigenfunction_cheby_ℓm_spectrum(v, operators)
