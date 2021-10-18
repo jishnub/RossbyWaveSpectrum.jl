@@ -64,12 +64,13 @@ Base.broadcasted(::Broadcast.DefaultArrayStyle{2}, ::typeof(*), I::IdentityMatri
 Base.broadcasted(::Broadcast.DefaultArrayStyle{2}, ::typeof(^), I::IdentityMatrix, x::Number) = I
 Base.broadcasted(::Broadcast.DefaultArrayStyle{2}, ::typeof(Base.literal_pow), ::Base.RefValue, I::IdentityMatrix, x::Base.RefValue{<:Val}) = I
 
+const IdentityMatrixOrDiagonal = Union{IdentityMatrix, Diagonal}
 const KroneckerProductIdentity1{R<:AbstractMatrix} = Kronecker.KroneckerProduct{<:Any, IdentityMatrix, R}
-const KroneckerProductIdentityDiagonal1{R<:AbstractMatrix} = Kronecker.KroneckerProduct{<:Any, <:Union{IdentityMatrix, Diagonal}, R}
+const KroneckerProductIdentityDiagonal1{R<:AbstractMatrix} = Kronecker.KroneckerProduct{<:Any, IdentityMatrixOrDiagonal, R}
 const KroneckerProductIdentity2{R<:AbstractMatrix} = Kronecker.KroneckerProduct{<:Any, R, IdentityMatrix}
-const KroneckerProductIdentityDiagonal2{R<:AbstractMatrix} = Kronecker.KroneckerProduct{<:Any, R, <:Union{IdentityMatrix, Diagonal}}
+const KroneckerProductIdentityDiagonal2{R<:AbstractMatrix} = Kronecker.KroneckerProduct{<:Any, R, IdentityMatrixOrDiagonal}
 const KroneckerProductIdentity12 = Kronecker.KroneckerProduct{<:Any, IdentityMatrix, IdentityMatrix}
-const KroneckerProductIdentityDiagonal12 = Kronecker.KroneckerProduct{<:Any, <:Union{IdentityMatrix, Diagonal}, <:Union{IdentityMatrix, Diagonal}}
+const KroneckerProductIdentityDiagonal12 = Kronecker.KroneckerProduct{<:Any, IdentityMatrixOrDiagonal, IdentityMatrixOrDiagonal}
 const KroneckerProductIdentity{R<:AbstractMatrix} = Union{KroneckerProductIdentity1{R}, KroneckerProductIdentity2{R}}
 
 getnonidentity(K::KroneckerProductIdentity1) = first(getmatrices(K))

@@ -234,15 +234,15 @@ function constraintmatrix(operators)
         MVno[2, n] = (-1)^n * (2n^2/Δr - 1/r_out)
     end
 
-    C = [
+    BC = [
         Ones(1, nℓ) ⊗ MVn Zeros(2, nparams)
         Zeros(2, nparams) Ones(1, nℓ) ⊗ MWn
         ]
 
-    ZC = constraintnullspacematrix(C)
+    ZC = constraintnullspacematrix(BC)
     ZW = constraintnullspacematrix(MWn)
 
-    (; C, MVn, MWn, ZC, ZW)
+    (; BC, MVn, MWn, ZC, ZW)
 end
 
 """
@@ -261,7 +261,7 @@ end
 
 function parameters(nr, nℓ)
     nchebyr = nr;
-    r_in = 0.71;
+    r_in = 0.5;
     r_out = 0.985;
     Δr = r_out - r_in
     nparams = nchebyr * nℓ;
@@ -281,8 +281,6 @@ function chebyshev_forward_inverse(n, boundaries...)
     Tcinv = Tc;
     r, Tcfwd, Tcinv
 end
-
-isapproxdiagonal(M) = isapprox(M, Diagonal(M), atol=1e-14, rtol=1e-8)
 
 function spherical_harmonic_transform_plan(ntheta)
     # spherical harmonic transform parameters
@@ -418,10 +416,10 @@ function twoΩcrossv(nr, nℓ, m; operators = radial_operators(nr, nℓ))
 
     (; ZW) = constraintmatrix(operators);
 
-    C1 = DDr_minus_2byr
+    C1 = DDr_minus_2byr;
 
-    cosθ = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs)
-    sinθdθ = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
+    cosθ = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs);
+    sinθdθ = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs);
 
     for ℓ in ℓs
         @. B = D2Dr2 - ℓ*(ℓ+1) * onebyr2_cheby
@@ -437,9 +435,9 @@ function twoΩcrossv(nr, nℓ, m; operators = radial_operators(nr, nℓ))
             BinvCℓ′ .= ZW * (F \ (ZW' * Cℓ′))
             ABℓ′left = (ℓ′ - minimum(m)) * nchebyr + 1
             ACℓ′horinds = range(ABℓ′left, length = nr);
-            ACℓ′ℓ′inds = CartesianIndices((ACℓ′vertinds, ACℓ′horinds));
-            A[ACℓ′ℓ′inds] .= Cℓ′
-            C[ACℓ′ℓ′inds] .= BinvCℓ′
+            ACℓℓ′inds = CartesianIndices((ACℓ′vertinds, ACℓ′horinds));
+            A[ACℓℓ′inds] .= Cℓ′
+            C[ACℓℓ′inds] .= BinvCℓ′
         end
     end
 
@@ -457,7 +455,10 @@ function interp2d(xin, yin, z, xout, yout)
     evalgrid(spline, xout, yout)
 end
 
-function read_angular_velocity(r, thetaGL)
+function read_angular_velocity(operators, thetaGL; test = false)
+    (; coordinates) = operators;
+    (; r) = coordinates;
+
     parentdir = dirname(@__DIR__)
     r_ΔΩ_raw = vec(readdlm(joinpath(parentdir, "rmesh.orig"))::Matrix{Float64});
     r_ΔΩ_raw = r_ΔΩ_raw[1:4:end];
@@ -475,8 +476,17 @@ function read_angular_velocity(r, thetaGL)
     ΔΩ_r_chebytheta = permutedims(interp2d(lats_raw, r_ΔΩ_raw, ΔΩ_raw', theta_cheby, r))
 
     # testing
-    ΔΩ_r_chebytheta .= 1
-    ΔΩ_r_thetaGL .= 1
+    if test
+        ΔΩ_r_chebytheta .= 1
+        ΔΩ_r_thetaGL .= 1
+    end
+
+    # # doubled below 0.7R
+    # r_min, r_max = extrema(r)
+    # r_mid = (r_min + r_max)/2
+    # mask = @. 1 - 2/pi * atan((r - r_mid)/abs((r - r_min)*(r - r_max)))
+    # ΔΩ_r_chebytheta .*= mask
+    # ΔΩ_r_thetaGL .*= mask
 
     ΔΩ_r_Legendre = normalizedlegendretransform2(ΔΩ_r_chebytheta);
 
@@ -491,15 +501,6 @@ end
 function dlegendre_to_associatedlegendre(vℓ, ℓ1, ℓ2, m)
     vℓo = OffsetArray(vℓ, OffsetArrays.Origin(0))
     sum(vℓi * intPl1mP′l20Pl3m(ℓ1, ℓ, ℓ2, m) for (ℓ, vℓi) in pairs(vℓo))
-end
-
-function rotation_velocity_phi(operators, thetaGL)
-    (; coordinates) = operators;
-    (; r) = coordinates;
-
-    (; ΔΩ_r_thetaGL, ΔΩ_r_Legendre) = read_angular_velocity(r, thetaGL);
-
-    (; ΔΩ_r_thetaGL, ΔΩ_r_Legendre)
 end
 
 velocity_from_angular_velocity(Ω, r, sintheta) = Ω .* sintheta' .* r;
@@ -528,35 +529,29 @@ function invsinθ_dθ_ωΩr_operator(ΔΩ_r_Legendre, m, operators)
     return PaddedMatrix(invsinθ_dθ_ωΩr, nparams)
 end
 
-function ddr_operator(ΔΩ_r_ℓℓ′, m, operators)
-    (; params, diff_operators, transforms) = operators;
+function apply_radial_operator(op_cheby, ΔΩ_r_ℓℓ′, m, operators)
+    (; params, transforms) = operators;
     (; nℓ, nr, nparams) = params;
-    (; ddr) = diff_operators;
-    (; Tcrfwd, Tcrinv) = transforms;
-    ddr_realspace = Tcrinv * ddr * Tcrfwd
     ℓs = range(m, length = 2nℓ);
-    ddr_ΔΩ_kk′_ℓℓ′ = zeros(2nparams, 2nparams);
-    for (ℓ2ind, ℓ2) in enumerate(ℓs), (ℓ1ind, ℓ1) in enumerate(ℓs)
+    (; Tcrfwd, Tcrinv) = transforms;
+    op_realspace = Tcrinv * op_cheby * Tcrfwd
+    op_ΔΩ_kk′_ℓℓ′ = zeros(2nparams, 2nparams);
+    for ℓ2ind in eachindex(ℓs), ℓ1ind in eachindex(ℓs)
         rowinds = (ℓ1ind-1)*nr + 1:ℓ1ind*nr
         colinds = (ℓ2ind-1)*nr + 1:ℓ2ind*nr
         inds = CartesianIndices((rowinds, colinds))
         D = @view parent(ΔΩ_r_ℓℓ′)[inds]
         fr = @view D[diagind(D)]
-        ddr_ΔΩ_kk′_ℓℓ′[inds] = Tcrfwd * Diagonal(ddr_realspace * fr) * Tcrinv
+        op_ΔΩ_kk′_ℓℓ′[inds] = Tcrfwd * Diagonal(op_realspace * fr) * Tcrinv
     end
-    return PaddedMatrix(ddr_ΔΩ_kk′_ℓℓ′, nparams)
-end
-function rddr_operator(ΔΩ_r_ℓℓ′, m, operators)
-    (; coordinates, identities) = operators;
-    (; r_cheby) = coordinates;
-    (; Iℓ) = identities;
-    (Iℓ ⊗ r_cheby) * ddr_operator(ΔΩ_r_ℓℓ′, m, operators)
+    return PaddedMatrix(op_ΔΩ_kk′_ℓℓ′, nparams)
 end
 
 function vorticity_terms(ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, ΔΩ_r_Legendre, m, C, Sd, operators)
-    (; identities, coordinates) = operators;
+    (; identities, coordinates, diff_operators) = operators;
     (; Ir, Iℓ) = identities;
     (; r_cheby) = coordinates;
+    (; ddr) = diff_operators
 
     S2 = I - C^2;
     CI = C ⊗ Ir;
@@ -566,7 +561,7 @@ function vorticity_terms(ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, ΔΩ_r_Legendre
     sinθ_dθ_ΔΩ_kk′_ℓℓ′ = SdI*ΔΩ_kk′_ℓℓ′ - ΔΩ_kk′_ℓℓ′*SdI;
 
     ωΩr = 2CI*ΔΩ_kk′_ℓℓ′ + sinθ_dθ_ΔΩ_kk′_ℓℓ′;
-    ddr_ΔΩ_kk′_ℓℓ′ = ddr_operator(ΔΩ_r_ℓℓ′, m, operators);
+    ddr_ΔΩ_kk′_ℓℓ′ = apply_radial_operator(ddr, ΔΩ_r_ℓℓ′, m, operators);
     drωΩr = (2CI + SdI)*ddr_ΔΩ_kk′_ℓℓ′ - ddr_ΔΩ_kk′_ℓℓ′*SdI;
 
     rddr_ΔΩ_kk′_ℓℓ′ = (Iℓ ⊗ r_cheby) * ddr_ΔΩ_kk′_ℓℓ′;
@@ -575,181 +570,176 @@ function vorticity_terms(ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, ΔΩ_r_Legendre
     sinθ_ωΩθ =  S2I * ωΩθ_by_sinθ;
     dθ_ωΩθ = (CI + SdI)*ωΩθ_by_sinθ - ωΩθ_by_sinθ*SdI;
     cotθ_ωΩθ = CI * ωΩθ_by_sinθ;
-    ωΩr_plus_cotθ_ωΩθ = ωΩr + cotθ_ωΩθ;
 
     invsinθ_dθ_ωΩr = invsinθ_dθ_ωΩr_operator(ΔΩ_r_Legendre, m, operators);
 
-    (; ωΩr, ωΩθ_by_sinθ, sinθ_ωΩθ, invsinθ_dθ_ωΩr, dθ_ωΩθ, drωΩr, cotθ_ωΩθ, ωΩr_plus_cotθ_ωΩθ)
+    (; ωΩr, ωΩθ_by_sinθ, sinθ_ωΩθ, invsinθ_dθ_ωΩr, dθ_ωΩθ, drωΩr, cotθ_ωΩθ, sinθ_dθ_ΔΩ_kk′_ℓℓ′)
 end
 
-function rθ_operators(nr, nℓ, m; operators = radial_operators(nr, nℓ),
-    thetaop = theta_operators(nℓ, m))
-
-    (; transforms) = operators;
-    (; Tcrfwd, Tcrinv) = transforms;
-
-    (; theta, PLMfwd, PLMinv) = thetaop;
-    fullfwd = kron(PLMfwd, Tcrfwd);
-    fullinv = kron(PLMinv, Tcrinv);
-
-    full_transforms = (; fullfwd, fullinv)
-
-    C = costheta_operator(nℓ, m)
-    Sd = sintheta_dtheta_operator(nℓ, m)
-
-    (; full_transforms)
+function ΔΩ_terms(ΔΩ_r_ℓℓ′, m, operators)
+    (; diff_operators, coordinates) = operators;
+    (; r_cheby) = coordinates;
+    (; DDr, rddr) = diff_operators;
+    oneminrddr_2plusrddr_ΔΩ_kk′_ℓℓ′ = apply_radial_operator((I - rddr)*(2I + rddr), ΔΩ_r_ℓℓ′, m, operators)
+    r2DDr_ΔΩ_kk′_ℓℓ′ = apply_radial_operator(r_cheby^2*DDr, ΔΩ_r_ℓℓ′, m, operators)
+    (; oneminrddr_2plusrddr_ΔΩ_kk′_ℓℓ′, r2DDr_ΔΩ_kk′_ℓℓ′)
 end
 
-function diffrotterms(nr, nℓ, m; operators = radial_operators(nr, nℓ),
-    thetaop = theta_operators(nℓ, m))
+function curl_curl_matrix_terms(m, operators, ω_terms, ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, Cosθ, Sinθdθ, ℓs)
+    (; params, rad_terms, diff_operators, identities, coordinates, scratch) = operators;
+    (; ZW) = constraintmatrix(operators);
 
-    (; params, rad_terms, diff_operators, transforms, coordinates) = operators;
+    (; r_cheby) = coordinates;
+    (; Ir, Iℓ) = identities;
+    (; nchebyr, nℓ, nr) = params;
+    (; DDr, ddr, D2Dr2) = diff_operators;
+    (; onebyr_cheby, onebyr2_cheby, ηρ_cheby) = rad_terms;
+    (; B) = scratch;
 
+    Sin²θ = I - Cosθ^2
+    Sin⁻²θ = PaddedArray(inv(Matrix(parent(Sin²θ))), nℓ)
+
+    ℓℓp1 = ℓs.*(ℓs.+1);
+    ℓℓp1_diag = PaddedArray(Diagonal(ℓℓp1), nℓ)
+
+    (; ωΩr, ωΩθ_by_sinθ, dθ_ωΩθ, cotθ_ωΩθ, sinθ_dθ_ΔΩ_kk′_ℓℓ′) = ω_terms;
+
+    (; oneminrddr_2plusrddr_ΔΩ_kk′_ℓℓ′, r2DDr_ΔΩ_kk′_ℓℓ′) = ΔΩ_terms(ΔΩ_r_ℓℓ′, m, operators);
+
+    im_vr_imW = ℓℓp1_diag ⊗ onebyr2_cheby;
+
+    im_rsinθvθ_V = -m*(Iℓ ⊗ Ir);
+    im_rsinθvθ_imW = Sinθdθ ⊗ DDr;
+
+    rsinθvϕ_V = -Sinθdθ ⊗ Ir;
+    rsinθvϕ_imW = m*(Iℓ ⊗ DDr);
+
+    im_rsinθ_ωϕ_V = -m*(Iℓ ⊗ ddr);
+    im_rsinθ_ωϕ_imW = Sinθdθ ⊗ (ddr*DDr) - (Sinθdθ * ℓℓp1_diag) ⊗ onebyr2_cheby;
+
+    ωr_V = ℓℓp1_diag ⊗ onebyr2_cheby;
+
+    rsinθ_ωθ_V = Sinθdθ ⊗ ddr;
+    rsinθ_ωθ_imW = m*(ℓℓp1_diag ⊗ onebyr2_cheby - Iℓ ⊗ (ddr*DDr));
+
+    # curl curl rho grad u
+    T_imW_V1 = -(ΔΩ_kk′_ℓℓ′ * ((Sinθdθ * ℓℓp1_diag) ⊗ ηρ_cheby));
+    T_imW_imW1 = m*(ΔΩ_kk′_ℓℓ′ * (ℓℓp1_diag ⊗ (ηρ_cheby * DDr)));
+
+    im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_V =
+        (ωΩθ_by_sinθ * ((Sinθdθ - Cosθ) ⊗ onebyr_cheby) + ωΩr * (Iℓ ⊗ (DDr - onebyr_cheby)) - (dθ_ωΩθ + ωΩr) * (Iℓ ⊗ onebyr_cheby)) * im_rsinθvθ_V +
+        m*ΔΩ_kk′_ℓℓ′ * rsinθ_ωθ_V;
+
+    im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_imW =
+        (ωΩθ_by_sinθ * ((Sinθdθ - Cosθ) ⊗ onebyr_cheby) + ωΩr * (Iℓ ⊗ (DDr - onebyr_cheby)) - (dθ_ωΩθ + ωΩr) * (Iℓ ⊗ onebyr_cheby)) * im_rsinθvθ_imW -
+        (Sin²θ ⊗ Ir) * oneminrddr_2plusrddr_ΔΩ_kk′_ℓℓ′ * im_vr_imW +
+        m*ΔΩ_kk′_ℓℓ′ * rsinθ_ωθ_imW;
+
+    sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_V =
+        (ωΩθ_by_sinθ * ((Sinθdθ - Cosθ) ⊗ onebyr_cheby) + ωΩr * (Iℓ ⊗ (DDr - onebyr_cheby)) - (cotθ_ωΩθ + ωΩr) * (Iℓ ⊗ onebyr_cheby)) * rsinθvϕ_V +
+        (Sin²θ ⊗ Ir) * r2DDr_ΔΩ_kk′_ℓℓ′ * ωr_V +
+        sinθ_dθ_ΔΩ_kk′_ℓℓ′ * rsinθ_ωθ_V +
+        -m*ΔΩ_kk′_ℓℓ′ * im_rsinθ_ωϕ_V;
+
+    sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_imW =
+        (ωΩθ_by_sinθ * ((Sinθdθ - Cosθ) ⊗ onebyr_cheby) + ωΩr * (Iℓ ⊗ (DDr - onebyr_cheby)) - (cotθ_ωΩθ + ωΩr) * (Iℓ ⊗ onebyr_cheby)) * rsinθvϕ_imW +
+        sinθ_dθ_ΔΩ_kk′_ℓℓ′ * rsinθ_ωθ_imW +
+        -m*ΔΩ_kk′_ℓℓ′ * im_rsinθ_ωϕ_imW;
+
+    # curl curl rho u cross ω
+    Sin²θ_T_imW_V2 = (Sinθdθ ⊗ Ir) * sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_V - m*im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_V;
+    T_imW_V2 = (Sin⁻²θ ⊗ Ir) * Sin²θ_T_imW_V2;
+    Sin²θ_T_imW_imW2 = (Sinθdθ ⊗ Ir) * sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_imW - m*im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_imW;
+    T_imW_imW2 = (Sin⁻²θ ⊗ Ir) * Sin²θ_T_imW_imW2;
+
+    T_imW_V_sum = T_imW_V1 + T_imW_V2;
+    T_imW_V = Matrix(T_imW_V_sum);
+    T_imW_imW_sum = T_imW_imW1 + T_imW_imW2;
+    T_imW_imW = Matrix(T_imW_imW_sum);
+
+    for ℓ in range(m, length = nℓ)
+        @. B = -ℓ*(ℓ+1) * (D2Dr2 - ℓ*(ℓ+1) * onebyr2_cheby)
+        B2 = ZW' * B * ZW;
+        F = lu!(B2)
+        ABℓ′top = (ℓ - minimum(m)) * nchebyr + 1;
+        ACℓ′vertinds = range(ABℓ′top, length = nr);
+
+        for ℓ′ in range(m, length = nℓ)
+            ABℓ′left = (ℓ′ - minimum(m)) * nchebyr + 1
+            ACℓ′horinds = range(ABℓ′left, length = nr);
+            ACℓℓ′inds = CartesianIndices((ACℓ′vertinds, ACℓ′horinds));
+            A = @view T_imW_V[ACℓℓ′inds]
+            A .= ZW * (F \ (ZW' * A))
+            A = @view T_imW_imW[ACℓℓ′inds]
+            A .= ZW * (F \ (ZW' * A))
+        end
+    end
+
+    (; T_imW_V, T_imW_imW, T_imW_V1, T_imW_imW1, T_imW_V2, T_imW_imW2, T_imW_V_sum, T_imW_imW_sum,
+    im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_V, im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_imW, sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_V, sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_imW,
+    Sin²θ_T_imW_V2, Sin²θ_T_imW_imW2)
+end
+
+function diffrotterms(nr, nℓ, m; operators = radial_operators(nr, nℓ), thetaop = theta_operators(nℓ, m), test = false)
+    (; params, rad_terms, diff_operators, transforms, identities) = operators;
+
+    (; Ir, Iℓ) = identities;
     (; nparams) = params;
     (; Tcrfwd, Tcrinv) = transforms;
-    (; DDr, D2Dr2) = diff_operators;
-    (; r) = coordinates;
+    (; DDr, DDr_minus_2byr) = diff_operators;
+    (; onebyr_cheby) = rad_terms;
     (; thetaGL, PLMfwd, PLMinv) = thetaop;
+    (; nℓ, nr, nparams) = params;
 
     fullfwd = kron(PLMfwd, Tcrfwd);
     fullinv = kron(PLMinv, Tcrinv);
 
-    (; ΔΩ_r_thetaGL, ΔΩ_r_Legendre) = rotation_velocity_phi(operators, thetaGL);
-    ΔΩ_by_r = ΔΩ_r_thetaGL ./ r
+    ℓs = range(m, length = 2nℓ);
+    ℓℓp1 = ℓs.*(ℓs.+1);
+
+    ℓℓp1_diag = PaddedMatrix(Diagonal(ℓℓp1), nℓ);
+    invℓℓp1_diag = PaddedMatrix(Diagonal(1 ./ ℓℓp1), nℓ);
+
+    Cosθ = costheta_operator(nℓ, m);
+    Sinθdθ = sintheta_dtheta_operator(nℓ, m);
+
+    (; ΔΩ_r_thetaGL, ΔΩ_r_Legendre) = read_angular_velocity(operators, thetaGL, test = test);
     ΔΩ_r_ℓℓ′ = PaddedMatrix((PLMfwd ⊗ Ir) * Diagonal(vec(ΔΩ_r_thetaGL)) * (PLMinv ⊗ Ir), nparams);
-    ΔΩ_kk′_ℓℓ′ = fullfwd * Diagonal(vec(ΔΩ_r_thetaGL)) * fullinv
-    ΔΩ_by_r_chebyleg = fullfwd * Diagonal(vec(ΔΩ_by_r)) * fullinv
+    ΔΩ_kk′_ℓℓ′ = PaddedMatrix(fullfwd * Diagonal(vec(ΔΩ_r_thetaGL)) * fullinv, nparams);
+
+    ω_terms = vorticity_terms(ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, ΔΩ_r_Legendre, m, Cosθ, Sinθdθ, operators);
+    (; ωΩr, ωΩθ_by_sinθ, invsinθ_dθ_ωΩr, drωΩr) = ω_terms;
+
+    T_V_V = -m*(invℓℓp1_diag ⊗ Ir)*(ΔΩ_kk′_ℓℓ′ * (ℓℓp1_diag ⊗ Ir) + invsinθ_dθ_ωΩr);
+    T_V_imW = (invℓℓp1_diag ⊗ Ir) *(
+        -(ωΩr * (Iℓ ⊗ DDr_minus_2byr) - drωΩr) * (ℓℓp1_diag ⊗ Ir) +
+        invsinθ_dθ_ωΩr * (Sinθdθ ⊗ DDr) -
+        ωΩθ_by_sinθ*((Sinθdθ * ℓℓp1_diag) ⊗ onebyr_cheby)
+        );
+
+    (; T_imW_V, T_imW_imW) = curl_curl_matrix_terms(m, operators, ω_terms, ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, Cosθ, Sinθdθ, ℓs);
+
+    [T_V_V  T_V_imW
+    T_imW_V T_imW_imW]
 end
 
-function diffrotterms2(nr, ntheta, m, operators = radial_operators(nr, nℓ))
-    @unpack trig_functions, rad_terms, diff_operators, transforms, params = operators;
+function uniform_rotation_spectrum(nr, nℓ, m; operators = radial_operators(nr, nℓ), kw...)
+    (; BC, ZC) = constraintmatrix(operators);
 
-    @unpack nparams = params;
-    @unpack DD_V, DD_W, sintheta_ddtheta_mat, D2Dtheta2, DDtheta, DDr, D2Dr2, DDtheta_realspace, DDr_realspace = diff_operators;
-    @unpack costheta_mat, sintheta_mat, cottheta_mat, onebysintheta_mat, sintheta_realspace, costheta_realspace, onebysintheta_realspace = trig_functions;
-    @unpack r_mat, onebyr_mat, hrho_mat, onebyr2_mat, drhrho_mat, negr2_mat, r_realspace, onebyr_realspace = rad_terms;
-    @unpack fullfwd, fullinv, fullfwdc, fullinvc = transforms;
+    M = twoΩcrossv(nr, nℓ, m; operators);
 
-    cos2theta_mat = costheta_mat^2 - sintheta_mat^2;
-    sin2theta_mat = 2*sintheta_mat*costheta_mat;
+    # Two possible ways to enforce the radial boundary constraint:
 
-    laplacianh = horizontal_laplacian(operators, m);
+    # M_constrained = ZC'*M*ZC
+    # λ, w = eigen!(M_constrained);
+    # v = ZC*w
+    # λ, v
 
-    ΔΩ_realspace, V0_realspace = rotation_velocity_phi(operators);
-    V0 = fullfwd * V0_realspace * fullinv;
-    ΔΩ = fullfwd * ΔΩ_realspace * fullinv;
-
-    one_over_rsintheta = onebyr_mat * onebysintheta_mat;
-    one_over_rsintheta_realspace = Diagonal(onebyr_realspace * onebysintheta_realspace);
-
-    # Omega is the curl of V = (0,0,V0)
-    Omega_r_realspace = one_over_rsintheta_realspace * Diagonal(DDtheta_realspace * diag(sintheta_realspace * V0_realspace));
-    Omega_r = fullfwdc * Omega_r_realspace * fullinvc;
-    Omega_theta_realspace = Diagonal(-onebyr_realspace * (DDr_realspace * diag(r_realspace * V0_realspace)));
-    Omega_theta = fullfwdc * Omega_theta_realspace * fullinvc;
-
-    DDr_Omega_r = fullfwdc * Diagonal(DDr_realspace * diag(Omega_r_realspace)) * fullinvc;
-    Dtheta_Omega_r = fullfwdc * Diagonal(DDtheta_realspace * diag(Omega_r_realspace)) * fullinvc;
-    DDr_Omega_theta = fullfwdc * Diagonal(DDr_realspace * diag(Omega_theta_realspace)) * fullinvc;
-    Dtheta_Omega_theta = fullfwdc * Diagonal(DDtheta_realspace * diag(Omega_theta_realspace)) * fullinvc;
-
-    DDV_V0 = fullfwdc * Diagonal(fullinv * DD_V * fullfwd * diag(V0_realspace)) * fullinvc;
-
-    DDtheta_V0 = fullfwdc * Diagonal(DDtheta_realspace * diag(V0_realspace)) * fullinvc;
-
-    DDtheta_sintheta_mat = sintheta_mat*DDtheta + costheta_mat;
-
-    m_over_sintheta = m*onebysintheta_mat;
-
-    # im_vr_V = 0
-    im_vr_im_W = collect(-onebyr_mat^2*laplacianh);
-    vr_W = im_vr_im_W;
-    im_r_vr_im_W = collect(-onebyr_mat*laplacianh);
-    im_r2_vr_im_W = collect(-laplacianh);
-    vr_im_W = -im*im_vr_im_W;
-
-    im_r_vtheta_V = collect(-m_over_sintheta);
-    im_r_vtheta_im_W = collect(DDtheta*DD_W);
-    im_vtheta_im_W = collect(onebyr_mat * im_r_vtheta_im_W);
-
-    m_over_r_sintheta = m * one_over_rsintheta;
-
-    im_vtheta_V = collect(-m_over_r_sintheta);
-    vtheta_V = -im*im_vtheta_V;
-    im_vtheta_im_W = collect(DDtheta*(onebyr_mat*DD_W));
-    vtheta_W = im_vtheta_im_W;
-    vtheta_im_W = -im*im_vtheta_im_W;
-
-    vphi_V = collect(-onebyr_mat*DDtheta);
-    im_vphi_V = im*vphi_V;
-    r_vphi_V = collect(-DDtheta);
-    vphi_im_W = collect(-m_over_r_sintheta*DD_W);
-    im_vphi_im_W = im*vphi_im_W;
-    r_vphi_im_W = collect(-m_over_sintheta*DD_W);
-
-    omega_r_V = collect(-onebyr_mat^2*laplacianh);
-    r2_omega_r_V = collect(-laplacianh);
-
-    omega_theta_V = collect(onebyr_mat*DDr*DDtheta);
-    omega_theta_im_W = collect(-m_over_r_sintheta*(laplacianh*onebyr2_mat + DDr*DD_W));
-
-    im_omega_phi_V = collect(-m_over_r_sintheta*DD_V);
-    im_omega_phi_im_W = collect(onebyr_mat*DDtheta*(DDr*DD_W + onebyr_mat^2 * laplacianh));
-
-    # T2 terms
-
-    T2r_V = 2sintheta_mat*vphi_V;
-    T2r_im_W = 2sintheta_mat*vphi_im_W - m*im_vr_im_W;
-    T2θ_V = 2costheta_mat*vphi_V - m*im_vtheta_V;
-    T2θ_im_W = 2costheta_mat*vphi_im_W - m*im_vtheta_im_W;
-    T2ϕ_V = -(m*im_vphi_V + 2costheta_mat*vtheta_V);
-    T2ϕ_im_W = -(m*im_vphi_im_W + 2costheta_mat*vtheta_im_W + 2sintheta_mat*vr_im_W);
-
-    # single curl terms
-
-    curlT2_direct_r_V = r_mat*(m*(DDtheta + 3cottheta_mat)*vphi_V
-    -((m^2*I + 2collect(cos2theta_mat))*onebysintheta_mat-2costheta_mat*DDtheta)*im_vtheta_V
-    );
-
-    curlT2_direct_r_im_W = r_mat*(m*(DDtheta + 3cottheta_mat)*vphi_im_W
-    -((m^2*I + 2collect(cos2theta_mat))*onebysintheta_mat-2costheta_mat*DDtheta)*im_vtheta_im_W
-    -(2sintheta_ddtheta_mat + 4costheta_mat)*im_vr_im_W
-    );
-
-    curlT2_direct_θ_V = onebyr_mat * (m*onebysintheta_mat*T2r_V + r_mat*(DD_V + onebyr_mat)*real(im*T2ϕ_V));
-    curlT2_direct_θ_im_W = onebyr_mat * (m*onebysintheta_mat*T2r_im_W + r_mat*(DD_W + onebyr_mat)*real(im*T2ϕ_im_W));
-    curlT2_direct_ϕ_V = onebyr_mat * (r_mat*(DD_V + onebyr_mat)*T2θ_V - DDtheta * T2r_V);
-    curlT2_direct_ϕ_im_W = onebyr_mat * (r_mat*(DD_W + onebyr_mat)*T2θ_im_W - DDtheta * T2r_im_W);
-
-    # double curl terms
-
-    curl_curl_T2_direct_r_V = (-r_mat*onebysintheta_mat)*(
-        DDtheta_sintheta_mat*real(im*curlT2_direct_ϕ_V) - m*curlT2_direct_θ_V
-    );
-    curl_curl_T2_direct_r_im_W = (-r_mat*onebysintheta_mat)*(
-        DDtheta_sintheta_mat*real(im*curlT2_direct_ϕ_im_W) - m*curlT2_direct_θ_im_W
-    );
-
-    OperatorMatrix(curlT2_direct_r_V, curlT2_direct_r_im_W, curl_curl_T2_direct_r_V, curl_curl_T2_direct_r_im_W)
-end
-
-function uniform_rotation_spectrum(nr, nℓ, m, operators = radial_operators(nr, nℓ))
-    (; C, ZC) = RossbyWaveSpectrum.constraintmatrix(operators);
-
-    M = RossbyWaveSpectrum.twoΩcrossv(nr, nℓ, m; operators);
-
-    # Two possible ways to evaluate the eigenvalues
-    # The first seems to produce slightly better conditioned matrices
-    M_constrained = ZC'*M*ZC
-    λ, w = eigen!(M_constrained);
-    v = ZC*w
-    λ, v
-
-    # Z = Zeros(size(C, 1), size(M,2) + size(C, 1) - size(C,2))
-    # M_constrained = [M C'
-    #                  C Z];
-    # λ, v = eigen!(M_constrained);
-    # λ, v[1:end - size(C,1), :]
+    Z = Zeros(size(BC, 1), size(M,2) + size(BC, 1) - size(BC,2))
+    M_constrained = [M BC'
+                     BC Z];
+    λ, v = eigen!(M_constrained);
+    λ, v[1:end - size(BC,1), :]
 end
 
 function real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop)
@@ -770,53 +760,51 @@ function real_to_r_assocleg(ΔΩ_r_thetaGL, operators, thetaop)
     PaddedMatrix((PLMfwd ⊗ Ir) * Diagonal(vec(ΔΩ_r_thetaGL)) * (PLMinv ⊗ Ir), pad)
 end
 
-function differential_rotation_spectrum(nr, nℓ, m, operators = radial_operators(nr, nℓ))
-    (; C) = RossbyWaveSpectrum.constraintmatrix(operators);
+function differential_rotation_spectrum(nr, nℓ, m; operators = radial_operators(nr, nℓ), test = false, kw...)
+    (; BC) = constraintmatrix(operators);
 
-    uniform_rot_operators = RossbyWaveSpectrum.twoΩcrossv(nr, nℓ, m; operators);
-    diff_rot_operators = RossbyWaveSpectrum.diffrotterms2(nr, nℓ, m, operators);
+    uniform_rot_operators = twoΩcrossv(nr, nℓ, m; operators);
+    diff_rot_operators = diffrotterms(nr, nℓ, m; operators, test = test);
 
     M = uniform_rot_operators + diff_rot_operators;
 
-    Z = Zeros(size(C, 1), size(M,2) + size(C, 1) - size(C,2))
+    Z = Zeros(size(BC, 1), size(M,2) + size(BC, 1) - size(BC,2))
 
-    M_constrained = [M C'
-                    C Z];
+    M_constrained = [M BC'
+                    BC Z];
 
     λ, v = eigen!(M_constrained);
-    λ, v[1:end - size(C,1), :]
+    λ, v[1:end - size(BC,1), :]
 end
 
 rossby_ridge(m, ℓ = m) = 2m/(ℓ*(ℓ+1))
-eigenvalue_filter(x, m) = isreal(x) && 0 < real(x) < 4rossby_ridge(m)
+eigenvalue_filter(x, m) = isreal(x) && -4m < real(x) < 4rossby_ridge(m)
 eigenvector_filter(v, C, atol = 1e-5) = norm(C * v) < atol
 
 function filter_eigenvalues(f, nr, nℓ, m::Integer; operators = radial_operators(nr, nℓ),
-        atol_constraint = 1e-5, Δl_cutoff = 5, power_cutoff = 0.9)
+        atol_constraint = 1e-5, Δl_cutoff = 5, power_cutoff = 0.9, kw...)
 
-    @show m, Libc.gethostname(), BLAS.get_num_threads()
-    (; C) = constraintmatrix(operators);
-    lam::Vector{ComplexF64}, v::Matrix{ComplexF64} = f(nr, nℓ, m, operators)
+    (; BC) = constraintmatrix(operators);
+    lam::Vector{ComplexF64}, v::Matrix{ComplexF64} = f(nr, nℓ, m; operators, kw...)
     filterfn(λ, v) = begin
-        # remove the lagrange multiplier elements
         eigenvalue_filter(λ, m) &&
-        eigenvector_filter(v, C, atol_constraint) &&
+        eigenvector_filter(v, BC, atol_constraint) &&
         sphericalharmonic_transform_filter(v, operators, Δl_cutoff, power_cutoff)
     end
     filtinds = axes(lam, 1)[filterfn.(lam, eachcol(v))]
     real(lam[filtinds]), v[:, filtinds]
 end
 
-function filter_eigenvalues_mrange(f, nr, nℓ, mr::AbstractVector; kw...)
-    map(m -> filter_eigenvalues(f, nr, nℓ, m; kw...), mr)
+function filter_eigenvalues_mrange(f, nr, nℓ, mr::AbstractVector; operators = radial_operators(nr, nℓ), kw...)
+    map(m -> filter_eigenvalues(f, nr, nℓ, m; operators, kw...), mr)
 end
 
 function save_eigenvalues(f, nr, nℓ, mr;
     operators = radial_operators(nr, nℓ), atol_constraint = 1e-5,
-    Δl_cutoff = 5, power_cutoff = 0.9)
+    Δl_cutoff = 5, power_cutoff = 0.9, kw...)
 
     λv = filter_eigenvalues_mrange(f, nr, nℓ, mr;
-        operators, atol_constraint, Δl_cutoff, power_cutoff)
+        operators, atol_constraint, Δl_cutoff, power_cutoff, kw...)
     lam = first.(λv);
     vec = last.(λv);
     fname = joinpath(DATADIR[], "rossby_$(string(nameof(f)))_nr$(nr)_nell$(nℓ).jld2")
@@ -832,7 +820,8 @@ function plot_rossby_ridges(mr)
         plot(mr, (m -> rossby_ridge(m, m+Δℓ)).(mr), color = linecolors[Δℓind], label="ℓ = m + $Δℓ",
         marker="None")
     end
-    # plot(mr, 1.5 .*rossby_ridge.(mr) .- mr, color = "green", label = "-m + 1.5 * 2/(m+1)")
+    mul = 1
+    plot(mr, (1 + mul) .*rossby_ridge.(mr) .- mul*mr, color = "orange", label = "-$mul*m + $(1 + mul) * 2/(m+1)")
 end
 
 function plot_eigenvalues(f, nr, nℓ, mr::AbstractVector; kw...)
@@ -917,7 +906,7 @@ function eigenfunction_rad_sh(v, operators, VW = eigenfunction_cheby_ℓm_spectr
     (; V, W)
 end
 
-function spharm_θ_grid_uniform(m, nℓ, ℓmax_mul = 1)
+function spharm_θ_grid_uniform(m, nℓ, ℓmax_mul = 4)
     ℓs = range(m, length = nℓ)
     ℓmax = maximum(ℓs);
 
@@ -973,6 +962,10 @@ function eigenfunction_rossbyridge(lam, v, m, operators)
     minind = argmin(abs.(lam .- rossby_ridge(m)))
     (; V, θ) = eigenfunction_realspace(v[:, minind], m, operators)
     Vr = real(V)
+    Vrmax = maximum(Vr)
+    if Vrmax != 0
+        Vr ./= Vrmax
+    end
     (; coordinates, params) = operators;
     (; r) = coordinates;
     nθ = length(θ)
@@ -987,6 +980,11 @@ function eigenfunction_rossbyridge(lam, v, m, operators)
     ax2.set_xlabel("θ", fontsize=12)
     ax2.set_ylabel("r", fontsize=12)
     tight_layout()
+end
+
+function eigenfunction_rossbyridge(nr, nℓ, m; operators = radial_operators(nr, nℓ))
+    λ, v = filter_eigenvalues(uniform_rotation_spectrum, nr, nℓ, m);
+    eigenfunction_rossbyridge(λ, v, m, operators)
 end
 
 end # module
