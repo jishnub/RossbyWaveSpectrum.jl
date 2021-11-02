@@ -1,20 +1,30 @@
 using RossbyWaveSpectrum
 
-const nr = 32;
-const ntheta = 256;
-const mrange = 5:6;
+nr = 50;
+nℓ = 64;
+mrange = 5:10;
 
 # boundary condition tolerance
-const atol_constraint = 1e-5
+atol_constraint = 1e-5
 
 # filtering parameters
-const Δl_cutoff = 5
-const power_cutoff = 0.9;
+Δl_cutoff = 10;
+power_cutoff = 0.9;
+eigen_rtol = 0.1;
 
-@show nr ntheta mrange
+subtract_doppler = false
+test = true
+ΔΩscale = 1
 
-@time RossbyWaveSpectrum.save_eigenvalues(
-    RossbyWaveSpectrum.uniform_rotation_spectrum,
-    nr, ntheta, mrange;
-    atol_constraint, Δl_cutoff, power_cutoff)
-# @time RossbyWaveSpectrum.save_eigenvalues(RossbyWaveSpectrum.differential_rotation_spectrum, nr, ntheta, mrange)
+f = RossbyWaveSpectrum.uniform_rotation_spectrum
+# f = RossbyWaveSpectrum.differential_rotation_spectrum
+# f = RossbyWaveSpectrum.differential_rotation_spectrum_constantΩ
+@show nr nℓ mrange f
+@show Threads.nthreads()
+
+# precompile
+RossbyWaveSpectrum.filter_eigenvalues(f, 4, 4, 1)
+
+@time RossbyWaveSpectrum.save_eigenvalues(f, nr, nℓ, mrange;
+    atol_constraint, Δl_cutoff, power_cutoff,
+    subtract_doppler, ΔΩscale, test, eigen_rtol)

@@ -1,23 +1,25 @@
 module RossbyWaveSpectrum
 
-using LinearAlgebra
-using LinearAlgebra: AbstractTriangular
-using MKL
-using FillArrays
-using Kronecker
-using Kronecker: KroneckerProduct
 using BlockArrays
-using UnPack
-using PyPlot
-using LaTeXStrings
-using OffsetArrays
 using DelimitedFiles
 using Dierckx
 using Distributed
-using JLD2
+using FastGaussQuadrature
 using FastSphericalHarmonics
 using FastTransforms
-using FastGaussQuadrature
+using FillArrays
+using Folds
+using ForwardDiff
+using LinearAlgebra
+using LinearAlgebra: AbstractTriangular, BLAS
+using JLD2
+using Kronecker
+using Kronecker: KroneckerProduct
+using LaTeXStrings
+using MKL
+using OffsetArrays
+using PyCall
+using PyPlot
 using SphericalHarmonics
 using Trapz
 using TimerOutputs
@@ -28,9 +30,12 @@ export datadir
 const SCRATCH = Ref("")
 const DATADIR = Ref("")
 
+const ticker = PyNULL()
+
 function __init__()
     SCRATCH[] = get(ENV, "SCRATCH", homedir())
     DATADIR[] = get(ENV, "DATADIR", joinpath(SCRATCH[], "RossbyWaves"))
+    copy!(ticker,  pyimport("matplotlib.ticker"))
 end
 
 datadir(f) = joinpath(DATADIR[], f)
@@ -56,13 +61,11 @@ function intPl1mP′l20Pl3m(ℓ1,ℓ2,ℓ3,m)
     return oftype(0.0, sum(√((2ℓ2+1)*(2n+1))*intPl1mPl20Pl3m(ℓ1,n,ℓ3,m) for n in ℓ2-1:-2:0))
 end
 
-
-function chebyshevnodes(n, a, b)
+function chebyshevnodes(n, a = -1, b = 1)
     nodes = cos.(reverse(pi*((1:n) .- 0.5)./n))
     nodes_scaled = nodes*(b - a)/2 .+ (b + a)/2
     nodes, nodes_scaled
 end
-chebyshevnodes(n) = chebyshevnodes(n, -1, 1)
 
 function legendretransform!(v::AbstractVector, PC = plan_chebyshevtransform!(v), PC2L = plan_cheb2leg(v))
     v2 = PC * v
@@ -203,8 +206,13 @@ function chebyshevderiv(n)
     UpperTriangular(transpose(M))
 end
 
+function chebyshev_integrate(y)
+    n = length(y)
+    sum(yi * sin((2i-1)/2n*pi) * pi/n for (i, yi) in enumerate(y))
+end
+
 """
-    constraintmatrix(params)
+    constraintmatrix(radial_params)
 
 Evaluate the matrix ``F`` that captures the constriants on the Chebyshev coefficients
 of ``V`` and ``W``, such that
@@ -213,8 +221,8 @@ F * [V_{11}, ⋯, V_{1k}, ⋯, V_{n1}, ⋯, V_{nk}, W_{11}, ⋯, W_{1k}, ⋯, W_
 ```
 """
 function constraintmatrix(operators)
-    (; params) = operators;
-    (; nr, r_in, r_out, nℓ) = params;
+    (; radial_params) = operators;
+    (; nr, r_in, r_out, nℓ) = radial_params;
 
     nparams = nr*nℓ;
 
@@ -262,11 +270,12 @@ end
 
 function parameters(nr, nℓ)
     nchebyr = nr;
-    r_in = 0.5;
+    r_in = 0.2;
     r_out = 0.985;
+    r_mid = (r_in + r_out)/2
     Δr = r_out - r_in
     nparams = nchebyr * nℓ;
-    return (; nchebyr, r_in, r_out, Δr, nr, nparams, nℓ)
+    return (; nchebyr, r_in, r_out, Δr, nr, nparams, nℓ, r_mid)
 end
 
 include("identitymatrix.jl")
@@ -278,7 +287,7 @@ function chebyshev_forward_inverse(n, boundaries...)
     nodes, r = chebyshevnodes(n, boundaries...);
     Tc = chebyshevpoly(n, nodes);
     Tcfwd = Tc' * 2 /n;
-    Tcfwd[1, :] /= 2
+    Tcfwd[1, :] ./= 2
     Tcinv = Tc;
     r, Tcfwd, Tcinv
 end
@@ -308,9 +317,168 @@ function sintheta_dtheta_operator(nℓ, m, pad = nℓ)
     PaddedMatrix(M, pad)
 end
 
+function ζfn(r, Binv_params)
+    (; c0, c1, radial_params) = Binv_params;
+    (; Δr) = radial_params;
+    c0 + c1 * Δr /r
+end
+function ηfn(r, Binv_params)
+    (; npol) = Binv_params
+    npol * ForwardDiff.derivative(r -> log(ζfn(r, Binv_params)), r)
+end
+function ρfn(r, Binv_params)
+    (; npol) = Binv_params;
+    ρ0 = 1 # need to determine this
+    # Dr is independent of this, although the Green function depends on this
+    # ρ0 * exp(ηfn(r, Binv_params) * r)
+    ρ0 * ζfn(r, Binv_params)^npol
+end
+
+w1(r, ℓ, r_in, r_out) = r^(ℓ+1)-(r_in^(2ℓ+1))/r^ℓ
+w2(r, ℓ, r_in, r_out) = r^(ℓ+1)-(r_out^(2ℓ+1))/r^ℓ
+w1w2(r, s, ℓ, r_in, r_out) = w1(r, ℓ, r_in, r_out)*w2(s, ℓ, r_in, r_out)
+
+function greenfn_realspace(r, s, ℓ, Binv_params)
+    @assert ℓ >= 0
+    (; radial_params) = Binv_params;
+    (; r_in, r_out) = radial_params;
+    @assert r_out > r_in
+    @assert r_in <= r <= r_out
+    @assert r_in <= s <= r_out
+    Wronskian = (2ℓ+1)*(r_out^(2ℓ+1) - r_in^(2ℓ+1))
+    T = (s <= r) ? w1w2(s, r, ℓ, r_in, r_out) : w1w2(r, s, ℓ, r_in, r_out)
+    prefactor = 1/ (ρfn(r, Binv_params) * ρfn(s, Binv_params))
+    prefactor * (T / Wronskian)
+end
+
+function greenfn_realspace_F2(r, s, ℓ, Binv_params)
+    prefactor = 1/ ρfn(s, Binv_params)^2
+    prefactor * greenfn_realspace_ρs2F2(r, s, ℓ, Binv_params)
+end
+function greenfn_realspace_ρs2F2(r, s, ℓ, Binv_params)
+    @assert ℓ >= 0
+    (; radial_params) = Binv_params;
+    (; r_in, r_out) = radial_params;
+    @assert r_out > r_in
+    @assert r_in <= r <= r_out
+    @assert r_in <= s <= r_out
+    Wronskian = (2ℓ+1)*(r_out^(2ℓ+1) - r_in^(2ℓ+1))
+    T = (s <= r) ? w1w2(s, r, ℓ, r_in, r_out) : w1w2(r, s, ℓ, r_in, r_out)
+    (T / Wronskian)
+end
+function greenfn_realspace_F(r, s, ℓ, Binv_params)
+    G = greenfn_realspace(r, s, ℓ, Binv_params)
+    ρfn(r, Binv_params)/ρfn(s, Binv_params) * G
+end
+
+∂r(f, r, args...) = ForwardDiff.derivative(r -> f(r, args...), r)
+function ∂2r(f, r, s, ℓ, Binv_params)
+    if r != s
+        return ∂r(∂r(f), r, s, ℓ, Binv_params)
+    else
+        # finite difference
+        rleft = prevfloat(r)
+        rright = nextfloat(r)
+        Δr = rright - rleft
+        return (∂r(f)(rright, s, ℓ, Binv_params) - ∂r(f)(rleft, s, ℓ, Binv_params))/Δr
+    end
+end
+
+∂s(f, r, s, args...) = ForwardDiff.derivative(s -> f(r, s, args...), s)
+function ∂2s(f, r, s, ℓ, Binv_params)
+    if r != s
+        return ∂s(∂s(f), r, s, ℓ, Binv_params)
+    else
+        # finite difference
+        sleft = prevfloat(s)
+        sright = nextfloat(s)
+        Δs = sright - sleft
+        return (∂s(f)(r, sright, ℓ, Binv_params) - ∂s(f)(r, sleft, ℓ, Binv_params))/Δs
+    end
+end
+
+for (var, fD, fd) in [(:r, :Dr, :∂r), (:r, :D2r, :∂2r), (:s, :Ds, :∂s), (:s, :D2s, :∂2s)]
+    @eval function $fD(f, r, s, ℓ, Binv_params)
+        ρf = (r, s, ℓ, Binv_params) -> ρfn($var, Binv_params) * f(r, s, ℓ, Binv_params)
+        1/ρfn($var, Binv_params) * $fd(ρf, r, s, ℓ, Binv_params)
+    end
+end
+function Bℓ(f, r, s, ℓ, Binv_params)
+    D2r(f, r, s, ℓ, Binv_params) - ℓ*(ℓ+1)/r^2 * f(r, s, ℓ, Binv_params)
+end
+function Bℓadj(f, r, s, ℓ, Binv_params)
+    D2s(f, r, s, ℓ, Binv_params) - ℓ*(ℓ+1)/s^2 * f(r, s, ℓ, Binv_params)
+end
+function Cℓ(f, r, s, ℓ, Binv_params)
+    Dr(f, r, s, ℓ, Binv_params) - (ℓ*(ℓ+1)/r) * f(r, s, ℓ, Binv_params)
+end
+function Cℓadj(f, r, s, ℓ, Binv_params)
+   -Ds(f, r, s, ℓ, Binv_params) - (ℓ*(ℓ+1)/s) * f(r, s, ℓ, Binv_params)
+end
+
+for f in [:∂r, :∂s, :∂2r, :∂2s, :Dr, :Ds, :D2r, :D2s, :Bℓ, :Bℓadj, :Cℓ, :Cℓadj]
+    @eval $f(g) = (t...) -> $f(g, t...)
+end
+
+function greenfn_realspace_apply(f, ℓ, operators)
+    (; Binv_params, coordinates) = operators;
+    (; r) = coordinates;
+    f.(r, r', ℓ, Ref(Binv_params))
+end
+function greenfn_cheby_apply(f, ℓ, operators)
+    (; transforms) = operators;
+    (; Tcrfwd, Tcrinv) = transforms;
+    G = greenfn_realspace_apply(f, ℓ, operators)
+    Tcrfwd * G * Tcrinv
+end
+
+function greenfn_realspace_analytical(ℓ, operators)
+    (; radial_params, Binv_params, coordinates) = operators;
+    (; r) = coordinates;
+    (; Δr) = radial_params;
+    ρs = ρfn.(r, (Binv_params,))
+    G = greenfn_realspace_apply(greenfn_realspace, ℓ, operators)
+    G .*= Δr/2 .* (ρs').^2
+    return G
+end
+function greenfn_cheby_analytical(ℓ, operators)
+    (; transforms) = operators;
+    (; Tcrfwd, Tcrinv) = transforms;
+    G = greenfn_realspace_analytical(ℓ, operators)
+    Tcrfwd * G * Tcrinv
+end
+function greenfn_cheby_numerical(ℓ, operators)
+    (; scratch, diff_operators, rad_terms) = operators;
+    (; D2Dr2) = diff_operators;
+    (; onebyr2_cheby) = rad_terms;
+    (; Bℓ) = scratch;
+    (; ZW) = constraintmatrix(operators);
+    @. Bℓ = D2Dr2 - ℓ*(ℓ+1) * onebyr2_cheby
+    ZW * ((ZW' * Bℓ * ZW) \ ZW')
+end
+function greenfn_realspace_numerical2(ℓ, operators)
+    (; scratch, diff_operators, rad_terms, transforms) = operators;
+    (; D2Dr2) = diff_operators;
+    (; onebyr2_cheby) = rad_terms;
+    (; Bℓ) = scratch;
+    (; Tcrinv, Tcrfwd) = transforms;
+    @. Bℓ = D2Dr2 - ℓ*(ℓ+1) * onebyr2_cheby;
+    Bℓ_realspace = Tcrinv * Bℓ * Tcrfwd;
+    G = pinv(Bℓ_realspace[2:end-1, 2:end-1])
+    A = zero(Bℓ_realspace)
+    A[2:end-1, 2:end-1] .= G
+    return A
+end
+function greenfn_cheby_numerical2(ℓ, operators)
+    (; transforms) = operators;
+    (; Tcrinv, Tcrfwd) = transforms;
+    G = greenfn_realspace_numerical2(ℓ, operators)
+    Tcrfwd * G * Tcrinv
+end
+
 function radial_operators(nr, nℓ)
-    params = parameters(nr, nℓ);
-    (; r_in, r_out, Δr, nchebyr) = params;
+    radial_params = parameters(nr, nℓ);
+    (; r_in, r_out, Δr, nchebyr) = radial_params;
     r, Tcrfwd, Tcrinv = chebyshev_forward_inverse(nr, r_in, r_out);
     r_cheby = Tcrfwd * Diagonal(r) * Tcrinv
 
@@ -324,32 +492,30 @@ function radial_operators(nr, nℓ)
 
     diml = 696e6;
     dimT = 1/(2 * pi * 453e-9);
-    dimrho = 0.2;
-    dimp = dimrho * diml^2/dimT^2;
-    dimtemp = 6000;
+    # dimrho = 0.2;
+    # dimp = dimrho * diml^2/dimT^2;
+    # dimtemp = 6000;
     Nrho = 3;
     npol = 2.6;
     betapol = r_in / r_out; rhoc = 2e-1;
     gravsurf=278; pc = 1e10;
-    R = 8.314 * dimrho * dimtemp/dimp;
-    G = 6.67e-11; Msol = 2e30;
+    # R = 8.314 * dimrho * dimtemp/dimp;
+    # G = 6.67e-11; Msol = 2e30;
     zeta0 = (betapol + 1)/(betapol * exp(Nrho/npol) + 1);
-    zetai = (1 + betapol - zeta0)/betapol;
-    Cp = (npol + 1) * R; gamma_ind = (npol+1)/npol; Cv = npol * R;
+    # zetai = (1 + betapol - zeta0)/betapol;
+    # Cp = (npol + 1) * R; gamma_ind = (npol+1)/npol; Cv = npol * R;
     c0 = (2 * zeta0 - betapol - 1)/(1-betapol);
     #^c1 = G * Msol * rhoc/((npol+1)*pc * Tc * (r_out-r_in));
     c1 = (1-zeta0)*(betapol + 1)/(1-betapol)^2;
-    ζfn(r) = c0 + c1 * Δr /r
-    zeta = ζfn.(r);
+    Binv_params = (; c0, c1, npol, radial_params);
+    zeta = ζfn.(r, Ref(Binv_params));
     dzeta_dr = @. -c1 * Δr /r^2;
-    d2zeta_dr2 = @. 2 * c1 * Δr /r^3;
+    # d2zeta_dr2 = @. 2 * c1 * Δr /r^3;
     grav = @. -pc / rhoc * (npol+1) * dzeta_dr;
     pc = gravsurf .* pc/minimum(grav);
     grav = grav .* gravsurf ./ minimum(grav) * dimT^2/diml;
     ηρ = @. npol/zeta*dzeta_dr;
-    ηρ_integral = @. npol * log(zeta)
-    ηρ_integral .-= first(ηρ_integral)
-    ηρ_definite_integral(r, s) = npol * log(ζfn(s)/ζfn(r))
+
     # drhrho = @. (- npol/zeta^2 * (dzeta_dr)^2 + npol/zeta * d2zeta_dr2);
     ηρ_cheby = Tcrfwd * Diagonal(ηρ) * Tcrinv;
 
@@ -361,9 +527,9 @@ function radial_operators(nr, nℓ)
 
     # scratch matrices
     # B = D2Dr2 - ℓ(ℓ+1)/r^2
-    B = zero(D2Dr2);
+    Bℓ = zero(D2Dr2);
     Cℓ′ = zero(DDr);
-    BinvCℓ′ = zero(DDr);
+    Gℓ = zero(DDr);
 
     Ir = IdentityMatrix(nchebyr);
     Iℓ = PaddedMatrix(IdentityMatrix(2nℓ), nℓ);
@@ -373,49 +539,34 @@ function radial_operators(nr, nℓ)
     transforms = (; Tcrfwd, Tcrinv, FTcrinv);
     rad_terms = (; onebyr, onebyr_cheby, ηρ, ηρ_cheby, onebyr2_cheby);
     diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr, ddr);
-    scratch = (; B, Cℓ′, BinvCℓ′);
+    scratch = (; Bℓ, Cℓ′, Gℓ);
 
-    (; rad_terms, diff_operators, transforms, coordinates, params, scratch, identities)
-end
-
-w1(r, ℓ, r_in, r_out) = r^(ℓ+1)-(r_in^(2ℓ+1))/r^ℓ
-w2(r, ℓ, r_in, r_out) = r^(ℓ+1)-(r_out^(2ℓ+1))/r^ℓ
-w1w2(r, s, ℓ, r_in, r_out) = w1(r, ℓ, r_in, r_out)*w2(s, ℓ, r_in, r_out)
-function Binv_realspace(r, s, ℓ, r_in, r_out, ηρ_definite_integral)
-    @assert ℓ >= 0
-    @assert r_out > r_in
-    @assert r_in <= r <= r_out
-    @assert r_in <= s <= r_out
-    W = (2ℓ+1)*(r_out^(2ℓ+1) - r_in^(2ℓ+1))
-    T = (s <= r) ? w1w2(s, r, ℓ, r_in, r_out) : w1w2(r, s, ℓ, r_in, r_out)
-    p = exp(ηρ_definite_integral(r, s))
-    p*T/W
-end
-function Binv_realspace(r::AbstractVector, ℓ, ηρ_definite_integral)
-    r_in, r_out = extrema(r)
-    Binv_realspace.(r, r', ℓ, r_in, r_out, ηρ_definite_integral)
+    (; rad_terms, diff_operators, transforms, coordinates, radial_params, scratch, identities, Binv_params)
 end
 
 function twoΩcrossv(nr, nℓ, m; operators = radial_operators(nr, nℓ))
-    (; params) = operators;
+    (; radial_params) = operators;
     (; rad_terms, diff_operators, scratch) = operators;
 
-    (; nchebyr) = params;
+    (; nchebyr) = radial_params;
 
     (; DDr, D2Dr2, DDr_minus_2byr) = diff_operators;
     (; onebyr_cheby, onebyr2_cheby) = rad_terms;
-    (; B, Cℓ′, BinvCℓ′) = scratch;
+    (; Bℓ, Cℓ′, Gℓ) = scratch;
+    TWVℓ′ = similar(Cℓ′);
+    TVWℓ′ = similar(Cℓ′);
+    GℓC1 = similar(Cℓ′);
+    GℓCℓ′ = similar(Cℓ′);
 
     nparams = nchebyr * nℓ;
     ℓmin = m;
     ℓs = range(ℓmin, length = nℓ);
 
-    D = 2m * Diagonal(@. 1/(ℓs*(ℓs + 1))) ⊗ I(nchebyr);
+    A = 2m * Diagonal(@. 1/(ℓs*(ℓs + 1))) ⊗ I(nchebyr);
+    D = A;
 
-    A = zeros(nparams, nparams);
+    B = zeros(nparams, nparams);
     C = zeros(nparams, nparams);
-
-    (; ZW) = constraintmatrix(operators);
 
     C1 = DDr_minus_2byr;
 
@@ -423,40 +574,48 @@ function twoΩcrossv(nr, nℓ, m; operators = radial_operators(nr, nℓ))
     sinθdθ = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs);
 
     for ℓ in ℓs
-        @. B = D2Dr2 - ℓ*(ℓ+1) * onebyr2_cheby
-        B2 = ZW' * B * ZW;
-        F = lu!(B2)
+        @. Bℓ = D2Dr2 - ℓ*(ℓ+1) * onebyr2_cheby;
+
         ABℓ′top = (ℓ - minimum(m)) * nchebyr + 1;
         ACℓ′vertinds = range(ABℓ′top, length = nr);
 
+        # numerical green function
+        Gℓ = greenfn_cheby_numerical2(ℓ, operators);
+        GℓC1 .= Gℓ * C1;
+
         for ℓ′ in ℓ-1:2:ℓ+1
             ℓ′ in ℓs || continue
-            @. Cℓ′ = DDr - ℓ′*(ℓ′+1) * onebyr_cheby
-            @. Cℓ′ = -2/(ℓ*(ℓ+1))*(ℓ′*(ℓ′+1)*C1*cosθ[ℓ, ℓ′] + Cℓ′*sinθdθ[ℓ, ℓ′])
-            BinvCℓ′ .= ZW * (F \ (ZW' * Cℓ′))
+            @. Cℓ′ = DDr - ℓ′*(ℓ′+1) * onebyr_cheby;
+            GℓCℓ′ .= Gℓ * Cℓ′;
+            @. TVWℓ′ = -2/(ℓ*(ℓ+1))*(ℓ′*(ℓ′+1)*C1*cosθ[ℓ, ℓ′] + Cℓ′*sinθdθ[ℓ, ℓ′]);
+            @. TWVℓ′ = -2/(ℓ*(ℓ+1))*(ℓ′*(ℓ′+1)*GℓC1*cosθ[ℓ, ℓ′] + GℓCℓ′*sinθdθ[ℓ, ℓ′]);
+
             ABℓ′left = (ℓ′ - minimum(m)) * nchebyr + 1
             ACℓ′horinds = range(ABℓ′left, length = nr);
             ACℓℓ′inds = CartesianIndices((ACℓ′vertinds, ACℓ′horinds));
-            A[ACℓℓ′inds] .= Cℓ′
-            C[ACℓℓ′inds] .= BinvCℓ′
+
+            B[ACℓℓ′inds] .= TVWℓ′
+            C[ACℓℓ′inds] .= TWVℓ′
         end
     end
 
-    [D  A
+    [A  B
      C  D];
 end
 
-function interp1d(xin, z, xout)
-    spline = Spline1D(xin, z)
+function interp1d(xin, z, xout; s = 0.0)
+    spline = Spline1D(xin, z; s)
     spline(xout)
 end
 
-function interp2d(xin, yin, z, xout, yout)
-    spline = Spline2D(xin, yin, z)
+function interp2d(xin, yin, z, xout, yout; s = 0.0)
+    spline = Spline2D(xin, yin, z; s)
     evalgrid(spline, xout, yout)
 end
 
-function read_angular_velocity(operators, thetaGL; test = false)
+function read_angular_velocity(operators, thetaGL;
+        test = false, ΔΩscale = 1, r_ΔΩcutoff = 0.4)
+
     (; coordinates) = operators;
     (; r) = coordinates;
 
@@ -480,14 +639,12 @@ function read_angular_velocity(operators, thetaGL; test = false)
     if test
         ΔΩ_r_chebytheta .= 1
         ΔΩ_r_thetaGL .= 1
+        r_min, r_max = extrema(r)
+        mask = @. 0.5 - 1/pi * atan(10*(r - r_ΔΩcutoff)/abs((r - r_min)*(r - r_max)));
+        mask .*= (ΔΩscale - 1) / mask[1];
+        ΔΩ_r_chebytheta .*= mask
+        ΔΩ_r_thetaGL .*= mask
     end
-
-    # # doubled below 0.7R
-    # r_min, r_max = extrema(r)
-    # r_mid = (r_min + r_max)/2
-    # mask = @. 1 - 2/pi * atan((r - r_mid)/abs((r - r_min)*(r - r_max)))
-    # ΔΩ_r_chebytheta .*= mask
-    # ΔΩ_r_thetaGL .*= mask
 
     ΔΩ_r_Legendre = normalizedlegendretransform2(ΔΩ_r_chebytheta);
 
@@ -507,8 +664,8 @@ end
 velocity_from_angular_velocity(Ω, r, sintheta) = Ω .* sintheta' .* r;
 
 function invsinθ_dθ_ωΩr_operator(ΔΩ_r_Legendre, m, operators)
-    (; transforms, params) = operators;
-    (; nparams, nℓ) = params;
+    (; transforms, radial_params) = operators;
+    (; nparams, nℓ) = radial_params;
     (; Tcrfwd, Tcrinv) = transforms;
     ℓs = range(m, length = 2nℓ);
     ΔΩ_r_Legendre_of = OffsetArray(ΔΩ_r_Legendre, :, 0:size(ΔΩ_r_Legendre, 2)-1);
@@ -531,8 +688,8 @@ function invsinθ_dθ_ωΩr_operator(ΔΩ_r_Legendre, m, operators)
 end
 
 function apply_radial_operator(op_cheby, ΔΩ_r_ℓℓ′, m, operators)
-    (; params, transforms) = operators;
-    (; nℓ, nr, nparams) = params;
+    (; radial_params, transforms) = operators;
+    (; nℓ, nr, nparams) = radial_params;
     ℓs = range(m, length = 2nℓ);
     (; Tcrfwd, Tcrinv) = transforms;
     op_realspace = Tcrinv * op_cheby * Tcrfwd
@@ -587,15 +744,14 @@ function ΔΩ_terms(ΔΩ_r_ℓℓ′, m, operators)
 end
 
 function curl_curl_matrix_terms(m, operators, ω_terms, ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, Cosθ, Sinθdθ, ℓs)
-    (; params, rad_terms, diff_operators, identities, coordinates, scratch) = operators;
+    (; radial_params, rad_terms, diff_operators, identities, scratch) = operators;
     (; ZW) = constraintmatrix(operators);
 
-    (; r_cheby) = coordinates;
     (; Ir, Iℓ) = identities;
-    (; nchebyr, nℓ, nr) = params;
+    (; nchebyr, nℓ, nr) = radial_params;
     (; DDr, ddr, D2Dr2) = diff_operators;
     (; onebyr_cheby, onebyr2_cheby, ηρ_cheby) = rad_terms;
-    (; B) = scratch;
+    (; Bℓ) = scratch;
 
     Sin²θ = I - Cosθ^2
     Sin⁻²θ = PaddedArray(inv(Matrix(parent(Sin²θ))), nℓ)
@@ -659,8 +815,8 @@ function curl_curl_matrix_terms(m, operators, ω_terms, ΔΩ_kk′_ℓℓ′, Δ
     T_imW_imW = Matrix(T_imW_imW_sum);
 
     for ℓ in range(m, length = nℓ)
-        @. B = -ℓ*(ℓ+1) * (D2Dr2 - ℓ*(ℓ+1) * onebyr2_cheby)
-        B2 = ZW' * B * ZW;
+        @. Bℓ = -ℓ*(ℓ+1) * (D2Dr2 - ℓ*(ℓ+1) * onebyr2_cheby)
+        B2 = ZW' * Bℓ * ZW;
         F = lu!(B2)
         ABℓ′top = (ℓ - minimum(m)) * nchebyr + 1;
         ACℓ′vertinds = range(ABℓ′top, length = nr);
@@ -682,15 +838,15 @@ function curl_curl_matrix_terms(m, operators, ω_terms, ΔΩ_kk′_ℓℓ′, Δ
 end
 
 function diffrotterms(nr, nℓ, m; operators = radial_operators(nr, nℓ), thetaop = theta_operators(nℓ, m), test = false)
-    (; params, rad_terms, diff_operators, transforms, identities) = operators;
+    (; radial_params, rad_terms, diff_operators, transforms, identities) = operators;
 
     (; Ir, Iℓ) = identities;
-    (; nparams) = params;
+    (; nparams) = radial_params;
     (; Tcrfwd, Tcrinv) = transforms;
     (; DDr, DDr_minus_2byr) = diff_operators;
     (; onebyr_cheby) = rad_terms;
     (; thetaGL, PLMfwd, PLMinv) = thetaop;
-    (; nℓ, nr, nparams) = params;
+    (; nℓ, nr, nparams) = radial_params;
 
     fullfwd = kron(PLMfwd, Tcrfwd);
     fullinv = kron(PLMinv, Tcrinv);
@@ -724,29 +880,83 @@ function diffrotterms(nr, nℓ, m; operators = radial_operators(nr, nℓ), theta
     T_imW_V T_imW_imW]
 end
 
+function diffrotterms_constantΩ(nr, nℓ, m; operators = radial_operators(nr, nℓ), thetaop = theta_operators(nℓ, m), test = false)
+    (; radial_params) = operators;
+    (; rad_terms, diff_operators, scratch) = operators;
+
+    (; nchebyr) = radial_params;
+
+    (; DDr, D2Dr2, DDr_minus_2byr) = diff_operators;
+    (; onebyr_cheby, onebyr2_cheby, ηρ_cheby) = rad_terms;
+    (; Bℓ, Cℓ′, Gℓ) = scratch;
+    TWVℓ′ = similar(Cℓ′);
+    TVWℓ′ = similar(Cℓ′);
+    GℓCη = similar(Cℓ′);
+    GℓCℓ′ = similar(Cℓ′);
+
+    nparams = nchebyr * nℓ;
+    ℓmin = m;
+    ℓs = range(ℓmin, length = nℓ);
+
+    A = m * Diagonal(@. 2/(ℓs*(ℓs + 1))  - 1) ⊗ I(nchebyr);
+    D = A;
+
+    B = zeros(nparams, nparams);
+    C = zeros(nparams, nparams);
+
+    C1 = DDr_minus_2byr;
+    Cη = DDr + ηρ_cheby;
+
+    cosθ = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs);
+    sinθdθ = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs);
+
+    for ℓ in ℓs
+        @. Bℓ = D2Dr2 - ℓ*(ℓ+1) * onebyr2_cheby
+
+        ABℓ′top = (ℓ - minimum(m)) * nchebyr + 1;
+        ACℓ′vertinds = range(ABℓ′top, length = nr);
+
+        # numerical green function
+        Gℓ = greenfn_cheby_numerical2(ℓ, operators)
+        GℓCη .= Gℓ * Cη
+
+        for ℓ′ in ℓ-1:2:ℓ+1
+            ℓ′ in ℓs || continue
+            @. Cℓ′ = DDr - ℓ′*(ℓ′+1) * onebyr_cheby
+            GℓCℓ′ .= Gℓ * Cℓ′
+            @. TVWℓ′ = -2/(ℓ*(ℓ+1))*(ℓ′*(ℓ′+1)*C1*cosθ[ℓ, ℓ′] + Cℓ′*sinθdθ[ℓ, ℓ′])
+            @. TWVℓ′ = -2/(ℓ*(ℓ+1))*(ℓ′*(ℓ′+1)*GℓCη*cosθ[ℓ, ℓ′] + GℓCℓ′*sinθdθ[ℓ, ℓ′])
+
+            ABℓ′left = (ℓ′ - minimum(m)) * nchebyr + 1
+            ACℓ′horinds = range(ABℓ′left, length = nr);
+            ACℓℓ′inds = CartesianIndices((ACℓ′vertinds, ACℓ′horinds));
+
+            B[ACℓℓ′inds] .= TVWℓ′
+            C[ACℓℓ′inds] .= TWVℓ′
+        end
+    end
+
+    [A  B
+     C D]
+end
+
+function constrained_eigensystem(M, operators)
+    (; ZC) = constraintmatrix(operators);
+    M_constrained = ZC'*M*ZC
+    λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(M_constrained);
+    v = ZC*w
+    λ, v, M
+end
+
 function uniform_rotation_spectrum(nr, nℓ, m; operators = radial_operators(nr, nℓ), kw...)
-    (; BC, ZC) = constraintmatrix(operators);
-
     M = twoΩcrossv(nr, nℓ, m; operators);
-
-    # Two possible ways to enforce the radial boundary constraint:
-
-    # M_constrained = ZC'*M*ZC
-    # λ, w = eigen!(M_constrained);
-    # v = ZC*w
-    # λ, v
-
-    Z = Zeros(size(BC, 1), size(M,2) + size(BC, 1) - size(BC,2))
-    M_constrained = [M BC'
-                     BC Z];
-    λ, v = eigen!(M_constrained);
-    λ, v[1:end - size(BC,1), :]
+    constrained_eigensystem(M, operators)
 end
 
 function real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop)
     (; PLMfwd, PLMinv) = thetaop;
-    (; transforms, params) = operators;
-    (; nℓ, nchebyr) = params;
+    (; transforms, radial_params) = operators;
+    (; nℓ, nchebyr) = radial_params;
     (; Tcrfwd, Tcrinv) = transforms;
     pad = nchebyr*nℓ
     PaddedMatrix((PLMfwd ⊗ Tcrfwd) * Diagonal(vec(ΔΩ_r_thetaGL)) * (PLMinv ⊗ Tcrinv), pad)
@@ -754,96 +964,147 @@ end
 
 function real_to_r_assocleg(ΔΩ_r_thetaGL, operators, thetaop)
     (; PLMfwd, PLMinv) = thetaop;
-    (; params) = operators;
-    (; nℓ, nchebyr) = params;
+    (; radial_params) = operators;
+    (; nℓ, nchebyr) = radial_params;
     Ir = IdentityMatrix(nchebyr)
     pad = nchebyr*nℓ
     PaddedMatrix((PLMfwd ⊗ Ir) * Diagonal(vec(ΔΩ_r_thetaGL)) * (PLMinv ⊗ Ir), pad)
 end
 
-function differential_rotation_spectrum(nr, nℓ, m; operators = radial_operators(nr, nℓ), test = false, kw...)
-    (; BC) = constraintmatrix(operators);
+function differential_rotation_spectrum(nr, nℓ, m;
+        operators = radial_operators(nr, nℓ),
+        test = false, kw...)
 
     uniform_rot_operators = twoΩcrossv(nr, nℓ, m; operators);
     diff_rot_operators = diffrotterms(nr, nℓ, m; operators, test = test);
 
     M = uniform_rot_operators + diff_rot_operators;
 
-    Z = Zeros(size(BC, 1), size(M,2) + size(BC, 1) - size(BC,2))
+    constrained_eigensystem(M, operators)
+end
 
-    M_constrained = [M BC'
-                    BC Z];
+function differential_rotation_spectrum_constantΩ(nr, nℓ, m; operators = radial_operators(nr, nℓ), subtract_doppler = false, kw...)
+    uniform_rot_operators = twoΩcrossv(nr, nℓ, m; operators);
+    diff_rot_operators = diffrotterms_constantΩ(nr, nℓ, m; operators);
 
-    λ, v = eigen!(M_constrained);
-    λ, v[1:end - size(BC,1), :]
+    M = uniform_rot_operators + diff_rot_operators;
+
+    λ, v = constrained_eigensystem(M, operators)
+
+    if subtract_doppler
+        λ .+= m
+    end
+    λ, v
 end
 
 rossby_ridge(m, ℓ = m) = 2m/(ℓ*(ℓ+1))
-eigenvalue_filter(x, m) = isreal(x) && -4m < real(x) < 4rossby_ridge(m)
-eigenvector_filter(v, C, atol = 1e-5) = norm(C * v) < atol
 
-function filter_eigenvalues(f, nr, nℓ, m::Integer; operators = radial_operators(nr, nℓ),
-        atol_constraint = 1e-5, Δl_cutoff = 5, power_cutoff = 0.9, kw...)
+eigenvalue_filter(x, m) = imag(x) >= 0 && imag(x) < real(x)*1e-2 && 0 < real(x) < 2rossby_ridge(m)
+eigenvector_filter(v, C, atol = 1e-5) = norm(C * v) < atol
+eigensystem_satisfy_filter(λ, v, M, rtol = 1e-1) = isapprox(M*v, λ*v, rtol=rtol)
+
+function filter_eigenvalues(f, nr, nℓ, m::Integer;
+        operators = radial_operators(nr, nℓ), kw...)
+
+    λ::Vector{ComplexF64}, v::Matrix{ComplexF64}, M::Matrix{Float64} =
+        f(nr, nℓ, m; operators, kw...)
+    filter_eigenvalues(λ, v, M, m; operators, kw...)
+end
+
+function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
+        M::AbstractMatrix{Float64}, m::Integer; operators,
+        atol_constraint = 1e-5,
+        Δl_cutoff = 3,
+        power_cutoff = 0.9,
+        eigen_rtol = 1e-1,
+        kw...)
 
     (; BC) = constraintmatrix(operators);
-    lam::Vector{ComplexF64}, v::Matrix{ComplexF64} = f(nr, nℓ, m; operators, kw...)
-    filterfn(λ, v) = begin
+
+    filterfn(λ, v)::Bool = begin
         eigenvalue_filter(λ, m) &&
         eigenvector_filter(v, BC, atol_constraint) &&
-        sphericalharmonic_transform_filter(v, operators, Δl_cutoff, power_cutoff)
+        sphericalharmonic_transform_filter(v, operators, Δl_cutoff, power_cutoff) &&
+        eigensystem_satisfy_filter(λ, v, M, eigen_rtol)
     end
-    filtinds = axes(lam, 1)[filterfn.(lam, eachcol(v))]
-    real(lam[filtinds]), v[:, filtinds]
+    filtinds = axes(λ, 1)[filterfn.(λ, eachcol(v))]
+    real(λ[filtinds]), v[:, filtinds]
 end
 
-function filter_eigenvalues_mrange(f, nr, nℓ, mr::AbstractVector; operators = radial_operators(nr, nℓ), kw...)
-    map(m -> filter_eigenvalues(f, nr, nℓ, m; operators, kw...), mr)
+macro maybe_reduce_blas_threads(ex)
+    ex_esc = esc(ex)
+    quote
+        n = BLAS.get_num_threads()
+        nt = Threads.nthreads()
+        BLAS.set_num_threads(max(1, n ÷ nt))
+        f = $ex_esc
+        BLAS.set_num_threads(n)
+        f
+    end
 end
 
-function save_eigenvalues(f, nr, nℓ, mr;
-    operators = radial_operators(nr, nℓ), atol_constraint = 1e-5,
-    Δl_cutoff = 5, power_cutoff = 0.9, kw...)
+function filter_eigenvalues_mrange(f, nr, nℓ, mr::AbstractVector; kw...)
+    @maybe_reduce_blas_threads(
+        Folds.map(m -> filter_eigenvalues(f, nr, nℓ, m; kw...), mr))
+end
+function filter_eigenvalues_mrange(λ, v, mr::AbstractVector; kw...)
+    @maybe_reduce_blas_threads(
+        Folds.map(x -> filter_eigenvalues(x...; kw...), zip(λ, v, mr)))
+end
 
-    λv = filter_eigenvalues_mrange(f, nr, nℓ, mr;
-        operators, atol_constraint, Δl_cutoff, power_cutoff, kw...)
+function save_eigenvalues(f, nr, nℓ, mr; kw...)
+    λv = filter_eigenvalues_mrange(f, nr, nℓ, mr; kw...)
     lam = first.(λv);
     vec = last.(λv);
-    fname = joinpath(DATADIR[], "rossby_$(string(nameof(f)))_nr$(nr)_nell$(nℓ).jld2")
-    jldsave(fname; lam, vec)
+    ΔΩscale = get(kw, :ΔΩscale, 1)
+    eigen_rtol = get(kw, :eigen_rtol, 0.1)
+    power_cutoff = get(kw, :power_cutoff, 0.9)
+    Δl_cutoff = get(kw, :Δl_cutoff, 3)
+    fname = joinpath(DATADIR[],
+        "rossby_$(string(nameof(f)))_nr$(nr)_nell$(nℓ)"*
+        "_Omegascale$(ΔΩscale)_eigen_rtol$(eigen_rtol)"*
+        "_power_cutoff$(power_cutoff)_Δl_cutoff$(Δl_cutoff).jld2")
+    jldsave(fname; lam, vec, mr)
 end
 
-plot_eigenvalues_singlem(m, lam) = plot.(m, lam, marker = "o", ms = 4, mfc = "lightcoral", mec= "firebrick")
+plot_eigenvalues_singlem(m, lam) = plot.(m, lam, marker = "o", ms = 5, mfc = "0.8", mec= "0.2", zorder=2)
 
-function plot_rossby_ridges(mr)
-    plot(mr, rossby_ridge.(mr), color = "k", label="ℓ = m")
-    linecolors = ["r", "b", "g"]
-    for (Δℓind, Δℓ) in enumerate(1:3)
-        plot(mr, (m -> rossby_ridge(m, m+Δℓ)).(mr), color = linecolors[Δℓind], label="ℓ = m + $Δℓ",
-        marker="None")
-    end
-    mul = 1
-    plot(mr, (1 + mul) .*rossby_ridge.(mr) .- mul*mr, color = "orange", label = "-$mul*m + $(1 + mul) * 2/(m+1)")
+function plot_rossby_ridges(mr, ΔΩscale = 1)
+    plot(mr, ΔΩscale * rossby_ridge.(mr), color = "k", label=L"ω = \frac{2Ω}{m+1}", lw=0.7, zorder=1)
+    plot(mr, ΔΩscale*rossby_ridge.(mr, mr .+1), color = "0.3", label=L"ω = \frac{2mΩ}{(m+1)(m+2)}",
+        marker="None", ls = "dashed", zorder=1)
+    # plot(mr, 2*rossby_ridge.(mr) .- mr, color = "orange", label = "-m + 2/(m+1)")
 end
 
 function plot_eigenvalues(f, nr, nℓ, mr::AbstractVector; kw...)
     λv = filter_eigenvalues_mrange(f, nr, nℓ, mr; kw...)
     lam = map(first, λv)
-    plot_eigenvalues(lam, mr)
+    plot_eigenvalues(lam, mr; kw...)
 end
 
-function plot_eigenvalues(fname::String, mr)
-    lam = jldopen(fname, "r")["lam"]
-    plot_eigenvalues(lam, mr)
+function plot_eigenvalues(fname::String, mr; kw...)
+    j = jldopen(fname, "r")
+    lam = j["lam"]
+    plot_eigenvalues(lam, mr; kw...)
+end
+function plot_eigenvalues(fname::String; kw...)
+    j = jldopen(fname, "r")
+    lam = j["lam"]
+    mr = j["mr"]
+    plot_eigenvalues(lam, mr; kw...)
 end
 
-function plot_eigenvalues(lam::AbstractArray, mr)
-    figure()
+function plot_eigenvalues(lam::AbstractArray, mr; ΔΩscale = 1, kw...)
+    f, ax = subplots()
     plot_eigenvalues_singlem.(mr, lam)
-    plot_rossby_ridges(mr)
+    plot_rossby_ridges(mr, ΔΩscale)
     xlabel("m", fontsize = 12)
     ylabel(L"\omega/\Omega", fontsize = 12)
     ylim(0.5*2/(maximum(mr)+1), 1.1*2/(minimum(mr)+1))
-    legend(loc=1)
+    legend(loc=1, fontsize = 12)
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
+    f.set_size_inches(6,4)
+    tight_layout()
 end
 
 function plot_eigenvalues_shfilter(fname::String, mr; operators, Δl_cutoff = 5, power_cutoff = 0.9)
@@ -861,16 +1122,16 @@ function plot_eigenvalues_shfilter(fname::String, mr; operators, Δl_cutoff = 5,
 end
 
 function eigenfunction_cheby_ℓm_spectrum(v, operators)
-    (; params) = operators;
-    (; nparams, nr, nℓ) = params;
+    (; radial_params) = operators;
+    (; nparams, nr, nℓ) = radial_params;
     V = reshape(v[1:nparams], nr, nℓ)
     W = reshape(v[nparams+1:end], nr, nℓ)
     (; V, W)
 end
 
 function eigenfunction_rad_sh(v, operators, VW = eigenfunction_cheby_ℓm_spectrum(v, operators))
-    (; params, transforms) = operators;
-    (; nparams, nchebyr, nℓ) = params;
+    (; radial_params, transforms) = operators;
+    (; nparams, nchebyr, nℓ) = radial_params;
     (; Tcrinv) = transforms;
     (; V, W ) = VW
 
@@ -889,8 +1150,8 @@ function spharm_θ_grid_uniform(m, nℓ, ℓmax_mul = 4)
 end
 
 function eigenfunction_realspace(v, m, operators, VW = eigenfunction_rad_sh(v, operators))
-    (; params) = operators;
-    (; nr) = params;
+    (; radial_params) = operators;
+    (; nr) = radial_params;
 
     V_r_lm = VW.V
     W_r_lm = VW.W
@@ -921,8 +1182,6 @@ function eigenfunction_realspace(v, m, operators, VW = eigenfunction_rad_sh(v, o
 end
 
 function sphericalharmonic_transform_filter(v, operators, Δl_cutoff = 5, power_cutoff = 0.9)
-    (; params) = operators;
-    (; nr, nℓ) = params;
     (; V) = eigenfunction_rad_sh(v, operators);
 
     l_cutoff_ind = 1 + Δl_cutoff
@@ -934,31 +1193,76 @@ end
 
 function eigenfunction_rossbyridge(lam, v, m, operators)
     minind = argmin(abs.(lam .- rossby_ridge(m)))
-    (; V, θ) = eigenfunction_realspace(v[:, minind], m, operators)
+    (; V, θ) = eigenfunction_realspace((@view v[:, minind]), m, operators)
     Vr = real(V)
-    Vrmax = maximum(Vr)
+    Vrmax = maximum(abs, Vr)
     if Vrmax != 0
         Vr ./= Vrmax
     end
-    (; coordinates, params) = operators;
+    (; coordinates) = operators;
     (; r) = coordinates;
     nθ = length(θ)
     f = figure()
-    ax1 = subplot2grid((3,3), (0,1), colspan = 2)
     ax2 = subplot2grid((3,3), (1,1), colspan = 2, rowspan = 2)
-    ax3 = subplot2grid((3,3), (1,0), rowspan = 2)
-    ax2.pcolormesh(θ, r, Vr, shading="auto", cmap = "RdBu",
-    vmax = maximum(abs, Vr), vmin = -maximum(abs, Vr))
-    ax1.plot(θ, Vr[end, :])
-    ax3.plot(Vr[:, nθ÷2], r)
-    ax2.set_xlabel("θ", fontsize=12)
-    ax2.set_ylabel("r", fontsize=12)
+    ax1 = subplot2grid((3,3), (0,1), colspan = 2, sharex = ax2)
+    ax3 = subplot2grid((3,3), (1,0), rowspan = 2, sharey = ax2)
+    ax2.pcolormesh(θ, r, Vr, shading="auto", cmap = "Greys",
+    vmax = Vrmax, vmin = -Vrmax, rasterized = true)
+    ax1.plot(θ, (@view Vr[end, :]), color = "k")
+    ax1.plot(θ, sin.(θ).^m, "o", markevery=10, ms=4, mfc="0.8", mec="0.3")
+    ax3.plot((@view Vr[:, nθ÷2]), r, color = "k")
+    ax2.set_xlabel("θ [radians]", fontsize=12)
+    ax2.set_ylabel(L"r/R_\odot", fontsize=12)
+
+    ax2.yaxis.set_major_locator(ticker.MaxNLocator(4))
+    ax2.xaxis.set_major_locator(ticker.MaxNLocator(4))
+
+    f.set_size_inches(6,4)
     tight_layout()
 end
 
 function eigenfunction_rossbyridge(nr, nℓ, m; operators = radial_operators(nr, nℓ))
     λ, v = filter_eigenvalues(uniform_rotation_spectrum, nr, nℓ, m);
     eigenfunction_rossbyridge(λ, v, m, operators)
+end
+
+function eigenvalues_remove_spurious(f1::String, f2::String)
+    lam1 = jldopen(f1)["lam"]::Vector{Vector{Float64}}
+    lam2 = jldopen(f2)["lam"]::Vector{Vector{Float64}}
+    eigenvalues_remove_spurious(lam1 ,lam2)
+end
+eigenvalues_remove_spurious(f1 ,f2, f3, f4...) = foldl(eigenvalues_remove_spurious, (f1, f2, f3, f4...))
+function eigenvalues_remove_spurious(lam1::Vector{<:Vector}, lam2::Vector{<:Vector})
+    lam_filt = similar(lam1)
+    for (m_ind, (lam1_m, lam2_m)) in enumerate(zip(lam1, lam2))
+        lam_filt[m_ind] = eltype(lam_filt)[]
+        for λ1 in lam1_m, λ2 in lam2_m
+            if abs2(λ1 - λ2) < abs2(λ1)*1e-2
+                push!(lam_filt[m_ind], λ1)
+            end
+        end
+    end
+    return lam_filt
+end
+
+function rossbyridgefreqnearest(lam, mr)
+    @assert length(lam) == length(mr)
+    [argmin(x -> abs(rossby_ridge(m)-x), lam_m) for (m,lam_m) in zip(mr, lam)]
+end
+function rossbyridgefreqsmisfit(lam, mr)
+    λ = rossbyridgefreqnearest(lam, mr)
+    sum(((m, λm),) -> abs(rossby_ridge(m)-λm), zip(mr, λ))
+end
+
+function testrossbyridgefreqconvergence(nrs::AbstractVector, nℓs::AbstractVector, mr)
+    misfits = zeros(length(nrs), length(nℓs))
+    for (nℓind, nℓ) in enumerate(nℓs), (nrind, nr) in enumerate(nrs)
+        λv = filter_eigenvalues_mrange(uniform_rotation_spectrum, nr, nℓ, mr)
+        lam = first.(λv)
+        misfit = rossbyridgefreqsmisfit(lam, mr)
+        misfits[nrind, nℓind] = misfit
+    end
+    return misfits
 end
 
 end # module

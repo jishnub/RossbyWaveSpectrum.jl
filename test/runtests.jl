@@ -1,6 +1,6 @@
 using RossbyWaveSpectrum
 using RossbyWaveSpectrum: ForwardTransform, InverseTransform, IdentityMatrix, OneHotVector, PaddedMatrix
-using RossbyWaveSpectrum: intPl1mPl20Pl3m, intPl1mP′l20Pl3m, PaddedArray
+using RossbyWaveSpectrum: intPl1mPl20Pl3m, intPl1mP′l20Pl3m, PaddedArray, chebyshev_integrate
 using Test
 using LinearAlgebra
 using UnPack
@@ -19,11 +19,11 @@ end
 
 nr = 4; nℓ = 6;
 operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-(; coordinates, rad_terms, transforms, diff_operators, identities, scratch) = operators;
+(; coordinates, rad_terms, transforms, diff_operators, identities, scratch, Binv_params) = operators;
 (; Tcrfwd, Tcrinv) = transforms;
 (; r, r_cheby) = coordinates;
-(; params) = operators;
-(; nchebyr, r_in, r_out, Δr, nparams) = params;
+(; radial_params) = operators;
+(; nchebyr, r_in, r_out, Δr, nparams) = radial_params;
 (; rDDr, DDr, rddr, ddr, D2Dr2) = diff_operators;
 (; ηρ, ηρ_cheby, onebyr_cheby, onebyr2_cheby) = rad_terms;
 r_mid = (r_out + r_in)/2;
@@ -48,7 +48,17 @@ fullinv = kron(PLMinv, Tcrinv);
 (; BC, ZW, MWn) = RossbyWaveSpectrum.constraintmatrix(operators);
 
 @testset "chebyshev" begin
-    r, Tcrfwd, Tcrinv = RossbyWaveSpectrum.chebyshev_forward_inverse(nr, r_in, r_out)
+    local nr, operators, coordinates, rad_terms, transforms, diff_operators
+    local rddr, ddr, Tcrfwd, Tcrinv, ℓ, onebyr2
+    nr = 50;
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+    (; coordinates, rad_terms, transforms, diff_operators) = operators;
+    (; r) = coordinates;
+    (; onebyr2_cheby) = rad_terms;
+    (; Tcrfwd, Tcrinv) = transforms;
+    (; rddr, ddr) = diff_operators;
+    onebyr2 = Tcrinv *  onebyr2_cheby * Tcrfwd
+
     @testset "forward-inverse in r" begin
         @test Tcrfwd * Tcrinv ≈ Tcrinv * Tcrfwd ≈ I
         @test parent(Tcrfwd) * parent(Tcrinv) ≈ parent(Tcrinv) * parent(Tcrfwd) ≈ I
@@ -83,10 +93,10 @@ fullinv = kron(PLMinv, Tcrinv);
                 end
                 ∂rf = ∂r * f # chebyshev coefficients of the derivative, in this case d/dr(r) = 1 = T0(x)
                 @test ∂rf[1] ≈ 1
-                @test all(x -> isapprox(x, 0, atol=1e-10), @view ∂rf[2:end])
+                @test all(x -> isapprox(x, 0, atol=1e-7), @view ∂rf[2:end])
                 @testset "real space" begin
                     x = Dr * r
-                    @test all(isapprox(1), x)
+                    @test all(isapprox(1, rtol=1e-4), x)
                 end
             end
             @testset "f(r) = r^2" begin
@@ -99,18 +109,25 @@ fullinv = kron(PLMinv, Tcrinv);
                 ∂rf = ∂r * f # chebyshev coefficients of the derivative, in this case d/dr(r^2) = 2r = 2r_mid*T0(x) + Δr*T1(x)
                 @test ∂rf[1] ≈ 2r_mid
                 @test ∂rf[2] ≈ Δr
-                @test all(x -> isapprox(x, 0, atol=1e-10), @view ∂rf[3:end])
+                @test all(x -> isapprox(x, 0, atol=1e-7), @view ∂rf[3:end])
                 @testset "real space" begin
                     x = Dr * r.^2
-                    @test all(x .≈ 2 .* r)
+                    @test all(isapprox(x,  2r, rtol=1e-4))
                 end
             end
+            @testset "fr = r^(ℓ+1)" begin
+                ℓ = 5
+                @test isapprox(Dr * r.^(ℓ+1), (ℓ+1)* r.^ℓ, rtol=1e-7)
+                @test isapprox(Dr^2 * r.^(ℓ+1), (ℓ+1)*ℓ * r.^(ℓ-1), rtol=1e-7)
+                @test all(isapprox(0, atol=1e-6), ((Dr^2 - (ℓ+1)*ℓ * onebyr2) * r.^(ℓ+1)))
+                @test all(isapprox(0, atol=1e-4), ((Dr^2 - (ℓ+1)*ℓ * onebyr2) * r.^(-ℓ)))
+            end
             @testset "ddr and rddr" begin
-                @test Tcrinv * ddr * Tcrfwd * ones(nr) ≈ zeros(nr) atol=1e-10
+                @test Tcrinv * ddr * Tcrfwd * ones(nr) ≈ zeros(nr) atol=1e-5
                 @test Tcrinv * ddr * Tcrfwd * r ≈ ones(nr)
                 @test Tcrinv * ddr * Tcrfwd * r.^2 ≈ 2r
                 @test Tcrinv * ddr * Tcrfwd * r.^3 ≈ 3r.^2
-                @test Tcrinv * rddr * Tcrfwd * ones(nr) ≈ zeros(nr) atol=1e-10
+                @test Tcrinv * rddr * Tcrfwd * ones(nr) ≈ zeros(nr) atol=1e-5
                 @test Tcrinv * rddr * Tcrfwd * r ≈ r
                 @test Tcrinv * rddr * Tcrfwd * r.^2 ≈ 2r.^2
                 @test Tcrinv * rddr * Tcrfwd * r.^3 ≈ 3r.^3
@@ -141,7 +158,75 @@ end
     @test (BC*v_Wrones)[4] ≈ 0 atol=1e-14
 end
 
-@testset "invert B" begin
+@testset "radial operators adjoint" begin
+    local nr, operators, transforms, diff_operators, coordinates
+    local rad_terms, identities, scratch, Binv_params, r
+    local D2Dr2, Tcrfwd, Tcrinv, DDr2_realspace, ρr, onebyr_cheby, onebyr2_cheby, ZW
+    nr = 50
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+    (; coordinates, rad_terms, transforms, diff_operators, identities, scratch, Binv_params) = operators;
+    (; ddr, DDr, D2Dr2) = diff_operators;
+    (; Tcrfwd, Tcrinv) = transforms;
+    (; r) = coordinates;
+    (; onebyr_cheby, onebyr2_cheby) = rad_terms;
+    (; ZW) = RossbyWaveSpectrum.constraintmatrix(operators);
+    ρr = RossbyWaveSpectrum.ρfn.(r, (Binv_params,));
+    onebyr = Tcrinv * onebyr_cheby * Tcrfwd;
+    onebyr2 = Tcrinv * onebyr2_cheby * Tcrfwd;
+    DDr_realspace = Tcrinv * DDr * Tcrfwd;
+    DDr2_realspace = Tcrinv * D2Dr2 * Tcrfwd;
+    ℓ = 5;
+    Bℓ = DDr2_realspace - ℓ*(ℓ+1)*onebyr2;
+
+    f = @. (r - r_in) * (r - r_out) * r^3;
+    g = @. (r - r_in) * (r - r_out) * r^4;
+
+    A = ρr.^2 .* (DDr2_realspace*f) .* g
+    B = ρr.^2 .* f .* (DDr2_realspace*g)
+    @test chebyshev_integrate(A) ≈ chebyshev_integrate(B) rtol=1e-4
+
+    A = ρr.^2 .* (Bℓ*f) .* g
+    B = ρr.^2 .* f .* (Bℓ*g)
+    @test chebyshev_integrate(A) ≈ chebyshev_integrate(B) rtol=1e-4
+
+    A = ρr.^2 .* ((DDr_realspace - ℓ*(ℓ+1)*onebyr)*f) .* g
+    B = ρr.^2 .* f .* ((-DDr_realspace - ℓ*(ℓ+1)*onebyr)*g)
+    @test chebyshev_integrate(A) ≈ chebyshev_integrate(B) rtol=1e-4
+
+    @testset "Green function" begin
+        for si in r
+            drF_right = RossbyWaveSpectrum.∂r(
+                RossbyWaveSpectrum.greenfn_realspace_ρs2F2,
+                nextfloat(si), si, ℓ, Binv_params)
+            drF_left = RossbyWaveSpectrum.∂r(
+                RossbyWaveSpectrum.greenfn_realspace_ρs2F2,
+                prevfloat(si), si, ℓ, Binv_params)
+            @test drF_right - drF_left ≈ 1
+
+            drF_right = RossbyWaveSpectrum.∂r(
+                RossbyWaveSpectrum.greenfn_realspace_F2,
+                nextfloat(si), si, ℓ, Binv_params)
+            drF_left = RossbyWaveSpectrum.∂r(
+                RossbyWaveSpectrum.greenfn_realspace_F2,
+                prevfloat(si), si, ℓ, Binv_params)
+
+            ρs = RossbyWaveSpectrum.ρfn(si, Binv_params)
+            @test ρs^2 * (drF_right - drF_left) ≈ 1
+
+            function ρG(r, s, ℓ, Binv_params)
+                ρr = RossbyWaveSpectrum.ρfn(r, Binv_params)
+                ρr * RossbyWaveSpectrum.greenfn_realspace(r, s, ℓ, Binv_params)
+            end
+
+            drρG_right = RossbyWaveSpectrum.∂r(ρG,
+                nextfloat(si), si, ℓ, Binv_params)
+            drρG_left = RossbyWaveSpectrum.∂r(ρG,
+                prevfloat(si), si, ℓ, Binv_params)
+
+            ρs = RossbyWaveSpectrum.ρfn(si, Binv_params)
+            @test ρs * (drρG_right - drρG_left) ≈ 1
+        end
+    end
 end
 
 Plm(θ, l, m) = SphericalHarmonics.associatedLegendre(θ, l, m, norm = SphericalHarmonics.Orthonormal())
@@ -312,8 +397,8 @@ end
 
     @testset "sintheta_dtheta_ΔΩ" begin
         function sintheta_dtheta_ΔΩ_operator(ΔΩ_r_Legendre, m, operators)
-            (; transforms, params) = operators;
-            (; nparams, nℓ) = params;
+            (; transforms, radial_params) = operators;
+            (; nparams, nℓ) = radial_params;
             (; Tcrfwd, Tcrinv) = transforms;
             ℓs = range(m, length = 2nℓ);
             ΔΩ_r_Legendre_of = OffsetArray(ΔΩ_r_Legendre, :, 0:size(ΔΩ_r_Legendre, 2)-1);
@@ -479,7 +564,6 @@ end
     @test [M_diffrot_11 M_diffrot_12; M_diffrot_21 M_diffrot_22] == M_diffrot;
 
     @test M_uniformrot_11 ≈ M_diffrot_11 + m * I;
-    @test_broken M_uniformrot_22 ≈ M_diffrot_22 + m * I;
 
     @testset "curl curl terms for uniform differential rotation" begin
         ℓs = range(m, length = 2nℓ);
