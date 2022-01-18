@@ -1,10 +1,12 @@
 #!/bin/bash
-#SBATCH --time="1:00:00"
-#SBATCH --job-name=rosdr
+#SBATCH --time="20:00"
+#SBATCH --job-name=rosbyspec
 #SBATCH --ntasks=28
 
 cd $SCRATCH/jobs
-julia="$SCRATCH/julia/julia-1.7.0-rc2/bin/julia"
+julia="$SCRATCH/julia/julia-1.7/bin/julia"
 module purge
-$julia --project="$HOME/RossbyWaveSpectrum.jl" -t 7 -e \
+export OMP_NUM_THREADS=1
+project="$HOME/RossbyWaveSpectrum.jl"
+$julia --project=$project -t 20 -e \
 'include("$(ENV["HOME"])/RossbyWaveSpectrum.jl/compute_rossby_spectrum.jl")'

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --time="1:00:00"
+#SBATCH --time="3:00:00"
 #SBATCH --job-name=convrg
 #SBATCH --ntasks=28
 
