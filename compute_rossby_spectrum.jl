@@ -1,8 +1,13 @@
 @time using RossbyWaveSpectrum
 
 nr = 50;
-nℓ = 25;
+nℓ = 20;
 mrange = 1:20;
+
+# test
+# nr = 15;
+# nℓ = 15;
+# mrange = 1:1;
 
 # boundary condition tolerance
 atol_constraint = 1e-5
@@ -15,16 +20,24 @@ eigen_rtol = 0.1;
 n_cutoff = 10
 n_power_cutoff = 0.9
 
-filenametag = "dr"
-ΔΩ_by_Ω = 0.01 # used for filtering, zero for uniform rotation
+# used for filtering, zero for uniform rotation
+# ΔΩ_by_Ω_low = 0
+# ΔΩ_by_Ω_high = 0
+ΔΩ_by_Ω_low = -0.03
+ΔΩ_by_Ω_high = 0.06
 
-# f = RossbyWaveSpectrum.uniform_rotation_spectrum
-f = (x...; kw...) -> RossbyWaveSpectrum.differential_rotation_spectrum(x...;
-    rotation_profile = :constant, kw...)
-@show nr nℓ mrange Δl_cutoff Δl_power_cutoff eigen_rtol filenametag ΔΩ_by_Ω
+r_in_frac = 0.7
+r_out_frac = 1
+
+operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac, r_out_frac)
+
+# f = RossbyWaveSpectrum.uniform_rotation_spectrum!
+f = (x...; kw...) -> RossbyWaveSpectrum.differential_rotation_spectrum!(x...;
+    rotation_profile = :radial, kw...)
+@show nr nℓ mrange Δl_cutoff Δl_power_cutoff eigen_rtol ΔΩ_by_Ω_low ΔΩ_by_Ω_high
 @show Threads.nthreads()
 
 @time RossbyWaveSpectrum.save_eigenvalues(f, nr, nℓ, mrange;
     atol_constraint, Δl_cutoff, Δl_power_cutoff,
-    eigen_rtol,
-    n_cutoff, n_power_cutoff, filenametag, ΔΩ_by_Ω)
+    eigen_rtol, n_cutoff, n_power_cutoff,
+    ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, operators)

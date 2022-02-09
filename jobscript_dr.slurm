@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --time="20:00"
+#SBATCH --time="40:00"
 #SBATCH --job-name=rosbyspec
 #SBATCH --ntasks=28
 

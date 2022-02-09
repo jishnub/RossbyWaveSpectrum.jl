@@ -1,667 +1,234 @@
 using RossbyWaveSpectrum
-using RossbyWaveSpectrum: ForwardTransform, InverseTransform, IdentityMatrix, OneHotVector, PaddedMatrix
-using RossbyWaveSpectrum: intPl1mPl20Pl3m, intPl1mP′l20Pl3m, PaddedArray, chebyshev_integrate
 using Test
 using LinearAlgebra
-using UnPack
-using Polynomials: ChebyshevT
-using Kronecker
-using QuadGK
-using SphericalHarmonics
-using ForwardDiff
-using WignerSymbols
 using OffsetArrays
 using Aqua
+using SpecialPolynomials
+using ForwardDiff
+
+using RossbyWaveSpectrum: matrix_block, Rsun
 
 @testset "project quality" begin
-    Aqua.test_all(RossbyWaveSpectrum, ambiguities = false)
+    Aqua.test_all(RossbyWaveSpectrum,
+        ambiguities = false,
+        stale_deps = (; ignore =
+        [:PyCall, :PyPlot, :LaTeXStrings]),
+    )
 end
 
-nr = 4; nℓ = 6;
-operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-(; coordinates, rad_terms, transforms, diff_operators, identities, scratch, Binv_params) = operators;
-(; Tcrfwd, Tcrinv) = transforms;
-(; r, r_cheby) = coordinates;
-(; radial_params) = operators;
-(; nchebyr, r_in, r_out, Δr, nparams) = radial_params;
-(; rDDr, DDr, rddr, ddr, D2Dr2) = diff_operators;
-(; ηρ, ηρ_cheby, onebyr_cheby, onebyr2_cheby) = rad_terms;
-r_mid = (r_out + r_in)/2;
-rηρ_cheby = r_cheby * ηρ_cheby;
-(; Ir, Iℓ) = identities;
+@testset "differential rotation" begin
+    @testset "radial vs constant" begin
+        nr, nℓ = 10, 10
+        nparams = nr * nℓ
+        m = 1
+        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
+        Mc = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m, rotation_profile = :constant; operators)
+        Mr = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m, rotation_profile = :radial; operators)
 
-m = 5;
-Cosθ = RossbyWaveSpectrum.costheta_operator(nℓ, m);
-Sinθdθ = RossbyWaveSpectrum.sintheta_dtheta_operator(nℓ, m);
-Cos²θ = Cosθ^2;
-Cos³θ = Cos²θ*Cosθ;
-Sin²θ = I - Cos²θ;
-Sin⁻²θ = PaddedArray(inv(Matrix(parent(Sin²θ))), nℓ);
-SinθdθI = Sinθdθ ⊗ Ir;
-
-thetaop = RossbyWaveSpectrum.theta_operators(nℓ, m);
-(; thetaGL, PLMfwd, PLMinv) = thetaop;
-
-fullfwd = kron(PLMfwd, Tcrfwd);
-fullinv = kron(PLMinv, Tcrinv);
-
-(; BC, ZW, MWn) = RossbyWaveSpectrum.constraintmatrix(operators);
-
-@testset "chebyshev" begin
-    local nr, operators, coordinates, rad_terms, transforms, diff_operators
-    local rddr, ddr, Tcrfwd, Tcrinv, ℓ, onebyr2
-    nr = 50;
-    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-    (; coordinates, rad_terms, transforms, diff_operators) = operators;
-    (; r) = coordinates;
-    (; onebyr2_cheby) = rad_terms;
-    (; Tcrfwd, Tcrinv) = transforms;
-    (; rddr, ddr) = diff_operators;
-    onebyr2 = Tcrinv *  onebyr2_cheby * Tcrfwd
-
-    @testset "forward-inverse in r" begin
-        @test Tcrfwd * Tcrinv ≈ Tcrinv * Tcrfwd ≈ I
-        @test parent(Tcrfwd) * parent(Tcrinv) ≈ parent(Tcrinv) * parent(Tcrfwd) ≈ I
-    end
-    @testset "derivatives" begin
-        ∂ = RossbyWaveSpectrum.chebyshevderiv(nr);
-        @testset "T0" begin
-            fn = setindex!(zeros(nr), 1, 1)
-            ∂fn_expected = zeros(nr)
-            @test ∂ * fn ≈ ∂fn_expected
-        end
-        @testset "T1" begin
-            fn = setindex!(zeros(nr), 1, 2)
-            ∂fn_expected = setindex!(zeros(nr), 1, 1)
-            @test ∂ * fn ≈ ∂fn_expected
-        end
-        @testset "T2" begin
-            fn = setindex!(zeros(nr), 1, 3)
-            ∂fn_expected = setindex!(zeros(nr), 4, 2)
-            @test ∂ * fn ≈ ∂fn_expected
-        end
-        @testset "derivative wrt r" begin
-            ∂r = ∂ * (2/Δr)
-            Dr = Tcrinv * ∂r * Tcrfwd
-            r_nodes, _ = RossbyWaveSpectrum.chebyshevnodes(nr, r_in, r_out)
-            @testset "f(r) = r" begin
-                f = [vcat(r_mid, Δr/2); zeros(nr - 2)] # chebyshev decomposition of r in [r_in, r_out]
-                @test Tcrinv * f ≈ r
-                p = ChebyshevT(f)
-                for (r_node_i, ri) in zip(r_nodes, r)
-                    @test p(r_node_i) ≈ ri
-                end
-                ∂rf = ∂r * f # chebyshev coefficients of the derivative, in this case d/dr(r) = 1 = T0(x)
-                @test ∂rf[1] ≈ 1
-                @test all(x -> isapprox(x, 0, atol=1e-7), @view ∂rf[2:end])
-                @testset "real space" begin
-                    x = Dr * r
-                    @test all(isapprox(1, rtol=1e-4), x)
-                end
-            end
-            @testset "f(r) = r^2" begin
-                f = [r_mid^2 + 1/2*(Δr/2)^2; r_mid*Δr; 1/2*(Δr/2)^2; zeros(nr - 3)]
-                @test Tcrinv * f ≈ r.^2
-                p = ChebyshevT(f)
-                for (r_node_i, ri) in zip(r_nodes, r)
-                    @test p(r_node_i) ≈ ri^2
-                end
-                ∂rf = ∂r * f # chebyshev coefficients of the derivative, in this case d/dr(r^2) = 2r = 2r_mid*T0(x) + Δr*T1(x)
-                @test ∂rf[1] ≈ 2r_mid
-                @test ∂rf[2] ≈ Δr
-                @test all(x -> isapprox(x, 0, atol=1e-7), @view ∂rf[3:end])
-                @testset "real space" begin
-                    x = Dr * r.^2
-                    @test all(isapprox(x,  2r, rtol=1e-4))
-                end
-            end
-            @testset "fr = r^(ℓ+1)" begin
-                ℓ = 5
-                @test isapprox(Dr * r.^(ℓ+1), (ℓ+1)* r.^ℓ, rtol=1e-7)
-                @test isapprox(Dr^2 * r.^(ℓ+1), (ℓ+1)*ℓ * r.^(ℓ-1), rtol=1e-7)
-                @test all(isapprox(0, atol=1e-6), ((Dr^2 - (ℓ+1)*ℓ * onebyr2) * r.^(ℓ+1)))
-                @test all(isapprox(0, atol=1e-4), ((Dr^2 - (ℓ+1)*ℓ * onebyr2) * r.^(-ℓ)))
-            end
-            @testset "ddr and rddr" begin
-                @test Tcrinv * ddr * Tcrfwd * ones(nr) ≈ zeros(nr) atol=1e-5
-                @test Tcrinv * ddr * Tcrfwd * r ≈ ones(nr)
-                @test Tcrinv * ddr * Tcrfwd * r.^2 ≈ 2r
-                @test Tcrinv * ddr * Tcrfwd * r.^3 ≈ 3r.^2
-                @test Tcrinv * rddr * Tcrfwd * ones(nr) ≈ zeros(nr) atol=1e-5
-                @test Tcrinv * rddr * Tcrfwd * r ≈ r
-                @test Tcrinv * rddr * Tcrfwd * r.^2 ≈ 2r.^2
-                @test Tcrinv * rddr * Tcrfwd * r.^3 ≈ 3r.^3
-            end
+        for colind in 1:3, rowind in 1:3
+            @test matrix_block(Mr, rowind, colind) ≈ matrix_block(Mr, rowind, colind) atol = 1e-10 rtol = 1e-5
         end
     end
-end
+    @testset "u × ω matrix" begin
+        nr, nℓ = 40, 2
+        nparams = nr * nℓ
+        m = 1
+        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
+        (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators
+        (; r, r_chebyshev) = coordinates
+        (; r_mid, Δr) = radial_params
+        (; Tcrfwd) = transforms
+        (; Iℓ) = identities
+        (; ddr, d2dr2) = diff_operators
+        (; onebyr_cheby, r2_cheby, r_cheby) = rad_terms
 
-@testset "boundary conditions constraint" begin
-    Vrones = kron(rand(nℓ), ones(nr));
-    v_Vrones = [Vrones; rand(nparams)];
-    @test length(v_Vrones) == size(BC,2)
+        ddr_plus_2byr = ddr + 2onebyr_cheby
 
-    Vrflip = kron(rand(nℓ), [(-1)^n for n = 0:nr-1]);
-    v_Vrflip = [Vrflip; rand(nparams)];
-    @test length(v_Vrflip) == size(BC,2)
+        r_ddr_plus_2 = r_cheby * ddr + 2I
+        r_ddr_plus_1 = r_cheby * ddr + I
+        d²r_r2 = r2_cheby * d2dr2 + 4r_cheby * ddr + 2I
 
-    # ∑_n Wkn = 0
-    Wrflip = kron(rand(nℓ), [(-1)^n for n = 0:nr-1]);
-    v_Wrflip = [rand(nparams); Wrflip];
-    @test length(v_Wrflip) == size(BC,2)
-    @test (BC*v_Wrflip)[3] ≈ 0 atol=1e-14
+        rotation_profile = :linear
+        (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, drΔΩ_real, ddrΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
+            nℓ, m, r; operators, rotation_profile)
 
-    # ∑_n (-1)^n * Wkn = 0
-    Wrones = kron(rand(nℓ), ones(nr));
-    v_Wrones = [rand(nparams); Wrones];
-    @test length(v_Wrones) == size(BC,2)
-    @test (BC*v_Wrones)[4] ≈ 0 atol=1e-14
-end
+        ΔΩ1 = ΔΩ_r[1] / (r[1] - Rsun)
+        cosθ = RossbyWaveSpectrum.costheta_operator(nℓ, m)
+        sinθdθ = RossbyWaveSpectrum.sintheta_dtheta_operator(nℓ, m)
 
-@testset "radial operators adjoint" begin
-    local nr, operators, transforms, diff_operators, coordinates
-    local rad_terms, identities, scratch, Binv_params, r
-    local D2Dr2, Tcrfwd, Tcrinv, DDr2_realspace, ρr, onebyr_cheby, onebyr2_cheby, ZW
-    nr = 50
-    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-    (; coordinates, rad_terms, transforms, diff_operators, identities, scratch, Binv_params) = operators;
-    (; ddr, DDr, D2Dr2) = diff_operators;
-    (; Tcrfwd, Tcrinv) = transforms;
-    (; r) = coordinates;
-    (; onebyr_cheby, onebyr2_cheby) = rad_terms;
-    (; ZW) = RossbyWaveSpectrum.constraintmatrix(operators);
-    ρr = RossbyWaveSpectrum.ρfn.(r, (Binv_params,));
-    onebyr = Tcrinv * onebyr_cheby * Tcrfwd;
-    onebyr2 = Tcrinv * onebyr2_cheby * Tcrfwd;
-    DDr_realspace = Tcrinv * DDr * Tcrfwd;
-    DDr2_realspace = Tcrinv * D2Dr2 * Tcrfwd;
-    ℓ = 5;
-    Bℓ = DDr2_realspace - ℓ*(ℓ+1)*onebyr2;
+        (; negr²Ω0W_rhs, u_cross_ω_r, ∇²h_u_cross_ω_r,
+            div_u_cross_ω, ωΩ_dot_ωf, div_uf_cross_ωΩ, div_uΩ_cross_ωf,
+            negcurlωΩ_dot_uf, curlωf_dot_uΩ) =
+            RossbyWaveSpectrum.negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ),
+                (cosθ, sinθdθ); operators)
 
-    f = @. (r - r_in) * (r - r_out) * r^3;
-    g = @. (r - r_in) * (r - r_out) * r^4;
-
-    A = ρr.^2 .* (DDr2_realspace*f) .* g
-    B = ρr.^2 .* f .* (DDr2_realspace*g)
-    @test chebyshev_integrate(A) ≈ chebyshev_integrate(B) rtol=1e-4
-
-    A = ρr.^2 .* (Bℓ*f) .* g
-    B = ρr.^2 .* f .* (Bℓ*g)
-    @test chebyshev_integrate(A) ≈ chebyshev_integrate(B) rtol=1e-4
-
-    A = ρr.^2 .* ((DDr_realspace - ℓ*(ℓ+1)*onebyr)*f) .* g
-    B = ρr.^2 .* f .* ((-DDr_realspace - ℓ*(ℓ+1)*onebyr)*g)
-    @test chebyshev_integrate(A) ≈ chebyshev_integrate(B) rtol=1e-4
-
-    @testset "Green function" begin
-        for si in r
-            drF_right = RossbyWaveSpectrum.∂r(
-                RossbyWaveSpectrum.greenfn_realspace_ρs2F2,
-                nextfloat(si), si, ℓ, Binv_params)
-            drF_left = RossbyWaveSpectrum.∂r(
-                RossbyWaveSpectrum.greenfn_realspace_ρs2F2,
-                prevfloat(si), si, ℓ, Binv_params)
-            @test drF_right - drF_left ≈ 1
-
-            drF_right = RossbyWaveSpectrum.∂r(
-                RossbyWaveSpectrum.greenfn_realspace_F2,
-                nextfloat(si), si, ℓ, Binv_params)
-            drF_left = RossbyWaveSpectrum.∂r(
-                RossbyWaveSpectrum.greenfn_realspace_F2,
-                prevfloat(si), si, ℓ, Binv_params)
-
-            ρs = RossbyWaveSpectrum.ρfn(si, Binv_params)
-            @test ρs^2 * (drF_right - drF_left) ≈ 1
-
-            function ρG(r, s, ℓ, Binv_params)
-                ρr = RossbyWaveSpectrum.ρfn(r, Binv_params)
-                ρr * RossbyWaveSpectrum.greenfn_realspace(r, s, ℓ, Binv_params)
-            end
-
-            drρG_right = RossbyWaveSpectrum.∂r(ρG,
-                nextfloat(si), si, ℓ, Binv_params)
-            drρG_left = RossbyWaveSpectrum.∂r(ρG,
-                prevfloat(si), si, ℓ, Binv_params)
-
-            ρs = RossbyWaveSpectrum.ρfn(si, Binv_params)
-            @test ρs * (drρG_right - drρG_left) ≈ 1
+        r̄(r) = (r - r_mid::Float64) / (Δr::Float64 / 2)
+        function ucrossωfn(r, n)
+            r̄_r = r̄(r)
+            Tn = Chebyshev([zeros(n); 1])(r̄_r)
+            Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄_r)
+            1 / 3 * √(12 / 5) * ΔΩ1::Float64 * ((3 - 2Rsun / r) * Tn + n * (2 / Δr::Float64) * (r - Rsun) * Unm1)
         end
-    end
-end
+        d²r_fn(f, r) = ForwardDiff.derivative(r -> ForwardDiff.derivative(f, r), r)
+        d²r_r²ucrossωfn(r, n) = d²r_fn(r -> r^2 * ucrossωfn(r, n), r)
 
-Plm(θ, l, m) = SphericalHarmonics.associatedLegendre(θ, l, m, norm = SphericalHarmonics.Orthonormal())
-dPlm(θ, l, m) = -ForwardDiff.derivative(θ -> Plm(θ, l, m), θ)/sin(θ)
-
-@testset "legendre integrals" begin
-    m = 2
-    rtol = 1e-1
-    @testset "Pl" begin
-        for ℓ1 in m:4, ℓ2 in 0:4, ℓ3 in m:4
-            iseven(ℓ1+ℓ2+ℓ3) || continue
-            int, err = quadgk(θ -> sin(θ)*Plm(θ, ℓ1, m)*Plm(θ, ℓ2, 0)*Plm(θ, ℓ3, m), 0, pi, rtol=rtol)
-            @test intPl1mPl20Pl3m(ℓ1,ℓ2,ℓ3,m) ≈ int atol=max(1e-10, err) rtol=rtol
+        function ∇²h_ucrossωfn(r, n)
+            ℓ = 2
+            -ℓ * (ℓ + 1) * ucrossωfn(r, n)
         end
-    end
-    @testset "dPl" begin
-        for ℓ1 in m:4, ℓ2 in 0:4, ℓ3 in m:4
-            iseven(ℓ1+ℓ2+ℓ3) || continue
-            int, err = quadgk(θ -> sin(θ)*Plm(θ, ℓ1, m)*dPlm(θ, ℓ2, 0)*Plm(θ, ℓ3, m), 0, pi, rtol=rtol)
 
-            @test begin
-                res = isapprox(intPl1mP′l20Pl3m(ℓ1,ℓ2,ℓ3,m), int, atol=max(1e-10, err), rtol=rtol)
-                if !res
-                    @show ℓ1, ℓ2, ℓ3
-                end
-                res
-            end
+        function ωΩ_dot_ωf_fn(r, n)
+            Tn = Chebyshev([zeros(n); 1])(r̄(r))
+            Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄(r))
+            a = 2 / Δr::Float64
+            b = -r_mid::Float64 * a
+            2 / √15 * ΔΩ1::Float64 * 1 / r^2 * (a * n * r * (3r - 2Rsun) * Unm1 - 4(r - Rsun) * Tn)
         end
-    end
-end
 
-@testset "trig matrices in Legendre basis" begin
-    fcoeff_1010 = intPl1mPl20Pl3m(1,0,1,0)
-    fcoeff_1210 = intPl1mPl20Pl3m(1,2,1,0)
-    fcoeff_1230 = intPl1mPl20Pl3m(1,2,3,0)
-    Cosθ_el(ℓ1,ℓ2,m) = √(2/3) * intPl1mPl20Pl3m(ℓ1,1,ℓ2,m);
-    @test Cosθ*Cos²θ ≈ Cos²θ*Cosθ ≈ Cos³θ;
-    Cos²θ_el(ℓ1,ℓ2,m) = 1/3 * (ℓ1 == ℓ2) + 2/3*√(2/5)*intPl1mPl20Pl3m(ℓ1,2,ℓ2,m);
-    Sin²θ = I-Cos²θ;
-    @test Cosθ*Sin²θ ≈ Sin²θ*Cosθ;
-    @testset "chain rule" begin
-        @test Sinθdθ*Cosθ ≈ Cosθ*Sinθdθ - Sin²θ
-        @test Sinθdθ*Cos²θ ≈ -2Cosθ*Sin²θ + Cos²θ*Sinθdθ
-    end
-    Sin²θ_el(ℓ1,ℓ,m) = 2/3 * (ℓ1==ℓ) - 2/3*√(2/5)*intPl1mPl20Pl3m(ℓ1,2,ℓ,m);
-    CosθSin²θ = Cosθ*Sin²θ;
-    CosθSin²θ_1 = 4/(3*√3) * fcoeff_1010 - 4/(3*√15) * fcoeff_1210;
-    CosθSin²θ_3 = -4/(3*√15) * fcoeff_1230;
-    CSin²θ_coeffs = [CosθSin²θ_1, CosθSin²θ_3];
-    CSin²θ_el(ℓ1,ℓ,m) = sum(CSin²θ_coeffs[ℓ2ind]*intPl1mPl20Pl3m(ℓ1,ℓ2,ℓ,m) for (ℓ2ind, ℓ2) in enumerate(1:2:3))
-    SinθdθSinθdθ = Sinθdθ^2;
-    SinθdθSinθdθSinθdθ = Sinθdθ^3;
-    CSinθdθ = Cosθ*Sinθdθ;
-    Sin³θdθ = Sin²θ*Sinθdθ;
+        function neg_curlωΩ_dot_uf_fn(r, n)
+            Tn = Chebyshev([zeros(n); 1])(r̄(r))
+            8 / √15 * ΔΩ1::Float64 * 1 / r * Tn
+        end
 
-    sinθdθPlm(θ, l, m) = sin(θ) * ForwardDiff.derivative(θ -> Plm(θ, l, m), θ)
-    sinθdθsinθdθPlm(θ, l, m) = sin(θ) * ForwardDiff.derivative(θ-> sinθdθPlm(θ, l, m), θ)
-    sinθdθsinθdθsinθdθPlm(θ, l, m) = sin(θ) * ForwardDiff.derivative(θ-> sinθdθsinθdθPlm(θ, l, m), θ)
-
-    rtol = 1e-2;
-    @testset "cosθ" begin
-        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
-            @test Cosθ[lind, l′ind] ≈ Cosθ_el(l,l′,m) atol=1e-10 rtol=1e-6
-            if abs(l - l′) > 1 || l == l′
-                @test Cosθ[lind, l′ind] == 0
+        function curlωf_dot_uΩ_fn(r, n)
+            a = 2 / Δr::Float64
+            r̄_r = r̄(r)
+            if n > 1
+                Tn = Chebyshev([zeros(n); 1])(r̄_r)
+                Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄_r)
+                Unm2 = ChebyshevU([zeros(n - 2); 1])(r̄_r)
+                return -2 / √15 * ΔΩ1::Float64 * (r - Rsun) *
+                       (a^2 * n * r^2 * ((n - 1) * r̄_r * Unm1 - n * Unm2) - 2(r̄_r^2 - 1) * Tn) /
+                       (r^2 * (r̄_r^2 - 1))
+            elseif n == 1
+                return 4 / √15 * ΔΩ1::Float64 * (r - Rsun) * r̄_r / r^2
             else
-                int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*cos(θ)*Plm(θ, l′, m), 0, pi, rtol=rtol)
-                @test Cosθ[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
+                error("Invalid degree $n")
             end
         end
-    end
-    @testset "cos²θ" begin
-        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
-            @test Cos²θ[lind, l′ind] ≈ Cos²θ_el(l,l′,m) atol=1e-10  rtol=rtol
-            if abs(l-l′) > 2 || abs(l - l′) == 1
-                @test Cos²θ[lind, l′ind] == 0
+
+        function div_ufcrossωΩ_fn(r, n)
+            Tn = Chebyshev([zeros(n); 1])(r̄(r))
+            Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄(r))
+            a = 2 / Δr::Float64
+            2 / √15 * ΔΩ1::Float64 * 1 / r^2 * (4Rsun * Tn + a * n * r * (3r - 2Rsun) * Unm1)
+        end
+
+        function div_uΩcrossωf_fn(r, n)
+            r̄_r = r̄(r)
+            a = 2 / Δr::Float64
+            anr = a * n * r
+            if n > 1
+                Tn = Chebyshev([zeros(n); 1])(r̄_r)::Float64
+                Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄_r)::Float64
+                Unm2 = ChebyshevU([zeros(n - 2); 1])(r̄_r)::Float64
+                return 2 / √15 * ΔΩ1::Float64 * 1 / (r^2 * (r̄_r^2 - 1)) *
+                       (anr^2 * (Rsun - r) * Unm2 +
+                        anr * Unm1 * (a * (n - 1) * r * r̄_r * (r - Rsun) + (r̄_r^2 - 1) * (3r - 2Rsun)) +
+                        6(1 - r̄_r^2) * (r - Rsun) * Tn
+                )
+            elseif n == 1
+                return 2 / √15 * ΔΩ1::Float64 * 1 / r^2 * (a * r * (3r - 2Rsun) - 6(r - Rsun) * r̄_r)
             else
-                int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*cos(θ)^2*Plm(θ, l′, m), 0, pi, rtol=rtol)
-                @test Cos²θ[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
+                error("invalid degree $n")
             end
         end
-    end
-    @testset "sin²θ" begin
-        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
-            @test Sin²θ[lind, l′ind] ≈ Sin²θ_el(l,l′,m) atol=1e-10  rtol=rtol
-            if abs(l-l′) > 2 || abs(l - l′) == 1
-                @test Sin²θ[lind, l′ind] == 0
+
+        function div_ucrossω_fn(r, n)
+            a = 2 / Δr::Float64
+            r̄_r = r̄(r)
+            anr = a * n * r
+            if n > 1
+                Tn = Chebyshev([zeros(n); 1])(r̄_r)
+                Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄_r)
+                Unm2 = ChebyshevU([zeros(n - 2); 1])(r̄_r)
+                return 2 / √15 * ΔΩ1::Float64 * 1 / (r^2 * (1 - r̄_r^2)) *
+                       (anr^2 * (r - Rsun) * Unm2 +
+                        anr * Unm1 * (-a * (n - 1) * r * r̄_r * (r - Rsun) + 2(r̄_r^2 - 1) * (2Rsun - 3r)) -
+                        2(1 - r̄_r^2) * (3r - 5Rsun) * Tn
+                )
+            elseif n == 1
+                return 4 / √15 * ΔΩ1::Float64 * 1 / r^2 * (a * r * (3r - 2Rsun) + (-3r + 5Rsun) * r̄_r)
             else
-                int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*sin(θ)^2*Plm(θ, l′, m), 0, pi, rtol=rtol)
-                @test Sin²θ[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
+                error("invalid degree $n")
             end
         end
-    end
-    @testset "cosθsin²θ" begin
-        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
-            if abs(l-l′) > 3 || l == l′ || abs(l - l′) == 2
-                @test CosθSin²θ[lind, l′ind] == 0
-            else
-                int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*cos(θ)*sin(θ)^2*Plm(θ, l′, m), 0, pi, rtol=rtol)
-                @test CosθSin²θ[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
-            end
+
+        dr_r²div_ucrossω_fn(r, n) = ForwardDiff.derivative(r -> r^2 * div_ucrossω_fn(r, n), r)
+
+        function Wterm_fn(r, n)
+            a = 2 / Δr::Float64
+            r̄_r = r̄(r)
+            Tn = Chebyshev([zeros(n); 1])(r̄_r)
+            Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄_r)
+            anr = a * n * r
+            return 4 * √(3 / 5) * ΔΩ1::Float64 * 1 / r * (anr * (r - Rsun) * Unm1 - (r - 2Rsun) * Tn)
         end
-    end
-    @testset "sinθdθ" begin
-        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
-            if abs(l-l′) > 1 || l == l′
-                @test Sinθdθ[lind, l′ind] == 0
-            else
-                int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*sinθdθPlm(θ, l′, m), 0, pi, rtol=rtol)
-                @test Sinθdθ[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
-            end
-        end
-    end
-    @testset "sin³θdθ" begin
-        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
-            if abs(l-l′) > 3 || l == l′ || abs(l - l′) == 2
-                @test Sin³θdθ[lind, l′ind] == 0
-            else
-                int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*sin(θ)^2*sinθdθPlm(θ, l′, m), 0, pi, rtol=rtol)
-                @test Sin³θdθ[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
-            end
-        end
-    end
-    @testset "sinθdθ*sinθdθ" begin
-        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
-            if abs(l-l′) > 2 || abs(l - l′) == 1
-                @test SinθdθSinθdθ[lind, l′ind] == 0
-            else
-                int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*sinθdθsinθdθPlm(θ, l′, m), 0, pi, rtol=rtol)
-                @test SinθdθSinθdθ[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
-            end
-        end
-    end
-    @testset "sinθdθ*sinθdθ*sinθdθ" begin
-        for (lind, l) in enumerate(m .+ (0:nℓ-1)), (l′ind, l′) in enumerate(m .+ (0:nℓ-1))
-            if abs(l-l′) > 3 || l == l′ || abs(l - l′) == 2
-                @test SinθdθSinθdθSinθdθ[lind, l′ind] == 0
-            else
-                int, err = quadgk(θ -> sin(θ)*Plm(θ, l, m)*sinθdθsinθdθsinθdθPlm(θ, l′, m), 0, pi, rtol=rtol)
-                @test SinθdθSinθdθSinθdθ[lind, l′ind] ≈ int atol=max(1e-10, err) rtol=rtol
-            end
+
+        @testset for n in 1:nr-6
+            V = [zeros(n); -√(4 / 3); zeros((nℓ - 1) * nr + nr - (n + 1))]
+
+            rindsℓ1ℓ2 = nr .+ (1:nr)
+
+            ucrossω_r_real = ucrossωfn.(r, n)
+            ucrossω_rtoc = Tcrfwd * ucrossω_r_real
+            ucrossω_operator = u_cross_ω_r.V[rindsℓ1ℓ2, :] * V
+            @test ucrossω_operator ≈ ucrossω_rtoc rtol = 1e-5
+
+            ∇²h_ucrossω_r_real = ∇²h_ucrossωfn.(r, n)
+            ∇²h_ucrossω_rtoc = Tcrfwd * ∇²h_ucrossω_r_real
+            ∇²h_ucrossω_operator = ∇²h_u_cross_ω_r.V[rindsℓ1ℓ2, :] * V
+            @test ∇²h_ucrossω_operator ≈ ∇²h_ucrossω_rtoc rtol = 1e-5
+
+            d²r_r²ucrossω_real = d²r_r²ucrossωfn.(r, n)
+            d²r_r²ucrossω_rtoc = Tcrfwd * d²r_r²ucrossω_real
+            d²r_r²ucrossω_operator = (kron2(Iℓ, d²r_r2)*u_cross_ω_r.V)[rindsℓ1ℓ2, :] * V
+            @test d²r_r²ucrossω_operator ≈ d²r_r²ucrossω_rtoc rtol = 1e-3
+
+            ωΩ_dot_ωf_real = ωΩ_dot_ωf_fn.(r, n)
+            ωΩ_dot_ωf_rtoc = Tcrfwd * ωΩ_dot_ωf_real
+            ωΩ_dot_ωf_operator = ωΩ_dot_ωf.V[rindsℓ1ℓ2, :] * V
+            @test ωΩ_dot_ωf_operator ≈ ωΩ_dot_ωf_rtoc rtol = 1e-5
+
+            negcurlωΩ_dot_uf_real = neg_curlωΩ_dot_uf_fn.(r, n)
+            negcurlωΩ_dot_uf_rtoc = Tcrfwd * negcurlωΩ_dot_uf_real
+            negcurlωΩ_dot_uf_operator = negcurlωΩ_dot_uf.V[rindsℓ1ℓ2, :] * V
+            @test negcurlωΩ_dot_uf_operator ≈ negcurlωΩ_dot_uf_rtoc rtol = 1e-5
+
+            @test div_ufcrossωΩ_fn.(r, n) ≈ ωΩ_dot_ωf_fn.(r, n) + neg_curlωΩ_dot_uf_fn.(r, n)
+            div_ufcrossωΩ_real = div_ufcrossωΩ_fn.(r, n)
+            div_ufcrossωΩ_rtoc = Tcrfwd * div_ufcrossωΩ_real
+            div_ufcrossωΩ_operator = div_uf_cross_ωΩ.V[rindsℓ1ℓ2, :] * V
+            @test div_ufcrossωΩ_operator ≈ div_ufcrossωΩ_rtoc rtol = 1e-5
+
+            curlωf_dot_uΩ_real = curlωf_dot_uΩ_fn.(r, n)
+            curlωf_dot_uΩ_rtoc = Tcrfwd * curlωf_dot_uΩ_real
+            curlωf_dot_uΩ_operator = curlωf_dot_uΩ.V[rindsℓ1ℓ2, :] * V
+            @test curlωf_dot_uΩ_operator ≈ curlωf_dot_uΩ_rtoc rtol = 1e-5
+
+            @test div_uΩcrossωf_fn.(r, n) ≈ ωΩ_dot_ωf_fn.(r, n) - curlωf_dot_uΩ_fn.(r, n)
+            div_uΩcrossωf_real = div_uΩcrossωf_fn.(r, n)
+            div_uΩcrossωf_rtoc = Tcrfwd * div_uΩcrossωf_real
+            div_uΩcrossωf_operator = div_uΩ_cross_ωf.V[rindsℓ1ℓ2, :] * V
+            @test div_uΩcrossωf_operator ≈ div_uΩcrossωf_rtoc rtol = 1e-5
+
+            @test div_ucrossω_fn.(r, n) ≈ div_uΩcrossωf_fn.(r, n) + div_ufcrossωΩ_fn.(r, n)
+            div_ucrossω_real = div_ucrossω_fn.(r, n)
+            div_ucrossω_rtoc = Tcrfwd * div_ucrossω_real
+            div_ucrossω_operator = div_u_cross_ω.V[rindsℓ1ℓ2, :] * V
+            @test div_ucrossω_operator ≈ div_ucrossω_rtoc rtol = 1e-5
+
+            dr_r²div_ucrossω_real = dr_r²div_ucrossω_fn.(r, n)
+            dr_r²div_ucrossω_rtoc = Tcrfwd * dr_r²div_ucrossω_real
+            dr_r²div_ucrossω_operator2 = (kron2(Iℓ, r_ddr_plus_1 * r_cheby)*div_u_cross_ω.V)[rindsℓ1ℓ2, :] * V
+            @test dr_r²div_ucrossω_operator2 ≈ dr_r²div_ucrossω_rtoc rtol = 1e-5
+
+            @test Wterm_fn.(r, n) ≈ (@. -dr_r²div_ucrossω_fn(r, n) + d²r_r²ucrossωfn(r, n) + ∇²h_ucrossωfn(r, n)) rtol=1e-7
+
+            Wterm_real = Wterm_fn.(r, n)
+            Wterm_rtoc = Tcrfwd * Wterm_real
+            Wterm_operator = negr²Ω0W_rhs.V[rindsℓ1ℓ2, :] * V
+            @test Wterm_operator ≈ Wterm_rtoc rtol = 1e-2
         end
     end
 end
-
-@testset "angular velocity in legendre and associated legendre basis" begin
-    thetaop = RossbyWaveSpectrum.theta_operators(nℓ, m);
-    (; thetaGL, PLMfwd, PLMinv) = thetaop;
-    # Arbitrary function
-    ΔΩ_ℓ_cosθ = OffsetArray([0, √(2/3)], OffsetArrays.Origin(0));
-    ΔΩ_ℓ_cos²θ = OffsetArray([1/3*√2, 0, 2/3*√(2/5)], OffsetArrays.Origin(0));
-    ΔΩ_ℓ_sin²θ = OffsetArray([2/3*√2, 0, -2/3*√(2/5)], OffsetArrays.Origin(0));
-    ΔΩ_ℓ_arr = [(cos, ΔΩ_ℓ_cosθ), (x -> cos(x)^2, ΔΩ_ℓ_cos²θ), (x -> sin(x)^2, ΔΩ_ℓ_sin²θ)];
-    for (f, ΔΩ_ℓ) in ΔΩ_ℓ_arr
-        ΔΩ = f.(thetaGL);
-        ΔΩ_ℓ1ℓ2 = PaddedMatrix(PLMfwd * Diagonal(ΔΩ) * PLMinv, nℓ);
-        ℓs = range(m, length = nℓ);
-        ΔΩ_ℓ1ℓ2_of = OffsetArray(ΔΩ_ℓ1ℓ2, ℓs, ℓs);
-        # The legendre coefficients are 1/3, 0, 2/3
-        for ℓ1 in ℓs, ℓ2 in ℓs
-            @test ΔΩ_ℓ1ℓ2_of[ℓ1, ℓ2] ≈ sum(ΔΩ_ℓ[ℓ]*intPl1mPl20Pl3m(ℓ1, ℓ, ℓ2, m) for ℓ in axes(ΔΩ_ℓ, 1)) atol=1e-10
-        end
-    end
-end
-
-@testset "vorticity of differential rotation" begin
-    chebytheta = reverse(acos.(RossbyWaveSpectrum.chebyshevnodes(20)[1]));
-
-    @testset "sintheta_dtheta_ΔΩ" begin
-        function sintheta_dtheta_ΔΩ_operator(ΔΩ_r_Legendre, m, operators)
-            (; transforms, radial_params) = operators;
-            (; nparams, nℓ) = radial_params;
-            (; Tcrfwd, Tcrinv) = transforms;
-            ℓs = range(m, length = 2nℓ);
-            ΔΩ_r_Legendre_of = OffsetArray(ΔΩ_r_Legendre, :, 0:size(ΔΩ_r_Legendre, 2)-1);
-            sinθ_dθ_ΔΩ = zeros(2nparams, 2nparams);
-            for ℓ in axes(ΔΩ_r_Legendre_of, 2)
-                ℓ == 0 && continue
-                ΔΩ_r_ℓ = Diagonal(@view ΔΩ_r_Legendre_of[:, ℓ])
-                ΔΩ_cheby_ℓ = Tcrfwd * ΔΩ_r_ℓ * Tcrinv
-                nchebyr1, nchebyr2 = size(ΔΩ_cheby_ℓ)
-                for (ℓ2ind, ℓ2) in enumerate(ℓs), (ℓ1ind, ℓ1) in enumerate(ℓs)
-                    Tℓ1ℓℓ2 = ℓ*(√(2/3)*(intPl1mPl20Pl3m(1,ℓ,ℓ-1,0)*intPl1mPl20Pl3m(ℓ1,ℓ-1,ℓ2,m) +
-                        intPl1mPl20Pl3m(1,ℓ,ℓ+1,0)*intPl1mPl20Pl3m(ℓ1,ℓ+1,ℓ2,m)) -
-                        √((2ℓ+1)/(2ℓ-1))*intPl1mPl20Pl3m(ℓ1,ℓ-1,ℓ2,m))
-                    iszero(Tℓ1ℓℓ2) && continue
-
-                    rowinds = (ℓ1ind-1)*nchebyr1 + 1:ℓ1ind*nchebyr1
-                    colinds = (ℓ2ind-1)*nchebyr2 + 1:ℓ2ind*nchebyr2
-                    ℓ2ℓ1inds = CartesianIndices((rowinds, colinds))
-                    @. sinθ_dθ_ΔΩ[ℓ2ℓ1inds] += ΔΩ_cheby_ℓ * Tℓ1ℓℓ2
-                end
-            end
-            return PaddedMatrix(sinθ_dθ_ΔΩ, nparams)
-        end
-
-        f = θ -> cos(θ)
-        ΔΩ_r_thetaGL = ones(nr) .* f.(thetaGL)';
-        ΔΩ_r_chebytheta = ones(nr) .* f.(chebytheta)';
-
-        ΔΩ_kk′_ℓℓ′ = RossbyWaveSpectrum.real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop);
-        @test ΔΩ_kk′_ℓℓ′ ≈ Cosθ ⊗ Ir;
-        ΔΩ_r_Legendre = RossbyWaveSpectrum.normalizedlegendretransform2(ΔΩ_r_chebytheta);
-
-        @test sintheta_dtheta_ΔΩ_operator(ΔΩ_r_Legendre, m, operators) ≈ -Sin²θ ⊗ Ir;
-        @test SinθdθI*ΔΩ_kk′_ℓℓ′ - ΔΩ_kk′_ℓℓ′*SinθdθI ≈ -Sin²θ ⊗ Ir;
-
-        f = θ -> cos(θ)^2
-        ΔΩ_r_thetaGL = ones(nr) .* f.(thetaGL)';
-        ΔΩ_r_chebytheta = ones(nr) .* f.(chebytheta)';
-
-        ΔΩ_kk′_ℓℓ′ = RossbyWaveSpectrum.real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop);
-        @test ΔΩ_kk′_ℓℓ′ ≈ Cosθ^2 ⊗ Ir;
-        ΔΩ_r_Legendre = RossbyWaveSpectrum.normalizedlegendretransform2(ΔΩ_r_chebytheta);
-
-        @test sintheta_dtheta_ΔΩ_operator(ΔΩ_r_Legendre, m, operators) ≈ (-2Cosθ*Sin²θ) ⊗ Ir;
-        @test SinθdθI*ΔΩ_kk′_ℓℓ′ - ΔΩ_kk′_ℓℓ′*SinθdθI ≈ (-2Cosθ*Sin²θ) ⊗ Ir;
-    end
-
-    @testset "rddr_ΔΩ" begin
-        Irddr = Iℓ ⊗ rddr;
-
-        f = θ -> cos(θ)
-        ΔΩ_r_thetaGL = ones(nr) .* f.(thetaGL)';
-        ΔΩ_r_chebytheta = ones(nr) .* f.(chebytheta)';
-
-        ΔΩ_kk′_ℓℓ′ = RossbyWaveSpectrum.real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop);
-
-        ΔΩ_r_ℓℓ′ = RossbyWaveSpectrum.real_to_r_assocleg(ΔΩ_r_thetaGL, operators, thetaop)
-        rddr_ΔΩ = RossbyWaveSpectrum.apply_radial_operator(rddr, ΔΩ_r_ℓℓ′, m, operators)
-        @test all(x -> isapprox(0,x,atol=1e-10), rddr_ΔΩ)
-        ddr_ΔΩ = RossbyWaveSpectrum.apply_radial_operator(ddr, ΔΩ_r_ℓℓ′, m, operators)
-        @test all(x -> isapprox(0,x,atol=1e-10), ddr_ΔΩ)
-
-        fr = r -> r; fθ = θ -> cos(θ)
-        ΔΩ_r_thetaGL = fr.(r) .* fθ.(thetaGL)';
-        ΔΩ_r_chebytheta = fr.(r) .* fθ.(chebytheta)';
-
-        @test Tcrinv * rddr * Tcrfwd * ΔΩ_r_thetaGL ≈ ΔΩ_r_thetaGL
-
-        ΔΩ_kk′_ℓℓ′ = RossbyWaveSpectrum.real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop);
-
-        ΔΩ_r_ℓℓ′ = RossbyWaveSpectrum.real_to_r_assocleg(ΔΩ_r_thetaGL, operators, thetaop);
-        rddr_ΔΩ = RossbyWaveSpectrum.apply_radial_operator(rddr, ΔΩ_r_ℓℓ′, m, operators);
-        @test rddr_ΔΩ ≈ ΔΩ_kk′_ℓℓ′ ≈ Cosθ ⊗ r_cheby
-        ddr_ΔΩ = RossbyWaveSpectrum.apply_radial_operator(ddr, ΔΩ_r_ℓℓ′, m, operators);
-        @test ddr_ΔΩ ≈ Cosθ ⊗ Ir
-
-        fr = r -> r^2; fθ = θ -> cos(θ)
-        ΔΩ_r_thetaGL = fr.(r) .* fθ.(thetaGL)';
-        ΔΩ_r_chebytheta = fr.(r) .* fθ.(chebytheta)';
-
-        @test Tcrinv * rddr * Tcrfwd * ΔΩ_r_thetaGL ≈ 2ΔΩ_r_thetaGL
-
-        ΔΩ_kk′_ℓℓ′ = RossbyWaveSpectrum.real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop);
-
-        ΔΩ_r_ℓℓ′ = RossbyWaveSpectrum.real_to_r_assocleg(ΔΩ_r_thetaGL, operators, thetaop);
-        rddr_ΔΩ = RossbyWaveSpectrum.apply_radial_operator(rddr, ΔΩ_r_ℓℓ′, m, operators);
-        @test rddr_ΔΩ ≈ 2ΔΩ_kk′_ℓℓ′ ≈ Cosθ ⊗ 2r_cheby^2
-        ddr_ΔΩ = RossbyWaveSpectrum.apply_radial_operator(ddr, ΔΩ_r_ℓℓ′, m, operators);
-        @test ddr_ΔΩ ≈ Cosθ ⊗ 2r_cheby
-    end
-
-    f = θ -> cos(θ)
-    ΔΩ_r_thetaGL = ones(nr) .* f.(thetaGL)';
-    ΔΩ_r_chebytheta = ones(nr) .* f.(chebytheta)';
-
-    ΔΩ_kk′_ℓℓ′ = RossbyWaveSpectrum.real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop);
-    ΔΩ_r_ℓℓ′ = RossbyWaveSpectrum.real_to_r_assocleg(ΔΩ_r_thetaGL, operators, thetaop);
-    @test ΔΩ_kk′_ℓℓ′ ≈ Cosθ ⊗ Ir;
-    ΔΩ_r_Legendre = RossbyWaveSpectrum.normalizedlegendretransform2(ΔΩ_r_chebytheta);
-
-    (; ωΩr, ωΩθ_by_sinθ, sinθ_ωΩθ, invsinθ_dθ_ωΩr, dθ_ωΩθ, drωΩr, cotθ_ωΩθ) =
-        RossbyWaveSpectrum.vorticity_terms(ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, ΔΩ_r_Legendre, m, Cosθ, Sinθdθ, operators);
-
-    @testset "ωr" begin
-        # for ΔΩ = cosθ = P1(cosθ), ωr = 3cos²θ - 1
-        @test ωΩr ≈ (3Cos²θ - I) ⊗ Ir
-        @test all(x -> isapprox(0, x, atol=1e-10), drωΩr)
-        # dθωr = -6cosθsinθ, (1/sinθ) * dθωr = -6cosθ
-        @test invsinθ_dθ_ωΩr ≈ -6Cosθ ⊗ Ir
-    end
-    @testset "ωθ" begin
-        # ωΩθ/sinθ = -(2 + r∂r)ΔΩ = -2ΔΩ if ΔΩ does not vary in r
-        # for ΔΩ = cosθ we obtain ωΩθ/sinθ = -2cosθ
-        @test ωΩθ_by_sinθ ≈ -2Cosθ ⊗ Ir
-        # sinθωΩθ = sin²θ * ωΩθ/sinθ = -2sin²θ*cosθ
-        @test sinθ_ωΩθ ≈ (-2Sin²θ*Cosθ) ⊗ Ir
-        # ωΩθ = -2cosθsinθ = -sin(2θ)
-        # dθ_ωΩθ = -2cos(2θ) = -2(cos²θ - sin²θ)
-        @test dθ_ωΩθ ≈ -2(Cos²θ - Sin²θ) ⊗ Ir
-        @test cotθ_ωΩθ ≈ -2Cos²θ ⊗ Ir
-    end
-
-    fr = r -> r^2; fθ = θ -> cos(θ);
-    ΔΩ_r_thetaGL = fr.(r) .* fθ.(thetaGL)';
-    ΔΩ_r_chebytheta = fr.(r) .* fθ.(chebytheta)';
-
-    ΔΩ_kk′_ℓℓ′ = RossbyWaveSpectrum.real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop);
-    ΔΩ_r_ℓℓ′ = RossbyWaveSpectrum.real_to_r_assocleg(ΔΩ_r_thetaGL, operators, thetaop);
-    ΔΩ_r_Legendre = RossbyWaveSpectrum.normalizedlegendretransform2(ΔΩ_r_chebytheta);
-
-    (; ωΩr, ωΩθ_by_sinθ, sinθ_ωΩθ, invsinθ_dθ_ωΩr, dθ_ωΩθ, drωΩr, cotθ_ωΩθ) =
-        RossbyWaveSpectrum.vorticity_terms(ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, ΔΩ_r_Legendre, m, Cosθ, Sinθdθ, operators);
-
-    @testset "ωr" begin
-        # for ΔΩ = r²cosθ = P1(cosθ), ωr = r²(3cos²θ - 1)
-        @test ωΩr ≈ (3Cos²θ - I) ⊗ r_cheby^2
-        @test drωΩr ≈ (3Cos²θ - I) ⊗ 2r_cheby
-        # dθωr = -6cosθsinθ, (1/sinθ) * dθωr = -6cosθ
-        @test invsinθ_dθ_ωΩr ≈ -6Cosθ ⊗ r_cheby^2
-    end
-    @testset "ωθ" begin
-        # ωΩθ/sinθ = -(2 + r∂r)ΔΩ
-        # for ΔΩ = r²cosθ we obtain ωΩθ/sinθ = -4r²cosθ
-        @test ωΩθ_by_sinθ ≈ -4Cosθ ⊗ r_cheby^2
-        # sinθωΩθ = sin²θ * ωΩθ/sinθ = -4r²sin²θcosθ
-        @test sinθ_ωΩθ ≈ (-4Sin²θ*Cosθ) ⊗ r_cheby^2
-        # ωΩθ = -4r²cosθsinθ = -2r²sin(2θ)
-        # dθωΩθ = -4r²cos(2θ) = -4r²(cos²θ - sin²θ)
-        @test dθ_ωΩθ ≈ -4(Cos²θ - Sin²θ) ⊗ r_cheby^2
-        @test cotθ_ωΩθ ≈ -4Cos²θ ⊗ r_cheby^2
-    end
-end
-
-@testset "constant differential rotation" begin
-    to_blocks(M) = (M[1:nparams, 1:nparams], M[1:nparams, nparams+1:end], M[nparams+1:end, 1:nparams], M[nparams+1:end, nparams+1:end])
-
-    M_uniformrot = RossbyWaveSpectrum.twoΩcrossv(nr, nℓ, m; operators);
-    M_uniformrot_11, M_uniformrot_12, M_uniformrot_21, M_uniformrot_22 = to_blocks(M_uniformrot);
-    @test [M_uniformrot_11 M_uniformrot_12; M_uniformrot_21 M_uniformrot_22] == M_uniformrot;
-
-    M_diffrot = RossbyWaveSpectrum.diffrotterms(nr, nℓ, m; operators, thetaop, test = true);
-    M_diffrot_11, M_diffrot_12, M_diffrot_21, M_diffrot_22 = to_blocks(M_diffrot);
-    @test [M_diffrot_11 M_diffrot_12; M_diffrot_21 M_diffrot_22] == M_diffrot;
-
-    @test M_uniformrot_11 ≈ M_diffrot_11 + m * I;
-
-    @testset "curl curl terms for uniform differential rotation" begin
-        ℓs = range(m, length = 2nℓ);
-
-        ℓℓp1 = ℓs.*(ℓs.+1);
-        ℓℓp1_ax2 = ones(nℓ) .* ℓℓp1[1:nℓ]';
-        ℓℓp1_diag = PaddedMatrix(Diagonal(ℓℓp1), nℓ);
-
-        @test Sin²θ .* ℓℓp1_ax2 ≈ Sin²θ * ℓℓp1_diag
-
-        (; ΔΩ_r_thetaGL, ΔΩ_r_Legendre) = RossbyWaveSpectrum.read_angular_velocity(operators, thetaGL, test = true);
-        ΔΩ_r_ℓℓ′ = PaddedMatrix((PLMfwd ⊗ Ir) * Diagonal(vec(ΔΩ_r_thetaGL)) * (PLMinv ⊗ Ir), nparams);
-        ΔΩ_kk′_ℓℓ′ = PaddedMatrix(fullfwd * Diagonal(vec(ΔΩ_r_thetaGL)) * fullinv, nparams);
-
-        ω_terms = RossbyWaveSpectrum.vorticity_terms(ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, ΔΩ_r_Legendre, m, Cosθ, Sinθdθ, operators);
-        (; ωΩr, ωΩθ_by_sinθ, dθ_ωΩθ, cotθ_ωΩθ, sinθ_dθ_ΔΩ_kk′_ℓℓ′) = ω_terms;
-
-        (; T_imW_V, T_imW_imW, T_imW_V1, T_imW_imW1, T_imW_V2, T_imW_imW2, T_imW_V_sum, T_imW_imW_sum,
-            im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_V,
-            im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_imW, sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_V, sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_imW,
-            Sin²θ_T_imW_V2, Sin²θ_T_imW_imW2) =
-        RossbyWaveSpectrum.curl_curl_matrix_terms(m, operators, ω_terms, ΔΩ_kk′_ℓℓ′, ΔΩ_r_ℓℓ′, Cosθ, Sinθdθ, ℓs);
-
-        @testset "W terms" begin
-            im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_imW_exp = -(Sinθdθ^2 ⊗ (2onebyr_cheby * DDr) - 2Cosθ*Sinθdθ ⊗ DDr^2 +
-                (2Sin²θ * ℓℓp1_diag) ⊗ onebyr2_cheby - m^2 * ℓℓp1_diag ⊗ onebyr2_cheby + m^2 * Iℓ ⊗ (ddr * DDr));
-
-            @test im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_imW ≈ im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_imW_exp
-
-            sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_imW_exp = m*(-Sinθdθ ⊗ ((ddr + 2onebyr_cheby)*DDr) + (Sinθdθ*ℓℓp1_diag) ⊗ onebyr2_cheby + 2Cosθ ⊗ DDr^2)
-            @test sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_imW ≈ sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_imW_exp
-
-            Sin²θ_T_imW_imW2_exp = m*(
-                (Sin²θ*(ℓℓp1_diag - 2I)) ⊗ DDr^2 - (Sin²θ*(ℓℓp1_diag - 2I)*ℓℓp1_diag) ⊗ onebyr2_cheby
-                -(Sin²θ*ℓℓp1_diag) ⊗ (ηρ_cheby * DDr)
-            );
-            @test Sin²θ_T_imW_imW2 ≈ Sin²θ_T_imW_imW2_exp
-
-            T_imW_imW2_exp = m*(
-                (ℓℓp1_diag - 2I) ⊗ DDr^2 - ((ℓℓp1_diag - 2I)*ℓℓp1_diag) ⊗ onebyr2_cheby
-                -ℓℓp1_diag ⊗ (ηρ_cheby * DDr)
-            );
-            @test T_imW_imW2 ≈ (Sin⁻²θ ⊗ Ir) * Sin²θ_T_imW_imW2;
-            @test T_imW_imW2 ≈ T_imW_imW2_exp;
-
-            @test T_imW_imW1 ≈ m*ℓℓp1_diag ⊗ (ηρ_cheby * DDr);
-
-            T_imW_imW_exp = m*(
-                (ℓℓp1_diag - 2I) ⊗ DDr^2 - ((ℓℓp1_diag - 2I)*ℓℓp1_diag) ⊗ onebyr2_cheby
-            );
-            @test T_imW_imW_sum ≈ T_imW_imW_exp;
-        end
-
-        @testset "V terms" begin
-            @test im_sinθ_r_by_ρ_curl_ρu_cross_ω_θ_V ≈ m*(Sinθdθ ⊗ (ddr + 2onebyr_cheby) - 2Cosθ⊗DDr)
-            @test sinθ_r_by_ρ_curl_ρu_cross_ω_ϕ_V ≈ (2Sinθdθ^2 ⊗ onebyr_cheby
-                -2*(Cosθ*Sinθdθ ⊗ DDr) + Sin²θ*ℓℓp1_diag ⊗ ηρ_cheby +  m^2*(Iℓ ⊗ ddr))
-
-            Sin²θ_T_imW_V2_exp1 = (Sinθdθ^3 ⊗ 2onebyr_cheby -(2Sinθdθ*Cosθ*Sinθdθ) ⊗ DDr
-            + (Sinθdθ * Sin²θ * ℓℓp1_diag) ⊗ ηρ_cheby
-            - m^2 *(Sinθdθ ⊗ 2onebyr_cheby - 2Cosθ ⊗ DDr)
-            );
-            @test Sin²θ_T_imW_V2 ≈ Sin²θ_T_imW_V2_exp1;
-
-            Sin²θ_T_imW_V2_exp2 = (-Sin²θ * ℓℓp1_diag * Sinθdθ ⊗ 2onebyr_cheby
-            -(2Sinθdθ*Cosθ*Sinθdθ) ⊗ DDr
-            + (Sinθdθ * Sin²θ * ℓℓp1_diag) ⊗ ηρ_cheby
-            + m^2 *2Cosθ ⊗ DDr
-            );
-            @test Sin²θ_T_imW_V2 ≈ Sin²θ_T_imW_V2_exp2;
-
-            Sin²θ_T_imW_V2_exp = (Sin²θ ⊗ Ir) * (
-                2Sinθdθ ⊗ DDr -(2ℓℓp1_diag*Sinθdθ) ⊗ onebyr_cheby +
-                (2Cosθ*ℓℓp1_diag) ⊗ (DDr + ηρ_cheby) +
-                (Sinθdθ*ℓℓp1_diag) ⊗ ηρ_cheby
-            );
-
-            @test Sin²θ_T_imW_V2 ≈ Sin²θ_T_imW_V2_exp;
-
-            T_imW_V2_exp = (
-                2Sinθdθ ⊗ DDr -(2ℓℓp1_diag*Sinθdθ) ⊗ onebyr_cheby +
-                (2Cosθ*ℓℓp1_diag) ⊗ (DDr + ηρ_cheby) +
-                (Sinθdθ*ℓℓp1_diag) ⊗ ηρ_cheby
-            );
-            @test T_imW_V2 ≈ T_imW_V2_exp
-        end
-
-    end
-end
-
-# @testset "eigenvalues" begin
-#     (; C) = RossbyWaveSpectrum.constraintmatrix(operators);
-
-#     m = 5
-#     M = RossbyWaveSpectrum.twoΩcrossv(nr, nℓ, m; operators);
-
-#     λ, v = RossbyWaveSpectrum.filter_eigenvalues(
-#         RossbyWaveSpectrum.uniform_rotation_spectrum, nr, nℓ, m);
-#     @test M * v ≈ v * Diagonal(λ) rtol=1e-2
-#     @test all(x -> isapprox(x, 0, atol=1e-5), C * v)
-# end
