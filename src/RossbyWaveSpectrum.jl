@@ -815,7 +815,7 @@ function radial_differential_rotation_profile(operators, thetaGL, model = :solar
     elseif model == :constant # for testing
         ΔΩ_by_Ω = 0.02
         Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
-        ΔΩ_r = fill(ΔΩ_by_Ω * Ω0, nr), Ω0
+        ΔΩ_r = fill(ΔΩ_by_Ω * Ω0, nr)
     else
         error("$model is not a valid rotation model")
     end
@@ -1029,7 +1029,7 @@ function linear_differential_rotation_terms!(M, nr, nℓ, m;
 end
 
 function radial_differential_rotation_profile_derivatives(nℓ, m, r;
-        operators, rotation_profile = :constant)
+    operators, rotation_profile = :constant)
 
     pseudospectralop = operators.transforms.pseudospectralop_radial
 
@@ -1050,12 +1050,11 @@ function negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ), (cosθ,
     (; Iℓ, Ir) = operators.identities
 
     (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby) = operators.rad_terms
-    (; ddr, DDr, d2dr2) = operators.diff_operators
+    (; ddr, DDr, d2dr2, rddr, r2d2dr2) = operators.diff_operators
 
     pseudospectralop = operators.transforms.pseudospectralop_radial
 
     ddr_min_2byr = ddr - 2onebyr_cheby
-    ddr_plus_2byr = ddr + 2onebyr_cheby
 
     drΔΩ_real = derivative(ΔΩ_spl, r, nu = 1)
     d2rΔΩ_real = derivative(ΔΩ_spl, r, nu = 2)
@@ -1120,9 +1119,8 @@ function negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ), (cosθ,
 
     div_u_cross_ω = div_uf_cross_ωΩ + div_uΩ_cross_ωf
 
-    # r_ddr_plus_2 = r_cheby * ddr + 2I
-    r_ddr_plus_1 = r_cheby * ddr + I
-    d²r_r2 = r2_cheby * d2dr2 + 4r_cheby * ddr + 2I
+    r_ddr_plus_1 = rddr + I
+    d²r_r2 = r2d2dr2 + 4rddr + 2I
     negr²Ω0W_rhs = kron(-Iℓ, r_ddr_plus_1 * r_cheby) * div_u_cross_ω +
                    kron2(Iℓ, d²r_r2) * u_cross_ω_r +
                    ∇²h_u_cross_ω_r
@@ -1160,7 +1158,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     cosθo = OffsetArray(cosθ, ℓs, ℓs)
     sinθdθ = sintheta_dtheta_operator(nℓ, m)
     sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs)
-    cosθsinθdθ = parent(cosθ) * parent(sinθdθ)
+    cosθsinθdθ = (costheta_operator(nℓ + 1, m) * sintheta_dtheta_operator(nℓ+1, m))[1:end-1, 1:end-1]
     cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs)
 
     (; negr²Ω0W_rhs) = negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ),
@@ -1321,7 +1319,7 @@ function solar_differential_rotation_terms!(M, nr, nℓ, m;
     ωΩθ_by_rsinθ = -ddr_plus_2byr_ΔΩ
     invsinθdθ_ωΩθ_by_rsinθ = pseudospectral_op(permutedims(-invsinθdθ_Ω * permutedims(ddr_plus_2byr_ΔΩ_nℓ)))
     invsinθdθ_ωΩr = ∇²ΔΩ - 2ΔΩ + 2cotθdθΔΩ
-    ∇²ωΩθ_by_rsinθ = pseudospectral_op(ddr_plus_2byr_ΔΩ_nℓ .* (-diag(∇²Ω))')
+    ∇²ωΩθ_by_rsinθ = pseudospectral_op(ddr_plus_2byr_ΔΩ_nℓ .* adjoint(-diag(∇²Ω)))
     ∇²_plus_4rddr_plus_r2d2dr2_plus_2cotθdθ_ΔΩ = ∇²ΔΩ + 4rddrΔΩ + r2d2dr2ΔΩ + cotθdθΔΩ
     negrinvsinθ_curlωΩϕ = ∇²_plus_4rddr_plus_r2d2dr2_plus_2cotθdθ_ΔΩ
 
@@ -1541,8 +1539,7 @@ end
 function chebyshev_filter!(VWinv, F, v, m, operators, n_cutoff = 7, n_power_cutoff = 0.9;
     nℓ = operators.radial_params.nℓ,
     ℓmax = m + nℓ - 1,
-    Plcosθ = SphericalHarmonics.allocate_p(ℓmax)
-)
+    Plcosθ = SphericalHarmonics.allocate_p(ℓmax))
 
     eigenfunction_n_theta!(VWinv, F, v, m, operators; nℓ, ℓmax, Plcosθ)
     (; V) = VWinv
@@ -1557,8 +1554,7 @@ end
 function equator_filter!(VWinv, VWinvsh, F, v, m, operators, θ_cutoff = deg2rad(75), equator_power_cutoff_frac = 0.3;
     nℓ = operators.radial_params.nℓ,
     ℓmax = m + nℓ - 1,
-    Plcosθ = SphericalHarmonics.allocate_p(ℓmax)
-)
+    Plcosθ = SphericalHarmonics.allocate_p(ℓmax))
 
     (; θ) = eigenfunction_realspace!(VWinv, VWinvsh, F, v, m, operators; nℓ, ℓmax, Plcosθ)
     (; V) = VWinv
@@ -1619,7 +1615,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     Δl_cutoff = 7, Δl_power_cutoff = 0.9,
     eigen_rtol = 5e-2,
     n_cutoff = 7, n_power_cutoff = 0.9,
-    eig_imag_unstable_cutoff = -1e-1,
+    eig_imag_unstable_cutoff = -1e-6,
     eig_imag_to_real_ratio_cutoff = 1e-1,
     eig_imag_damped_cutoff = 5e-3,
     ΔΩ_by_Ω_low = 0, ΔΩ_by_Ω_high = ΔΩ_by_Ω_low,

@@ -220,14 +220,15 @@ end
 
             dr_r²div_ucrossω_real = dr_r²div_ucrossω_fn.(r, n)
             dr_r²div_ucrossω_rtoc = Tcrfwd * dr_r²div_ucrossω_real
-            dr_r²div_ucrossω_operator2 = (kron2(Iℓ, r_ddr_plus_1 * r_cheby)*div_u_cross_ω.V)[rindsℓ1ℓ2, :] * V
-            @test dr_r²div_ucrossω_operator2 ≈ dr_r²div_ucrossω_rtoc rtol = 1e-5
+            dr_r²div_ucrossω_operator = (kron2(Iℓ, r_ddr_plus_1 * r_cheby)*div_u_cross_ω.V)[rindsℓ1ℓ2, :] * V
+            @test dr_r²div_ucrossω_operator ≈ dr_r²div_ucrossω_rtoc rtol = 1e-5
 
-            @test Wterm_fn.(r, n) ≈ (@. -dr_r²div_ucrossω_fn(r, n) + d²r_r²ucrossωfn(r, n) + ∇²h_ucrossωfn(r, n)) rtol=1e-7
+            @test Wterm_fn.(r, n) ≈ (@. -dr_r²div_ucrossω_fn(r, n) + d²r_r²ucrossωfn(r, n) + ∇²h_ucrossωfn(r, n)) rtol = 1e-7
 
             Wterm_real = Wterm_fn.(r, n)
             Wterm_rtoc = Tcrfwd * Wterm_real
             Wterm_operator = negr²Ω0W_rhs.V[rindsℓ1ℓ2, :] * V
+            @test Wterm_operator ≈ -dr_r²div_ucrossω_operator + d²r_r²ucrossω_operator + ∇²h_ucrossω_operator
             @test Wterm_operator ≈ Wterm_rtoc rtol = 1e-2
         end
     end

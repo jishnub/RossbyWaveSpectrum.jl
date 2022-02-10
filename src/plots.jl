@@ -298,6 +298,13 @@ function plot_matrix(M)
     f.tight_layout()
 end
 
+function plot_matrix_block(M, rowind, colind)
+    f, ax = subplots()
+    p = ax.pcolormesh(abs.(RossbyWaveSpectrum.matrix_block(M, rowind, colind)))
+    cb = colorbar(mappable = p, ax = ax)
+    f.tight_layout()
+end
+
 function plot_diffrot_radial(operators, smoothing_param = 1e-5)
     (; nℓ, r_out) = operators.radial_params
     (; r) = operators.coordinates
