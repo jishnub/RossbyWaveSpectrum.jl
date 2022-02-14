@@ -3,7 +3,6 @@ module RossbyWaveSpectrum
 using Dierckx
 using FastGaussQuadrature
 using FastTransforms
-using FillArrays
 using Folds
 using ForwardDiff
 using Kronecker
@@ -16,7 +15,6 @@ using MKL
 using OffsetArrays
 using SimpleDelimitedFiles: readdlm
 using SphericalHarmonics
-using WignerSymbols
 
 export datadir
 
@@ -42,19 +40,6 @@ datadir(f) = joinpath(DATADIR[], f)
 β⁻ℓm(ℓ, m) = (ℓ < abs(m) ? 0.0 : oftype(0.0, √((2ℓ + 1) / (2ℓ - 1) * (ℓ^2 - m^2))))
 γ⁺ℓm(ℓ, m) = ℓ * α⁺ℓm(ℓ, m)
 γ⁻ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ, m) - β⁻ℓm(ℓ, m)
-
-# triple integrals involving normalized legendre and associated legendre polynomials
-function intPl1mPl20Pl3m(ℓ1, ℓ2, ℓ3, m)
-    iseven(ℓ1 + ℓ2 + ℓ3) || return 0.0
-    return oftype(0.0, √((2ℓ1 + 1) * (2ℓ2 + 1) / (2 * (2ℓ3 + 1))) *
-                       clebschgordan(Float64, ℓ1, 0, ℓ2, 0, ℓ3) * clebschgordan(Float64, ℓ1, m, ℓ2, 0, ℓ3))
-end
-
-function intPl1mP′l20Pl3m(ℓ1, ℓ2, ℓ3, m)
-    ℓ2 == 0 && return 0.0
-    isodd(ℓ1 + ℓ2 + ℓ3) || return 0.0
-    return oftype(0.0, sum(√((2ℓ2 + 1) * (2n + 1)) * intPl1mPl20Pl3m(ℓ1, n, ℓ3, m) for n = ℓ2-1:-2:0))
-end
 
 function chebyshevnodes(n, a = -1, b = 1)
     nodes = cos.(reverse(pi * ((1:n) .- 0.5) ./ n))
@@ -252,13 +237,6 @@ function associatedlegendretransform_matrices(nℓ, m)
     associatedlegendretransform_matrices(nℓ, m, costheta, w)
 end
 
-function theta_operators(nℓ, m)
-    ntheta = ntheta_ℓmax(nℓ, m)
-    (; thetaGL, costheta, w) = gausslegendre_theta_grid(ntheta)
-    (; PLMfwd, PLMinv) = associatedlegendretransform_matrices(nℓ, m, costheta, w)
-    (; ntheta, thetaGL, PLMfwd, PLMinv)
-end
-
 function constraintmatrix(operators)
     (; radial_params) = operators
     (; nr, r_in, r_out, nℓ, Δr) = radial_params
@@ -305,7 +283,7 @@ function constraintmatrix(operators)
     ZC = nullspace(BC)
     ZW = nullspace(MWn)
 
-    (; BC, ZC, ZW)
+    (; BC, ZC, ZW, nfields)
 end
 
 function constrained_matmul_cache(constraints)
@@ -432,17 +410,26 @@ function read_solar_model(nr; r_in = 0.7Rsun, r_out = Rsun)
     (; r, ρ, T, g)
 end
 
+struct SpectralOperatorForm
+    fwd::Matrix{Float64}
+    inv::Matrix{Float64}
+end
+
+function (op::SpectralOperatorForm)(A::AbstractMatrix)
+    op.fwd * A * op.inv
+end
+
 function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     r_in = r_in_frac * Rsun
     r_out = r_out_frac * Rsun
     radial_params = parameters(nr, nℓ; r_in, r_out)
     (; Δr, nchebyr, r_mid) = radial_params
     r, Tcrfwd, Tcrinv = chebyshev_forward_inverse(nr, r_in, r_out)
-    pseudospectralop_radial = SpectralOperatorForm(Tcrfwd, Tcrinv)
+    pseudospectralop_radial = SpectralOperatorForm(Tcrfwd, Tcrinv) ∘ Diagonal
     r_chebyshev = (r .- r_mid) ./ (Δr / 2)
     Tcrfwdc, Tcrinvc = complex.(Tcrfwd), complex.(Tcrinv)
-    r_cheby = Tcrfwd * Diagonal(r) * Tcrinv
-    r2_cheby = r_cheby^2
+    r_cheby = pseudospectralop_radial(r)
+    r2_cheby = pseudospectralop_radial(r .^ 2)
 
     (; ρ, T, g) = read_solar_model(nr; r_in, r_out)
 
@@ -452,27 +439,27 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     r2d2dr2 = r2_cheby * d2dr2
     ddr_realspace = Tcrinv * ddr * Tcrfwd
     ηρ = ddr_realspace * log.(ρ)
-    ηρ_cheby = Tcrfwd * Diagonal(ηρ) * Tcrinv
+    ηρ_cheby = pseudospectralop_radial(ηρ)
     DDr = ddr + ηρ_cheby
     rDDr = r_cheby * DDr
     D2Dr2 = DDr^2
 
     onebyr = 1 ./ r
-    onebyr_cheby = Tcrfwd * Diagonal(onebyr) * Tcrinv
-    onebyr2_cheby = Tcrfwd * Diagonal(onebyr)^2 * Tcrinv
+    onebyr_cheby = Tcrfwd * Diagonal(1 ./ r) * Tcrinv
+    onebyr2_cheby = pseudospectralop_radial(1 ./ r .^ 2)
     DDr_minus_2byr = DDr - 2onebyr_cheby
 
-    g_cheby = Tcrfwd * Diagonal(g) * Tcrinv
+    g_cheby = pseudospectralop_radial(g)
 
     κ = thermal_diffusivity(ρ)
-    κ_cheby = all(iszero, κ) ? zeros(size(g_cheby)) : Tcrfwd * Diagonal(κ) * Tcrinv
+    κ_cheby = all(iszero, κ) ? zeros(size(g_cheby)) : pseudospectralop_radial(κ)
     ddr_lnκρT = all(iszero, κ) ? zero(κ_cheby) :
-                Tcrfwd * Diagonal(ddr_realspace * log.(κ .* ρ .* T)) * Tcrinv
+                pseudospectralop_radial(ddr_realspace * log.(κ .* ρ .* T))
 
     γ = 1.64
     cp = 1.7e8
     δ_superadiabatic = superadiabaticity.(r; r_out)
-    ddr_S0_by_cp = Tcrfwd * Diagonal(@. γ * δ_superadiabatic * ηρ / cp) * Tcrinv
+    ddr_S0_by_cp = pseudospectralop_radial(@. γ * δ_superadiabatic * ηρ / cp)
 
     Ir = I(nchebyr)
     Iℓ = I(nℓ)
@@ -800,7 +787,7 @@ function radial_differential_rotation_profile(operators, thetaGL, model = :solar
         smoothing_param = 1e-3)
     (; r) = operators.coordinates
     (; radial_params) = operators
-    (; r_out, nr) = radial_params
+    (; r_out, nr, r_in) = radial_params
     if model == :solar_equator
         ΔΩ_rθ, Ω0 = read_angular_velocity(operators, thetaGL)
         θind_equator = findmin(abs.(thetaGL .- pi / 2))[2]
@@ -810,7 +797,7 @@ function radial_differential_rotation_profile(operators, thetaGL, model = :solar
         ΔΩ_r = Spline1D(r, ΔΩ_r, s = s)(r)
     elseif model == :linear
         Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
-        f = -0.8
+        f = 0.02/(r_in/Rsun - 1)
         ΔΩ_r = @. Ω0 * f * (r / Rsun - 1)
     elseif model == :constant # for testing
         ΔΩ_by_Ω = 0.02
@@ -857,25 +844,6 @@ function LinearAlgebra.mul!(out::VWArrays, A::AbstractMatrix, B::VWArrays)
     out
 end
 
-struct SpectralOperatorForm
-    fwd::Matrix{Float64}
-    inv::Matrix{Float64}
-    fwdcache::Matrix{Float64}
-    invcache::Matrix{Float64}
-
-    SpectralOperatorForm(fwd, inv) =
-        new(fwd, inv,
-            similar(fwd, size(fwd, 1), size(inv, 2)),
-            similar(inv, size(fwd, 2), size(inv, 2))
-        )
-end
-
-function (op::SpectralOperatorForm)(A::AbstractMatrix)
-    mul!(op.invcache, A, op.inv)
-    mul!(op.fwdcache, op.fwd, op.invcache)
-    return copy(op.fwdcache)
-end
-
 struct RealSpace
     r_chebyshev::Vector{Float64}
     theta::Vector{Float64}
@@ -885,7 +853,8 @@ end
 
 function (rop::RealSpace)(A)
     Diagonal(vec(
-        inv_chebyshev_normalizedlegendre_transform(A, rop.r_chebyshev, rop.theta; rop.Pℓ, rop.Tc)))
+        inv_chebyshev_normalizedlegendre_transform(
+            A, rop.r_chebyshev, rop.theta; rop.Pℓ, rop.Tc)))
 end
 
 function linear_differential_rotation_terms!(M, nr, nℓ, m;
@@ -1058,13 +1027,13 @@ function negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ), (cosθ,
 
     drΔΩ_real = derivative(ΔΩ_spl, r, nu = 1)
     d2rΔΩ_real = derivative(ΔΩ_spl, r, nu = 2)
-    d2dr2ΔΩ = pseudospectralop(Diagonal(d2rΔΩ_real))
+    d2dr2ΔΩ = pseudospectralop(d2rΔΩ_real)
 
     ℓs = range(m, length = nℓ)
 
     ωΩr = kron2(2cosθ, ΔΩ)
-    ddrΔΩ_by_r = pseudospectralop(Diagonal(drΔΩ_real ./ r))
-    ddr_plus_2byr_ΔΩ = pseudospectralop(Diagonal(@. drΔΩ_real + 2 / r * ΔΩ_r))
+    ddrΔΩ_by_r = pseudospectralop(drΔΩ_real ./ r)
+    ddr_plus_2byr_ΔΩ = pseudospectralop(@. drΔΩ_real + 2 / r * ΔΩ_r)
     ωΩθ_by_rsinθ = kron2(-Iℓ, ddr_plus_2byr_ΔΩ)
     neg_invrsinθ_curlωΩϕ = kron2(Iℓ, d2dr2ΔΩ + 4ddrΔΩ_by_r)
 
@@ -1121,9 +1090,9 @@ function negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ), (cosθ,
 
     r_ddr_plus_1 = rddr + I
     d²r_r2 = r2d2dr2 + 4rddr + 2I
-    negr²Ω0W_rhs = kron(-Iℓ, r_ddr_plus_1 * r_cheby) * div_u_cross_ω +
-                   kron2(Iℓ, d²r_r2) * u_cross_ω_r +
-                   ∇²h_u_cross_ω_r
+    negr²Ω0W_rhs = +ₛ(kron(-Iℓ, r_ddr_plus_1 * r_cheby) * div_u_cross_ω,
+                   kron2(Iℓ, d²r_r2) * u_cross_ω_r,
+                   ∇²h_u_cross_ω_r)
     (; negr²Ω0W_rhs, u_cross_ω_r, div_u_cross_ω, ∇²h_u_cross_ω_r,
         ωΩ_dot_ωf, negcurlωΩ_dot_uf, curlωf_dot_uΩ,
         div_uf_cross_ωΩ, div_uΩ_cross_ωf)
@@ -1146,10 +1115,11 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     SV = @view M[2nparams.+(1:nparams), 1:nparams]
     SW = @view M[2nparams.+(1:nparams), nparams.+(1:nparams)]
 
-    (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, drΔΩ_real, ddrΔΩ) = radial_differential_rotation_profile_derivatives(nℓ, m, r;
-        operators, rotation_profile)
+    (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, drΔΩ_real, ddrΔΩ) =
+        radial_differential_rotation_profile_derivatives(nℓ, m, r;
+            operators, rotation_profile)
 
-    ddrΔΩ_over_g = ddrΔΩ * g_cheby^-1
+    ddrΔΩ_over_g = g_cheby \ ddrΔΩ
     ddrΔΩ_over_g_DDr = ddrΔΩ_over_g * DDr
 
     ℓs = range(m, length = nℓ)
@@ -1158,7 +1128,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     cosθo = OffsetArray(cosθ, ℓs, ℓs)
     sinθdθ = sintheta_dtheta_operator(nℓ, m)
     sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs)
-    cosθsinθdθ = (costheta_operator(nℓ + 1, m) * sintheta_dtheta_operator(nℓ+1, m))[1:end-1, 1:end-1]
+    cosθsinθdθ = (costheta_operator(nℓ + 1, m)*sintheta_dtheta_operator(nℓ + 1, m))[1:end-1, 1:end-1]
     cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs)
 
     (; negr²Ω0W_rhs) = negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ),
@@ -1433,10 +1403,14 @@ function differential_rotation_matrix!(M, nr, nℓ, m; rotation_profile, operato
     return M
 end
 
+_maybetrimM(M, nfields, nparams) = nfields == 3 ? M : M[1:(nfields*nparams), 1:(nfields*nparams)]
+
 function constrained_eigensystem(M, operators, constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints))
 
-    (; ZC) = constraints
+    (; nparams) = operators.radial_params
+    (; ZC, nfields) = constraints
+    M = _maybetrimM(M, nfields, nparams)
     (; M_constrained, MZCcache) = cache #= not thread safe =#
     mul!(M_constrained, permutedims(ZC), mul!(MZCcache, M, ZC))
     # M_constrained = permutedims(ZC) * M * ZC
@@ -1503,7 +1477,7 @@ end
 rossby_ridge(m, ℓ = m; ΔΩ_by_Ω = 0) = 2m / (ℓ * (ℓ + 1)) * (1 + ΔΩ_by_Ω) - m * ΔΩ_by_Ω
 
 function eigenvalue_filter(x, m;
-    eig_imag_unstable_cutoff = -1e-1,
+    eig_imag_unstable_cutoff = -1e-3,
     eig_imag_to_real_ratio_cutoff = 1e-1,
     eig_imag_damped_cutoff = 5e-3,
     ΔΩ_by_Ω_low = 0,
@@ -1567,30 +1541,54 @@ function equator_filter!(VWinv, VWinvsh, F, v, m, operators, θ_cutoff = deg2rad
     powflag & peakflag
 end
 
-function filterfn(λ, v, m, M, operators, additional_params)
+function filterfn(λ, v, m, M, operators, additional_params; kw...)
 
     (; eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
         ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff,
         Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
         VWinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
-        θ_cutoff, equator_power_cutoff_frac, MVcache, eigen_rtol, VWinvsh, F) = additional_params
+        θ_cutoff, equator_power_cutoff_frac, MVcache, eigen_rtol, VWinvsh, F,
+        filters) = additional_params
 
     ℓmax = m + nℓ - 1
 
-    eigenvalue_filter(λ, m;
+    if get(filters, :eigenvalue, true)
+        eigenvalue_filter(λ, m;
             eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
-            ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff) &&
-        sphericalharmonic_filter!(VWinvsh, F, v, operators, Δl_cutoff, Δl_power_cutoff) &&
-        boundary_condition_filter(v, BC, BCVcache, atol_constraint) &&
-        chebyshev_filter!(VWinv, F, v, m, operators, n_cutoff, n_power_cutoff; nℓ, ℓmax, Plcosθ) &&
-        equator_filter!(VWinv, VWinvsh, F, v, m, operators, θ_cutoff, equator_power_cutoff_frac; nℓ, ℓmax, Plcosθ) &&
-        eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
+            ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff) || return false
+    end
+
+    if get(filters, :sphericalharmonic, true)
+        sphericalharmonic_filter!(VWinvsh, F, v, operators,
+            Δl_cutoff, Δl_power_cutoff) || return false
+    end
+
+    if get(filters, :boundarycondition, true)
+        boundary_condition_filter(v, BC, BCVcache, atol_constraint) || return false
+    end
+
+    if get(filters, :chebyshev, true)
+        chebyshev_filter!(VWinv, F, v, m, operators, n_cutoff,
+            n_power_cutoff; nℓ, ℓmax, Plcosθ)  || return false
+    end
+
+    if get(filters, :equator, true)
+        equator_filter!(VWinv, VWinvsh, F, v, m, operators,
+            θ_cutoff, equator_power_cutoff_frac; nℓ, ℓmax, Plcosθ) || return false
+    end
+
+    if get(filters, :eigensystem_satisfy, true)
+        eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol) || return false
+    end
+
+    return true
 end
 
-function allocate_filter_caches(m; operators, BC = constraintmatrix(operators).BC)
+function allocate_filter_caches(m; operators, constraints = constraintmatrix(operators))
+    (; BC, nfields) = constraints
     (; nr, nℓ, nparams) = operators.radial_params
     # temporary cache arrays
-    MVcache = Vector{ComplexF64}(undef, 3nparams)
+    MVcache = Vector{ComplexF64}(undef, nfields * nparams)
     BCVcache = Vector{ComplexF64}(undef, size(BC, 1))
 
     nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
@@ -1609,20 +1607,32 @@ end
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     M::AbstractMatrix, m::Integer;
     operators,
-    BC = constraintmatrix(operators).BC,
-    filtercache = allocate_filter_caches(m; operators, BC),
+    constraints = constraintmatrix(operators),
+    filtercache = allocate_filter_caches(m; operators, constraints),
     atol_constraint = 1e-5,
-    Δl_cutoff = 7, Δl_power_cutoff = 0.9,
+    Δl_cutoff = 7,
+    Δl_power_cutoff = 0.9,
     eigen_rtol = 5e-2,
-    n_cutoff = 7, n_power_cutoff = 0.9,
-    eig_imag_unstable_cutoff = -1e-6,
+    n_cutoff = 7,
+    n_power_cutoff = 0.9,
+    eig_imag_unstable_cutoff = -1e-3,
     eig_imag_to_real_ratio_cutoff = 1e-1,
     eig_imag_damped_cutoff = 5e-3,
-    ΔΩ_by_Ω_low = 0, ΔΩ_by_Ω_high = ΔΩ_by_Ω_low,
+    ΔΩ_by_Ω_low = 0,
+    ΔΩ_by_Ω_high = ΔΩ_by_Ω_low,
     θ_cutoff = deg2rad(75),
     equator_power_cutoff_frac = 0.3,
+    filters = (;
+        eigenvalue = true,
+        sphericalharmonic = true,
+        chebyshev = true,
+        boundarycondition = true,
+        equator = true,
+        eigensystem_satisfy = true,
+    ),
     kw...)
 
+    (; BC) = constraints
     (; nℓ) = operators.radial_params
     (; MVcache, BCVcache, VWinv, VWinvsh, Plcosθ, F) = filtercache
 
@@ -1630,7 +1640,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
         ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff,
         Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
         VWinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
-        θ_cutoff, equator_power_cutoff_frac, MVcache, eigen_rtol, VWinvsh, F)
+        θ_cutoff, equator_power_cutoff_frac, MVcache, eigen_rtol, VWinvsh, F, filters)
 
     inds_bool = filterfn.(λ, eachcol(v), m, (M,), (operators,), (additional_params,))
     filtinds = axes(λ, 1)[inds_bool]
@@ -1660,15 +1670,16 @@ function filter_eigenvalues(λ::AbstractVector{<:AbstractVector},
 
     (; nr, nℓ, nparams) = operators.radial_params
     nparams = nr * nℓ
+    (; nfields) = constraints
     Ms = [zeros(ComplexF64, 3nparams, 3nparams) for _ in 1:Threads.nthreads()]
-    caches = [constrained_matmul_cache(constraints) for _ in 1:Threads.nthreads()]
+    filtercaches = [allocate_filter_caches(m; operators, constraints) for _ in 1:Threads.nthreads()]
     λv = @maybe_reduce_blas_threads(
         Folds.map(zip(λ, v, mr)) do (λm, vm, m)
             M = Ms[Threads.threadid()]
-            cache = caches[Threads.threadid()]
+            filtercache = filtercaches[Threads.threadid()]
             Mfn(M, nr, nℓ, m; operators)
-            filter_eigenvalues(λm, vm, M, m;
-                operators, BC, cache, kw...)
+            _M = _maybetrimM(M, nfields, nparams)
+            filter_eigenvalues(λm, vm, _M, m; operators, BC, filtercache, kw...)
         end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
     )
     first.(λv), last.(λv)
@@ -1682,14 +1693,16 @@ function filter_eigenvalues(f, mr::AbstractVector; #= inplace function =#
     (; nr, nℓ, nparams) = operators.radial_params
     Ms = [zeros(ComplexF64, 3nparams, 3nparams) for _ in 1:Threads.nthreads()]
     caches = [constrained_matmul_cache(constraints) for _ in 1:Threads.nthreads()]
+    filtercaches = [allocate_filter_caches(m; operators, constraints) for _ in 1:Threads.nthreads()]
     (; BC) = constraints
 
     λv = @maybe_reduce_blas_threads(
         Folds.map(mr) do m
             M = Ms[Threads.threadid()]
             cache = caches[Threads.threadid()]
-            λm, vm = f(M, nr, nℓ, m; operators, constraints, kw...)
-            filter_eigenvalues(λm, vm, M, m; operators, BC, cache, kw...)
+            filtercache = filtercaches[Threads.threadid()]
+            λm, vm, _M = f(M, nr, nℓ, m; operators, constraints, cache, kw...)
+            filter_eigenvalues(λm, vm, _M, m; operators, BC, filtercache, kw...)
         end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
     )
     first.(λv), last.(λv)

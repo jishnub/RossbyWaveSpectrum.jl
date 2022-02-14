@@ -6,7 +6,7 @@ using Aqua
 using SpecialPolynomials
 using ForwardDiff
 
-using RossbyWaveSpectrum: matrix_block, Rsun
+using RossbyWaveSpectrum: matrix_block, Rsun, kron2
 
 @testset "project quality" begin
     Aqua.test_all(RossbyWaveSpectrum,
@@ -17,18 +17,6 @@ using RossbyWaveSpectrum: matrix_block, Rsun
 end
 
 @testset "differential rotation" begin
-    @testset "radial vs constant" begin
-        nr, nℓ = 10, 10
-        nparams = nr * nℓ
-        m = 1
-        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-        Mc = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m, rotation_profile = :constant; operators)
-        Mr = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m, rotation_profile = :radial; operators)
-
-        for colind in 1:3, rowind in 1:3
-            @test matrix_block(Mr, rowind, colind) ≈ matrix_block(Mr, rowind, colind) atol = 1e-10 rtol = 1e-5
-        end
-    end
     @testset "u × ω matrix" begin
         nr, nℓ = 40, 2
         nparams = nr * nℓ
@@ -63,21 +51,22 @@ end
                 (cosθ, sinθdθ); operators)
 
         r̄(r) = (r - r_mid::Float64) / (Δr::Float64 / 2)
-        function ucrossωfn(r, n)
+        function ucrossωfn_V(r, n)
             r̄_r = r̄(r)
             Tn = Chebyshev([zeros(n); 1])(r̄_r)
             Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄_r)
             1 / 3 * √(12 / 5) * ΔΩ1::Float64 * ((3 - 2Rsun / r) * Tn + n * (2 / Δr::Float64) * (r - Rsun) * Unm1)
         end
+        d²r_fn(f) = r -> d²r_fn(f, r)
         d²r_fn(f, r) = ForwardDiff.derivative(r -> ForwardDiff.derivative(f, r), r)
-        d²r_r²ucrossωfn(r, n) = d²r_fn(r -> r^2 * ucrossωfn(r, n), r)
+        d²r_r²ucrossωfn_V(r, n) = d²r_fn(r -> r^2 * ucrossωfn_V(r, n), r)
 
-        function ∇²h_ucrossωfn(r, n)
+        function ∇²h_ucrossωfn_V(r, n)
             ℓ = 2
-            -ℓ * (ℓ + 1) * ucrossωfn(r, n)
+            -ℓ * (ℓ + 1) * ucrossωfn_V(r, n)
         end
 
-        function ωΩ_dot_ωf_fn(r, n)
+        function ωΩ_dot_ωf_fn_V(r, n)
             Tn = Chebyshev([zeros(n); 1])(r̄(r))
             Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄(r))
             a = 2 / Δr::Float64
@@ -85,12 +74,12 @@ end
             2 / √15 * ΔΩ1::Float64 * 1 / r^2 * (a * n * r * (3r - 2Rsun) * Unm1 - 4(r - Rsun) * Tn)
         end
 
-        function neg_curlωΩ_dot_uf_fn(r, n)
+        function neg_curlωΩ_dot_uf_fn_V(r, n)
             Tn = Chebyshev([zeros(n); 1])(r̄(r))
             8 / √15 * ΔΩ1::Float64 * 1 / r * Tn
         end
 
-        function curlωf_dot_uΩ_fn(r, n)
+        function curlωf_dot_uΩ_fn_V(r, n)
             a = 2 / Δr::Float64
             r̄_r = r̄(r)
             if n > 1
@@ -107,14 +96,14 @@ end
             end
         end
 
-        function div_ufcrossωΩ_fn(r, n)
+        function div_ufcrossωΩ_fn_V(r, n)
             Tn = Chebyshev([zeros(n); 1])(r̄(r))
             Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄(r))
             a = 2 / Δr::Float64
             2 / √15 * ΔΩ1::Float64 * 1 / r^2 * (4Rsun * Tn + a * n * r * (3r - 2Rsun) * Unm1)
         end
 
-        function div_uΩcrossωf_fn(r, n)
+        function div_uΩcrossωf_fn_V(r, n)
             r̄_r = r̄(r)
             a = 2 / Δr::Float64
             anr = a * n * r
@@ -134,7 +123,7 @@ end
             end
         end
 
-        function div_ucrossω_fn(r, n)
+        function div_ucrossω_fn_V(r, n)
             a = 2 / Δr::Float64
             r̄_r = r̄(r)
             anr = a * n * r
@@ -154,9 +143,9 @@ end
             end
         end
 
-        dr_r²div_ucrossω_fn(r, n) = ForwardDiff.derivative(r -> r^2 * div_ucrossω_fn(r, n), r)
+        dr_r²div_ucrossω_fn_V(r, n) = ForwardDiff.derivative(r -> r^2 * div_ucrossω_fn_V(r, n), r)
 
-        function Wterm_fn(r, n)
+        function Wterm_fn_V(r, n)
             a = 2 / Δr::Float64
             r̄_r = r̄(r)
             Tn = Chebyshev([zeros(n); 1])(r̄_r)
@@ -170,62 +159,62 @@ end
 
             rindsℓ1ℓ2 = nr .+ (1:nr)
 
-            ucrossω_r_real = ucrossωfn.(r, n)
+            ucrossω_r_real = ucrossωfn_V.(r, n)
             ucrossω_rtoc = Tcrfwd * ucrossω_r_real
             ucrossω_operator = u_cross_ω_r.V[rindsℓ1ℓ2, :] * V
             @test ucrossω_operator ≈ ucrossω_rtoc rtol = 1e-5
 
-            ∇²h_ucrossω_r_real = ∇²h_ucrossωfn.(r, n)
+            ∇²h_ucrossω_r_real = ∇²h_ucrossωfn_V.(r, n)
             ∇²h_ucrossω_rtoc = Tcrfwd * ∇²h_ucrossω_r_real
             ∇²h_ucrossω_operator = ∇²h_u_cross_ω_r.V[rindsℓ1ℓ2, :] * V
             @test ∇²h_ucrossω_operator ≈ ∇²h_ucrossω_rtoc rtol = 1e-5
 
-            d²r_r²ucrossω_real = d²r_r²ucrossωfn.(r, n)
+            d²r_r²ucrossω_real = d²r_r²ucrossωfn_V.(r, n)
             d²r_r²ucrossω_rtoc = Tcrfwd * d²r_r²ucrossω_real
-            d²r_r²ucrossω_operator = (kron2(Iℓ, d²r_r2)*u_cross_ω_r.V)[rindsℓ1ℓ2, :] * V
+            d²r_r²ucrossω_operator = d²r_r2 * ucrossω_operator
             @test d²r_r²ucrossω_operator ≈ d²r_r²ucrossω_rtoc rtol = 1e-3
 
-            ωΩ_dot_ωf_real = ωΩ_dot_ωf_fn.(r, n)
+            ωΩ_dot_ωf_real = ωΩ_dot_ωf_fn_V.(r, n)
             ωΩ_dot_ωf_rtoc = Tcrfwd * ωΩ_dot_ωf_real
             ωΩ_dot_ωf_operator = ωΩ_dot_ωf.V[rindsℓ1ℓ2, :] * V
             @test ωΩ_dot_ωf_operator ≈ ωΩ_dot_ωf_rtoc rtol = 1e-5
 
-            negcurlωΩ_dot_uf_real = neg_curlωΩ_dot_uf_fn.(r, n)
+            negcurlωΩ_dot_uf_real = neg_curlωΩ_dot_uf_fn_V.(r, n)
             negcurlωΩ_dot_uf_rtoc = Tcrfwd * negcurlωΩ_dot_uf_real
             negcurlωΩ_dot_uf_operator = negcurlωΩ_dot_uf.V[rindsℓ1ℓ2, :] * V
             @test negcurlωΩ_dot_uf_operator ≈ negcurlωΩ_dot_uf_rtoc rtol = 1e-5
 
-            @test div_ufcrossωΩ_fn.(r, n) ≈ ωΩ_dot_ωf_fn.(r, n) + neg_curlωΩ_dot_uf_fn.(r, n)
-            div_ufcrossωΩ_real = div_ufcrossωΩ_fn.(r, n)
+            @test div_ufcrossωΩ_fn_V.(r, n) ≈ ωΩ_dot_ωf_fn_V.(r, n) + neg_curlωΩ_dot_uf_fn_V.(r, n)
+            div_ufcrossωΩ_real = div_ufcrossωΩ_fn_V.(r, n)
             div_ufcrossωΩ_rtoc = Tcrfwd * div_ufcrossωΩ_real
             div_ufcrossωΩ_operator = div_uf_cross_ωΩ.V[rindsℓ1ℓ2, :] * V
             @test div_ufcrossωΩ_operator ≈ div_ufcrossωΩ_rtoc rtol = 1e-5
 
-            curlωf_dot_uΩ_real = curlωf_dot_uΩ_fn.(r, n)
+            curlωf_dot_uΩ_real = curlωf_dot_uΩ_fn_V.(r, n)
             curlωf_dot_uΩ_rtoc = Tcrfwd * curlωf_dot_uΩ_real
             curlωf_dot_uΩ_operator = curlωf_dot_uΩ.V[rindsℓ1ℓ2, :] * V
             @test curlωf_dot_uΩ_operator ≈ curlωf_dot_uΩ_rtoc rtol = 1e-5
 
-            @test div_uΩcrossωf_fn.(r, n) ≈ ωΩ_dot_ωf_fn.(r, n) - curlωf_dot_uΩ_fn.(r, n)
-            div_uΩcrossωf_real = div_uΩcrossωf_fn.(r, n)
+            @test div_uΩcrossωf_fn_V.(r, n) ≈ ωΩ_dot_ωf_fn_V.(r, n) - curlωf_dot_uΩ_fn_V.(r, n)
+            div_uΩcrossωf_real = div_uΩcrossωf_fn_V.(r, n)
             div_uΩcrossωf_rtoc = Tcrfwd * div_uΩcrossωf_real
             div_uΩcrossωf_operator = div_uΩ_cross_ωf.V[rindsℓ1ℓ2, :] * V
             @test div_uΩcrossωf_operator ≈ div_uΩcrossωf_rtoc rtol = 1e-5
 
-            @test div_ucrossω_fn.(r, n) ≈ div_uΩcrossωf_fn.(r, n) + div_ufcrossωΩ_fn.(r, n)
-            div_ucrossω_real = div_ucrossω_fn.(r, n)
+            @test div_ucrossω_fn_V.(r, n) ≈ div_uΩcrossωf_fn_V.(r, n) + div_ufcrossωΩ_fn_V.(r, n)
+            div_ucrossω_real = div_ucrossω_fn_V.(r, n)
             div_ucrossω_rtoc = Tcrfwd * div_ucrossω_real
             div_ucrossω_operator = div_u_cross_ω.V[rindsℓ1ℓ2, :] * V
             @test div_ucrossω_operator ≈ div_ucrossω_rtoc rtol = 1e-5
 
-            dr_r²div_ucrossω_real = dr_r²div_ucrossω_fn.(r, n)
+            dr_r²div_ucrossω_real = dr_r²div_ucrossω_fn_V.(r, n)
             dr_r²div_ucrossω_rtoc = Tcrfwd * dr_r²div_ucrossω_real
             dr_r²div_ucrossω_operator = (kron2(Iℓ, r_ddr_plus_1 * r_cheby)*div_u_cross_ω.V)[rindsℓ1ℓ2, :] * V
             @test dr_r²div_ucrossω_operator ≈ dr_r²div_ucrossω_rtoc rtol = 1e-5
 
-            @test Wterm_fn.(r, n) ≈ (@. -dr_r²div_ucrossω_fn(r, n) + d²r_r²ucrossωfn(r, n) + ∇²h_ucrossωfn(r, n)) rtol = 1e-7
+            @test Wterm_fn_V.(r, n) ≈ (@. -dr_r²div_ucrossω_fn_V(r, n) + d²r_r²ucrossωfn_V(r, n) + ∇²h_ucrossωfn_V(r, n)) rtol = 1e-7
 
-            Wterm_real = Wterm_fn.(r, n)
+            Wterm_real = Wterm_fn_V.(r, n)
             Wterm_rtoc = Tcrfwd * Wterm_real
             Wterm_operator = negr²Ω0W_rhs.V[rindsℓ1ℓ2, :] * V
             @test Wterm_operator ≈ -dr_r²div_ucrossω_operator + d²r_r²ucrossω_operator + ∇²h_ucrossω_operator

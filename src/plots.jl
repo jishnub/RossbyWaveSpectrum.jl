@@ -299,9 +299,32 @@ function plot_matrix(M)
 end
 
 function plot_matrix_block(M, rowind, colind)
-    f, ax = subplots()
-    p = ax.pcolormesh(abs.(RossbyWaveSpectrum.matrix_block(M, rowind, colind)))
-    cb = colorbar(mappable = p, ax = ax)
+    f, axlist = subplots(1, 2)
+    M = RossbyWaveSpectrum.matrix_block(M, rowind, colind)
+    A = real(M)
+    Amax = maximum(abs, A)
+    p1 = axlist[1].pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
+    cb1 = colorbar(mappable = p1, ax = axlist[1])
+    A = imag(M)
+    Amax = maximum(abs, A)
+    p2 = axlist[2].pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
+    cb2 = colorbar(mappable = p2, ax = axlist[2])
+    f.tight_layout()
+end
+
+function plot_radial_block(M, rowind, colind, nr, ℓind, ℓ′ind)
+    f, axlist = subplots(1, 2)
+    M = RossbyWaveSpectrum.matrix_block(M, rowind, colind)
+    ℓinds = (ℓind - 1) * nr .+ (1:nr)
+    ℓ′inds = (ℓ′ind - 1) * nr .+ (1:nr)
+    A = real(M)[ℓinds, ℓ′inds]
+    Amax = maximum(abs, A)
+    p1 = axlist[1].pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
+    cb1 = colorbar(mappable = p1, ax = axlist[1])
+    A = imag(M)[ℓinds, ℓ′inds]
+    Amax = maximum(abs, A)
+    p2 = axlist[2].pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
+    cb2 = colorbar(mappable = p2, ax = axlist[2])
     f.tight_layout()
 end
 
