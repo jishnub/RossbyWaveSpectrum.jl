@@ -371,10 +371,10 @@ end
 
 function greenfn_realspace_numerical2(ℓ, operators)
     (; diff_operators, rad_terms, transforms) = operators
-    (; DDr, ddr) = diff_operators
+    (; ddrDDr) = diff_operators
     (; onebyr2_cheby) = rad_terms
     (; Tcrinvc, Tcrfwdc) = transforms
-    Bℓ = ddr * DDr - ℓ * (ℓ + 1) * onebyr2_cheby
+    Bℓ = ddrDDr - ℓ * (ℓ + 1) * onebyr2_cheby
     Bℓ_realspace = Tcrinvc * Bℓ * Tcrfwdc
     G = pinv(Bℓ_realspace[2:end-1, 2:end-1])
     A = zero(Bℓ_realspace)
@@ -399,15 +399,20 @@ function read_solar_model(nr; r_in = 0.7Rsun, r_out = Rsun)
     q_modelS = exp.(reverse(ModelS[r_inds, 2]))
     T_modelS = reverse(ModelS[r_inds, 3])
     ρ_modelS = reverse(ModelS[r_inds, 5])
+    logρ_modelS = log.(ρ_modelS)
     # interpolate on the Chebyshev grid
     _, r = chebyshevnodes(nr, r_in, r_out)
     sρ = Spline1D(r_modelS, ρ_modelS)
     ρ = sρ.(r)
+    slogρ = Spline1D(r_modelS, logρ_modelS, s = sum(abs2, logρ_modelS) * 1e-5)
+    ddrlogρ = Dierckx.derivative(slogρ, r)
+    d2dr2logρ = Dierckx.derivative(slogρ, r, nu = 2)
+    d3dr3logρ = Dierckx.derivative(slogρ, r, nu = 3)
     T = Spline1D(r_modelS, T_modelS).(r)
     M = Msun * Spline1D(r_modelS, q_modelS).(r)
 
     g = @. G * M / r^2
-    (; r, ρ, T, g)
+    (; r, ρ, T, g, ddrlogρ, d2dr2logρ, d3dr3logρ)
 end
 
 struct SpectralOperatorForm
@@ -431,18 +436,24 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     r_cheby = pseudospectralop_radial(r)
     r2_cheby = pseudospectralop_radial(r .^ 2)
 
-    (; ρ, T, g) = read_solar_model(nr; r_in, r_out)
+    (; ρ, T, g, ddrlogρ, d2dr2logρ, d3dr3logρ) = read_solar_model(nr; r_in, r_out)
 
     ddr = Matrix(chebyshevderiv(nr) * (2 / Δr))
     rddr = r_cheby * ddr
     d2dr2 = ddr^2
+    d3dr3 = ddr^3
     r2d2dr2 = r2_cheby * d2dr2
     ddr_realspace = Tcrinv * ddr * Tcrfwd
-    ηρ = ddr_realspace * log.(ρ)
+    ηρ = ddrlogρ
     ηρ_cheby = pseudospectralop_radial(ηρ)
+    ddrηρ_cheby = pseudospectralop_radial(d2dr2logρ)
+    d2dr2ηρ_cheby = pseudospectralop_radial(d3dr3logρ)
     DDr = ddr + ηρ_cheby
     rDDr = r_cheby * DDr
     D2Dr2 = DDr^2
+
+    ddrDDr = d2dr2 + ηρ_cheby * ddr + ddrηρ_cheby
+    d2dr2DDr = d3dr3 + ηρ_cheby * d2dr2 + 2ddrηρ_cheby * ddr + d2dr2ηρ_cheby
 
     onebyr = 1 ./ r
     onebyr_cheby = Tcrfwd * Diagonal(1 ./ r) * Tcrinv
@@ -475,7 +486,8 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
     rad_terms = (; onebyr, onebyr_cheby, ηρ, ηρ_cheby, onebyr2_cheby,
         ddr_lnκρT, ddr_S0_by_cp, g_cheby, r_cheby, r2_cheby, κ_cheby)
-    diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr, ddr, d2dr2, r2d2dr2)
+    diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr,
+        ddr, d2dr2, r2d2dr2, ddrDDr, d2dr2DDr)
 
     (;
         constants, rad_terms,
@@ -509,7 +521,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     (; nchebyr, r_out) = radial_params
 
-    (; DDr, DDr_minus_2byr, ddr, d2dr2, rddr) = diff_operators
+    (; DDr, DDr_minus_2byr, ddr, d2dr2, rddr, ddrDDr) = diff_operators
     (; onebyr_cheby, onebyr2_cheby, ddr_lnκρT, κ_cheby,
         g_cheby, ηρ_cheby, r_cheby, ddr_S0_by_cp) = rad_terms
 
@@ -545,7 +557,6 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     (; ε, Wscaling) = operators.constants.scalings
 
-    ddr_DDr = ddr * DDr
     onebyr2_Iplusrηρ = (I + ηρ_cheby * r_cheby) * onebyr2_cheby
 
     onebyr2_cheby_ddr_S0_by_cp = onebyr2_cheby * ddr_S0_by_cp
@@ -560,7 +571,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         mul!(GℓC1_ddr, Gℓ, C1_ddr)
 
         diaginds_ℓ = blockinds((m, nr), ℓ)
-        WW[diaginds_ℓ] = 2m / (ℓ * (ℓ + 1)) * Gℓ * (ddr_DDr - onebyr2_Iplusrηρ * ℓ * (ℓ + 1))
+        WW[diaginds_ℓ] = 2m / (ℓ * (ℓ + 1)) * Gℓ * (ddrDDr - onebyr2_Iplusrηρ * ℓ * (ℓ + 1))
         WS[diaginds_ℓ] = (ε / Wscaling) * (-1 / Ω0) * Gℓ * g_cheby * (2 / (ℓ * (ℓ + 1)) * rddr + I)
 
         @. SW[diaginds_ℓ] = (Wscaling / ε) * (1 / Ω0) * ℓ * (ℓ + 1) * onebyr2_cheby_ddr_S0_by_cp
@@ -604,13 +615,12 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
     ℓmin = m
     ℓs = range(ℓmin, length = nℓ)
 
-    r2 = r_cheby^2
-    ∇r2 = onebyr2_cheby * ddr * r2 * ddr
-    two_by_r = 2 * onebyr_cheby
+    two_by_r = 2onebyr_cheby
     ddr_plus_2byr = ddr + two_by_r
     ddr_minus_2byr = ddr - two_by_r
+    ∇r2 = ddr_plus_2byr * ddr
     ηρ_ddr_minus_2byr = ηρ_cheby * ddr_minus_2byr
-    d2dr2_plus_2byr_ηρ = d2dr2 + 2 * onebyr_cheby * ηρ_cheby
+    d2dr2_plus_2byr_ηρ = d2dr2 + two_by_r * ηρ_cheby
 
     ℓℓp1_by_r2 = similar(onebyr2_cheby)
 
@@ -1018,8 +1028,8 @@ function negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ), (cosθ,
     (; r) = operators.coordinates
     (; Iℓ, Ir) = operators.identities
 
-    (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby) = operators.rad_terms
-    (; ddr, DDr, d2dr2, rddr, r2d2dr2) = operators.diff_operators
+    (; onebyr_cheby, onebyr2_cheby, r_cheby) = operators.rad_terms
+    (; ddr, DDr, d2dr2, rddr, r2d2dr2, ddrDDr, d2dr2DDr) = operators.diff_operators
 
     pseudospectralop = operators.transforms.pseudospectralop_radial
 
@@ -1046,11 +1056,11 @@ function negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ), (cosθ,
     ωfr = VWArrays(ωfr_V, ωfr_W)
 
     rsinθ_ωfθ_V = kron2(sinθdθ, ddr)
-    rsinθ_ωfθ_W = kron2(m_ℓℓp1d, onebyr2_cheby) - kron2(m * Iℓ, ddr * DDr)
+    rsinθ_ωfθ_W = kron2(m_ℓℓp1d, onebyr2_cheby) - kron2(m_Iℓ, ddrDDr)
     rsinθ_ωfθ = VWArrays(rsinθ_ωfθ_V, rsinθ_ωfθ_W)
 
     rsinθ_ufϕ_V = kron2(sinθdθ, -Ir)
-    rsinθ_ufϕ_W = kron2(m * Iℓ, DDr)
+    rsinθ_ufϕ_W = kron2(m_Iℓ, DDr)
     rsinθ_ufϕ = VWArrays(rsinθ_ufϕ_V, rsinθ_ufϕ_W)
 
     rsinθ_curlωfϕ_V = kron2(sinθdθ, d2dr2) - kron2(sinθdθ * ℓℓp1d, onebyr2_cheby)
@@ -1091,8 +1101,8 @@ function negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ), (cosθ,
     r_ddr_plus_1 = rddr + I
     d²r_r2 = r2d2dr2 + 4rddr + 2I
     negr²Ω0W_rhs = +ₛ(kron(-Iℓ, r_ddr_plus_1 * r_cheby) * div_u_cross_ω,
-                   kron2(Iℓ, d²r_r2) * u_cross_ω_r,
-                   ∇²h_u_cross_ω_r)
+        kron2(Iℓ, d²r_r2) * u_cross_ω_r,
+        ∇²h_u_cross_ω_r)
     (; negr²Ω0W_rhs, u_cross_ω_r, div_u_cross_ω, ∇²h_u_cross_ω_r,
         ωΩ_dot_ωf, negcurlωΩ_dot_uf, curlωf_dot_uΩ,
         div_uf_cross_ωΩ, div_uΩ_cross_ωf)
