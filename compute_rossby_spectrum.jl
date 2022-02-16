@@ -1,7 +1,7 @@
 @time using RossbyWaveSpectrum
 
-nr = 60;
-nℓ = 30;
+nr = 50;
+nℓ = 20;
 mrange = 1:20;
 
 # test
@@ -17,7 +17,7 @@ atol_constraint = 1e-5
 Δl_power_cutoff = 0.9;
 eigen_rtol = 0.1;
 
-n_cutoff = 10
+n_cutoff = 20
 n_power_cutoff = 0.9
 
 # used for filtering, zero for uniform rotation

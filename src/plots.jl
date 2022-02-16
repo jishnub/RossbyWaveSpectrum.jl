@@ -219,15 +219,23 @@ function eigenfunction(v, m, operators; theory = false, f = figure(), kw...)
 
     f.suptitle("Sectoral eigenfunction for m = $m")
 
-    # tight_layout()
+    if !get(kw, :constrained_layout, false)
+        f.tight_layout()
+    end
     if get(kw, :save, false)
         savefig(joinpath(plotdir, "eigenfunction.eps"))
     end
 end
 
-function eigenfunction_rossbyridge(λs, vs, m, operators; kw...)
-    minind = findmin(abs, real(λs[m]) .- RossbyWaveSpectrum.rossby_ridge(m))[2]
-    eigenfunction(vs[m][:, minind], m, operators; theory = true, kw...)
+function eigenfunction_rossbyridge(λs::AbstractVector{<:AbstractVector},
+    vs::AbstractVector{<:AbstractMatrix}, m, operators; kw...)
+    eigenfunction_rossbyridge(λs[m], vs[m], m, operators; kw...)
+end
+
+function eigenfunction_rossbyridge(λs::AbstractVector{<:Number},
+        vs::AbstractMatrix{<:Number}, m, operators; kw...)
+    minind = findmin(abs, real(λs) .- RossbyWaveSpectrum.rossby_ridge(m))[2]
+    eigenfunction(vs[:, minind], m, operators; theory = true, kw...)
 end
 
 function eignorm(v)
@@ -235,7 +243,7 @@ function eignorm(v)
     abs(minval) > abs(maxval) ? minval : maxval
 end
 
-function multiple_eigenfunctions_m(λs, vecs, m, operators; f = figure())
+function multiple_eigenfunctions_m(λs, vecs, m, operators; f = figure(), kw...)
     ax = f.add_subplot()
     ax.set_xlabel("colatitude (θ) [radians]", fontsize = 12)
     ax.set_ylabel("Angular profile", fontsize = 12)
@@ -271,14 +279,16 @@ function multiple_eigenfunctions_m(λs, vecs, m, operators; f = figure())
 
     legend = ax.legend(title = L"\frac{\Re[\omega/\Omega]}{2/(m+1)}")
     legend.get_title().set_fontsize("12")
-    # tight_layout()
+    if !get(kw, :constrained_layout, false)
+        f.tight_layout()
+    end
 end
 
 function eigenfunctions_rossbyridge_all(λs, vs, m, operators; kw...)
     fig = plt.figure(constrained_layout = true, figsize = (8, 4))
     subfigs = fig.subfigures(1, 2, wspace = 0.15, width_ratios = [1, 1])
-    eigenfunction_rossbyridge(λs, vs, m, operators; f = subfigs[1])
-    multiple_eigenfunctions_m(λs, vs, m, operators; f = subfigs[2])
+    eigenfunction_rossbyridge(λs, vs, m, operators; f = subfigs[1], constrained_layout = true)
+    multiple_eigenfunctions_m(λs, vs, m, operators; f = subfigs[2], constrained_layout = true)
     if get(kw, :save, false)
         savefig(joinpath(plotdir, "eigenfunction_rossby_all.eps"))
     end

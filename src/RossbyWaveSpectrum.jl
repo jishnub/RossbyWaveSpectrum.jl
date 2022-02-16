@@ -163,8 +163,7 @@ end
 
 function inv_chebyshev_normalizedlegendre_transform(Fnℓ, r_chebyshev, θ;
     Pℓ = zeros(size(Fnℓ, 2), length(θ)),
-    Tc = zeros(size(Fnℓ, 1), length(r_chebyshev))
-)
+    Tc = zeros(size(Fnℓ, 1), length(r_chebyshev)) )
 
     nr = length(r_chebyshev)
     nθ = length(θ)
@@ -441,19 +440,16 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     ddr = Matrix(chebyshevderiv(nr) * (2 / Δr))
     rddr = r_cheby * ddr
     d2dr2 = ddr^2
-    d3dr3 = ddr^3
     r2d2dr2 = r2_cheby * d2dr2
     ddr_realspace = Tcrinv * ddr * Tcrfwd
     ηρ = ddrlogρ
     ηρ_cheby = pseudospectralop_radial(ηρ)
     ddrηρ_cheby = pseudospectralop_radial(d2dr2logρ)
-    d2dr2ηρ_cheby = pseudospectralop_radial(d3dr3logρ)
     DDr = ddr + ηρ_cheby
     rDDr = r_cheby * DDr
     D2Dr2 = DDr^2
 
     ddrDDr = d2dr2 + ηρ_cheby * ddr + ddrηρ_cheby
-    d2dr2DDr = d3dr3 + ηρ_cheby * d2dr2 + 2ddrηρ_cheby * ddr + d2dr2ηρ_cheby
 
     onebyr = 1 ./ r
     onebyr_cheby = Tcrfwd * Diagonal(1 ./ r) * Tcrinv
@@ -485,9 +481,9 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     coordinates = (; r, r_chebyshev)
     transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
     rad_terms = (; onebyr, onebyr_cheby, ηρ, ηρ_cheby, onebyr2_cheby,
-        ddr_lnκρT, ddr_S0_by_cp, g_cheby, r_cheby, r2_cheby, κ_cheby)
+        ddr_lnκρT, ddr_S0_by_cp, g, g_cheby, r_cheby, r2_cheby, κ_cheby)
     diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr,
-        ddr, d2dr2, r2d2dr2, ddrDDr, d2dr2DDr)
+        ddr, d2dr2, r2d2dr2, ddrDDr)
 
     (;
         constants, rad_terms,
@@ -741,7 +737,7 @@ end
 function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radial_operators(nr, nℓ))
     nparams = nr * nℓ
     (; diff_operators, rad_terms) = operators
-    (; ddr, DDr) = diff_operators
+    (; ddr, DDr, ddrDDr) = diff_operators
     (; ηρ_cheby, onebyr_cheby, onebyr2_cheby) = rad_terms
 
     VV = @view M[1:nparams, 1:nparams]
@@ -771,7 +767,7 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
 
         @views WW[diaginds_ℓ] .+= m * ΔΩ_by_Ω0 * Gℓ *
                                   (-2 * onebyr_cheby * ηρ_cheby +
-                                   (two_over_ℓℓp1 - 1) * (ddr * DDr - ℓℓp1 * onebyr2_cheby)
+                                   (two_over_ℓℓp1 - 1) * (ddrDDr - ℓℓp1 * onebyr2_cheby)
                                   )
 
         for ℓ′ in ℓ-1:2:ℓ+1
@@ -780,10 +776,10 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
             @views @. VW[inds_ℓℓ′] -= Wscaling * two_over_ℓℓp1 *
-                     ΔΩ_by_Ω0 * (
-                         ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * (DDr - 2 * onebyr_cheby) +
-                         (DDr - ℓ′ℓ′p1 * onebyr_cheby) * sinθdθo[ℓ, ℓ′]
-                     )
+                                      ΔΩ_by_Ω0 * (
+                                          ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * (DDr - 2 * onebyr_cheby) +
+                                          (DDr - ℓ′ℓ′p1 * onebyr_cheby) * sinθdθo[ℓ, ℓ′]
+                                      )
 
             @views WV[inds_ℓℓ′] .-= (1 / Wscaling) * ΔΩ_by_Ω0 / ℓℓp1 * Gℓ *
                                     ((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * ddr
@@ -867,146 +863,6 @@ function (rop::RealSpace)(A)
             A, rop.r_chebyshev, rop.theta; rop.Pℓ, rop.Tc)))
 end
 
-function linear_differential_rotation_terms!(M, nr, nℓ, m;
-    operators = radial_operators(nr, nℓ))
-
-    nparams = nr * nℓ
-    (; transforms, diff_operators, rad_terms, identities, coordinates) = operators
-    (; r) = coordinates
-    (; Iℓ, Ir) = identities
-    (; ddr, DDr, d2dr2, r2d2dr2, rddr) = diff_operators
-    (; Tcrfwd, Tcrinv) = transforms
-    (; g_cheby, onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby) = rad_terms
-
-    VV = @view M[1:nparams, 1:nparams]
-    VW = @view M[1:nparams, nparams.+(1:nparams)]
-    WV = @view M[nparams.+(1:nparams), 1:nparams]
-    WW = @view M[nparams.+(1:nparams), nparams.+(1:nparams)]
-    SV = @view M[2nparams.+(1:nparams), 1:nparams]
-    SW = @view M[2nparams.+(1:nparams), nparams.+(1:nparams)]
-
-    ntheta = ntheta_ℓmax(nℓ, m)
-    (; thetaGL) = gausslegendre_theta_grid(ntheta)
-    ΔΩ_r, Ω0 = radial_differential_rotation_profile(operators, thetaGL, :linear)
-    ΔΩ1 = ΔΩ_r[1] / (r[1] - Rsun)
-    pseudospectralop = SpectralOperatorForm(Tcrfwd, Tcrinv)
-    ΔΩ = pseudospectralop(Diagonal(ΔΩ_r))
-    drΔΩ_real = ΔΩ1 * ones(nr)
-    ddrΔΩ = ΔΩ1 * I(nr)
-    ddrΔΩ_over_g = ddrΔΩ * g_cheby^-1
-    ddrΔΩ_over_g_DDr = ddrΔΩ_over_g * DDr
-    ddr_plus_2byr_ΔΩ = pseudospectralop(Diagonal(@. drΔΩ_real + 2 / r * ΔΩ_r))
-
-    ℓs = range(m, length = nℓ)
-
-    cosθ = costheta_operator(nℓ, m)
-    cosθo = OffsetArray(cosθ, ℓs, ℓs)
-    sinθdθ = sintheta_dtheta_operator(nℓ, m)
-    sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs)
-    cosθsinθdθ = parent(cosθ) * parent(sinθdθ)
-    cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs)
-
-    ℓℓp1d = Diagonal(@. ℓs * (ℓs + 1))
-    m_ℓℓp1d = m * ℓℓp1d
-
-    ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr = ddr_plus_2byr_ΔΩ + ΔΩ * ddr
-    ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr_DDr = ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr * DDr
-    ΔΩ_by_r2 = ΔΩ * onebyr2_cheby
-    r2_one_min_rminRsun_ddr_plus_2byr = r2_cheby *
-                                        (I + (r_cheby - Rsun * I) * (ddr + 2onebyr_cheby))
-    r2_one_min_rminRsun_ddr_plus_2byr_DDr = r2_one_min_rminRsun_ddr_plus_2byr * DDr
-
-    r²_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_V = kron2(-sinθdθ,
-        ΔΩ1 * r2_one_min_rminRsun_ddr_plus_2byr)
-    r²_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_W = m * ΔΩ1 * (
-                                              kron2(Iℓ, r2_one_min_rminRsun_ddr_plus_2byr_DDr) -
-                                              kron2(ℓℓp1d, r_cheby - Rsun * I))
-
-    r²_u_cross_ω_r = VWArrays(
-        r²_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_V,
-        r²_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_W)
-
-    uf_cross_ωΩ_plus_uΩ_cross_ωf_r_V = kron2(-sinθdθ,
-        ΔΩ1 * (I + (r_cheby - Rsun * I) * (ddr + 2onebyr_cheby)))
-    uf_cross_ωΩ_plus_uΩ_cross_ωf_r_W = m * ΔΩ1 * (kron(Iℓ, (I + (r_cheby - Rsun * I) * (ddr + 2onebyr_cheby)) * DDr) -
-        kron(ℓℓp1d, (r_cheby - Rsun*I) * onebyr2_cheby) )
-
-    ∇²h_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_V =
-        kron2(ℓℓp1d * sinθdθ, ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr)
-    ∇²h_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_W =
-        kron2(-m_ℓℓp1d, ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr_DDr) +
-        kron2(m * ℓℓp1d^2, ΔΩ_by_r2)
-
-    ∇²h_u_cross_ω_r = VWArrays(
-        ∇²h_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_V,
-        ∇²h_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_W
-    )
-
-    # r²_ωΩ_dot_ωf = ωΩr * r²ωfr + ωΩθ_by_rsinθ * r³sinθ_ωfθ
-    r²_ωΩ_dot_ωf_V = kron2(2ΔΩ1 * cosθ * ℓℓp1d, r_cheby - Rsun * I) +
-                     kron2(ΔΩ1 * sinθdθ, (2onebyr_cheby * Rsun - 3I) * r2_cheby * ddr)
-    r²_ωΩ_dot_ωf_W = kron2(-m * ΔΩ1 * Iℓ, (2onebyr_cheby * Rsun - 3I) * r2_cheby * ddr * DDr) +
-                     kron2(m * ΔΩ1 * ℓℓp1d, (2onebyr_cheby * Rsun - 3I))
-    r²_ωΩ_dot_ωf = VWArrays(r²_ωΩ_dot_ωf_V, r²_ωΩ_dot_ωf_W)
-    negr_by_sinθ_curlωΩϕ_ufϕ_rsinθ_V = kron(-4ΔΩ1 * sinθdθ, r_cheby)
-    negr_by_sinθ_curlωΩϕ_ufϕ_rsinθ_W = kron(4m * ΔΩ1 * Iℓ, r_cheby * DDr)
-    negr_by_sinθ_curlωΩϕ_ufϕ_rsinθ = VWArrays(negr_by_sinθ_curlωΩϕ_ufϕ_rsinθ_V,
-        negr_by_sinθ_curlωΩϕ_ufϕ_rsinθ_W)
-    negΔΩ_r³sinθ_curlωf_ϕ_V = kron2(-ΔΩ1 * sinθdθ, (r_cheby - Rsun * I) * r2_cheby * d2dr2) +
-                              kron2(ΔΩ1 * sinθdθ * ℓℓp1d, r_cheby - Rsun * I)
-    negΔΩ_r³sinθ_curlωf_ϕ_W = kron2(m * ΔΩ1 * Iℓ, (r_cheby - Rsun * I) * r2_cheby * d2dr2 * DDr) -
-                              kron2(m * ΔΩ1 * ℓℓp1d, (r_cheby - Rsun * I) * (ddr - 2onebyr_cheby))
-    negΔΩ_r³sinθ_curlωf_ϕ = VWArrays(negΔΩ_r³sinθ_curlωf_ϕ_V, negΔΩ_r³sinθ_curlωf_ϕ_W)
-    r²_div_uf_cross_ωΩ = r²_ωΩ_dot_ωf + negr_by_sinθ_curlωΩϕ_ufϕ_rsinθ
-    r²_div_uΩ_cross_ωf = r²_ωΩ_dot_ωf +ₛ negΔΩ_r³sinθ_curlωf_ϕ
-
-    r²_div_u_cross_ω = r²_div_uf_cross_ωΩ +ₛ r²_div_uΩ_cross_ωf
-
-    (; ε, Wscaling) = operators.constants.scalings
-
-    negr²Ω0W_rhs = +ₛ(kron2(-Iℓ, ddr) * r²_div_u_cross_ω,
-        kron2(Iℓ, d2dr2) * r²_u_cross_ω_r,
-        ∇²h_u_cross_ω_r)
-
-    DDr_min_2byr = @. DDr - 2onebyr_cheby
-    ΔΩ_DDr_min_2byr = ΔΩ * DDr_min_2byr
-    ΔΩ_DDr = ΔΩ * DDr
-    ΔΩ_by_r = ΔΩ * onebyr_cheby
-
-    for ℓ in ℓs
-        # numerical green function
-        Gℓ = greenfn_cheby_numerical2(ℓ, operators)
-        ℓℓp1 = ℓ * (ℓ + 1)
-        Gℓ_invℓℓp1_invΩ0 = Gℓ * ((1 / Ω0) * (1 / ℓℓp1))
-        inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
-        two_over_ℓℓp1 = 2 / ℓℓp1
-
-        @. VV[inds_ℓℓ] += (1 / Ω0) * m * (two_over_ℓℓp1 - 1) * ΔΩ
-        @views WW[inds_ℓℓ] .+= Gℓ_invℓℓp1_invΩ0 * negr²Ω0W_rhs.W[inds_ℓℓ]
-
-        for ℓ′ in ℓ-1:2:ℓ+1
-            ℓ′ in ℓs || continue
-            inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-            @. VW[inds_ℓℓ′] -= Wscaling * two_over_ℓℓp1 *
-                               (1 / Ω0) * (ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * ΔΩ_DDr_min_2byr +
-                                           sinθdθo[ℓ, ℓ′] * (
-                                   (ΔΩ_DDr - ℓ′ℓ′p1 * ΔΩ_by_r) - ℓ′ℓ′p1 / 2 * ddrΔΩ))
-
-            @views WV[inds_ℓℓ′] .+= (1 / Wscaling) * Gℓ_invℓℓp1_invΩ0 * negr²Ω0W_rhs.V[inds_ℓℓ′]
-            @. SV[inds_ℓℓ′] -= (1 / ε) * cosθo[ℓ, ℓ′] * 2m * ddrΔΩ_over_g
-        end
-
-        for ℓ′ in ℓ-2:2:ℓ+2
-            ℓ′ in ℓs || continue
-            inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
-
-            @. SW[inds_ℓℓ′] += (Wscaling / ε) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDr
-        end
-    end
-    return M
-end
-
 function radial_differential_rotation_profile_derivatives(nℓ, m, r;
     operators, rotation_profile = :constant)
 
@@ -1019,93 +875,60 @@ function radial_differential_rotation_profile_derivatives(nℓ, m, r;
 
     ΔΩ_spl = Spline1D(r, ΔΩ_r)
     drΔΩ_real = derivative(ΔΩ_spl, r)
-    ddrΔΩ = pseudospectralop(Diagonal(drΔΩ_real))
-    (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, drΔΩ_real, ddrΔΩ)
+    d2dr2ΔΩ_real = derivative(ΔΩ_spl, r, nu=2)
+    ddrΔΩ = pseudospectralop(drΔΩ_real)
+    d2dr2ΔΩ = pseudospectralop(d2dr2ΔΩ_real)
+    (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, drΔΩ_real, d2dr2ΔΩ_real, ddrΔΩ, d2dr2ΔΩ)
 end
 
-function negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ), (cosθ, sinθdθ); operators)
-    (; nℓ) = operators.radial_params
+function negr²_ℓℓp1_Ω0W_rhs_radial(m, ΔΩprofile_deriv, (cosθ, sinθdθ); operators)
+    (; nℓ, nparams, nr) = operators.radial_params
     (; r) = operators.coordinates
-    (; Iℓ, Ir) = operators.identities
 
-    (; onebyr_cheby, onebyr2_cheby, r_cheby) = operators.rad_terms
-    (; ddr, DDr, d2dr2, rddr, r2d2dr2, ddrDDr, d2dr2DDr) = operators.diff_operators
+    (; onebyr_cheby, onebyr2_cheby, ηρ_cheby) = operators.rad_terms
+    (; ddr, DDr, ddrDDr) = operators.diff_operators
 
     pseudospectralop = operators.transforms.pseudospectralop_radial
 
-    ddr_min_2byr = ddr - 2onebyr_cheby
-
-    drΔΩ_real = derivative(ΔΩ_spl, r, nu = 1)
-    d2rΔΩ_real = derivative(ΔΩ_spl, r, nu = 2)
-    d2dr2ΔΩ = pseudospectralop(d2rΔΩ_real)
+    (; ΔΩ_r, ΔΩ, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv
 
     ℓs = range(m, length = nℓ)
 
-    ωΩr = kron2(2cosθ, ΔΩ)
-    ddrΔΩ_by_r = pseudospectralop(drΔΩ_real ./ r)
-    ddr_plus_2byr_ΔΩ = pseudospectralop(@. drΔΩ_real + 2 / r * ΔΩ_r)
-    ωΩθ_by_rsinθ = kron2(-Iℓ, ddr_plus_2byr_ΔΩ)
-    neg_invrsinθ_curlωΩϕ = kron2(Iℓ, d2dr2ΔΩ + 4ddrΔΩ_by_r)
-
-    ℓℓp1d = Diagonal(@. ℓs * (ℓs + 1))
-    m_ℓℓp1d = m * ℓℓp1d
-    m_Iℓ = m * Iℓ
-
-    ωfr_V = kron2(ℓℓp1d, onebyr2_cheby)
-    ωfr_W = 0
-    ωfr = VWArrays(ωfr_V, ωfr_W)
-
-    rsinθ_ωfθ_V = kron2(sinθdθ, ddr)
-    rsinθ_ωfθ_W = kron2(m_ℓℓp1d, onebyr2_cheby) - kron2(m_Iℓ, ddrDDr)
-    rsinθ_ωfθ = VWArrays(rsinθ_ωfθ_V, rsinθ_ωfθ_W)
-
-    rsinθ_ufϕ_V = kron2(sinθdθ, -Ir)
-    rsinθ_ufϕ_W = kron2(m_Iℓ, DDr)
-    rsinθ_ufϕ = VWArrays(rsinθ_ufϕ_V, rsinθ_ufϕ_W)
-
-    rsinθ_curlωfϕ_V = kron2(sinθdθ, d2dr2) - kron2(sinθdθ * ℓℓp1d, onebyr2_cheby)
-    rsinθ_curlωfϕ_W = kron2(-m_Iℓ, d2dr2 * DDr) + kron2(m_ℓℓp1d, onebyr2_cheby * ddr_min_2byr)
-    rsinθ_curlωfϕ = VWArrays(rsinθ_curlωfϕ_V, rsinθ_curlωfϕ_W)
-
-    ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr = ddr_plus_2byr_ΔΩ + ΔΩ * ddr
-    ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr_DDr = ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr * DDr
+    ddrΔΩ_plus_ΔΩddr = ddrΔΩ + ΔΩ * ddr
+    twoΔΩ_by_r = pseudospectralop(@. 2ΔΩ_r / r)
+    two_ΔΩbyr_ηρ = twoΔΩ_by_r * ηρ_cheby
+    ΔΩ_ddrDDr = ΔΩ * ddrDDr
     ΔΩ_by_r2 = ΔΩ * onebyr2_cheby
+    ∂rΔΩ_ddr_plus_2byr = ddrΔΩ * (ddr + 2onebyr_cheby)
 
-    uf_cross_ωΩ_plus_uΩ_cross_ωf_r_V = kron2(-sinθdθ, ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr)
-    uf_cross_ωΩ_plus_uΩ_cross_ωf_r_W = kron2(m_Iℓ, ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr_DDr) -
-                                       kron2(m_ℓℓp1d, ΔΩ_by_r2)
+    ddrΔΩ_DDr = ddrΔΩ * DDr
 
-    u_cross_ω_r = VWArrays(
-        uf_cross_ωΩ_plus_uΩ_cross_ωf_r_V,
-        uf_cross_ωΩ_plus_uΩ_cross_ωf_r_W)
+    WV = zeros(Float64, nparams, nparams)
+    WW = zeros(Float64, nparams, nparams)
+    Wterms = VWArrays(WV, WW)
 
-    ∇²h_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_V =
-        kron2(ℓℓp1d * sinθdθ, ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr)
-    ∇²h_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_W =
-        kron2(-m_ℓℓp1d, ddr_plus_2byr_ΔΩ_plus_ΔΩ_ddr_DDr) +
-        kron2(m * ℓℓp1d^2, ΔΩ_by_r2)
+    cosθo = OffsetArray(cosθ, ℓs, ℓs)
+    sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs)
+    ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs)
 
-    ∇²h_u_cross_ω_r = VWArrays(
-        ∇²h_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_V,
-        ∇²h_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_W
-    )
+    for ℓ in ℓs
+        ℓℓp1 = ℓ * (ℓ + 1)
+        inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
 
-    ωΩ_dot_ωf = ωΩr * ωfr + ωΩθ_by_rsinθ * rsinθ_ωfθ
-    negcurlωΩ_dot_uf = neg_invrsinθ_curlωΩϕ * rsinθ_ufϕ
-    div_uf_cross_ωΩ = ωΩ_dot_ωf + negcurlωΩ_dot_uf
-    curlωf_dot_uΩ = kron2(Iℓ, ΔΩ) * rsinθ_curlωfϕ
-    div_uΩ_cross_ωf = ωΩ_dot_ωf - curlωf_dot_uΩ
+        @. WW[inds_ℓℓ] = m * ((2 / ℓℓp1 - 1) * (ddrΔΩ_DDr + ΔΩ_ddrDDr - ℓℓp1 * ΔΩ_by_r2) -
+                              two_ΔΩbyr_ηρ + d2dr2ΔΩ + ∂rΔΩ_ddr_plus_2byr)
 
-    div_u_cross_ω = div_uf_cross_ωΩ + div_uΩ_cross_ωf
+        for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
+            inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
+            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
+            @. WV[inds_ℓℓ′] = -1 / ℓℓp1 * (
+                (4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′] + ∇²_sinθdθo[ℓ, ℓ′]) * ddrΔΩ_plus_ΔΩddr +
+                ∇²_sinθdθo[ℓ, ℓ′] * twoΔΩ_by_r
+            )
+        end
+    end
 
-    r_ddr_plus_1 = rddr + I
-    d²r_r2 = r2d2dr2 + 4rddr + 2I
-    negr²Ω0W_rhs = +ₛ(kron(-Iℓ, r_ddr_plus_1 * r_cheby) * div_u_cross_ω,
-        kron2(Iℓ, d²r_r2) * u_cross_ω_r,
-        ∇²h_u_cross_ω_r)
-    (; negr²Ω0W_rhs, u_cross_ω_r, div_u_cross_ω, ∇²h_u_cross_ω_r,
-        ωΩ_dot_ωf, negcurlωΩ_dot_uf, curlωf_dot_uΩ,
-        div_uf_cross_ωΩ, div_uΩ_cross_ωf)
+    return Wterms
 end
 
 function radial_differential_rotation_terms!(M, nr, nℓ, m;
@@ -1116,7 +939,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     (; diff_operators, rad_terms, coordinates) = operators
     (; r) = coordinates
     (; DDr) = diff_operators
-    (; g_cheby, onebyr_cheby) = rad_terms
+    (; onebyr_cheby, g) = rad_terms
 
     VV = @view M[1:nparams, 1:nparams]
     VW = @view M[1:nparams, nparams.+(1:nparams)]
@@ -1125,11 +948,15 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     SV = @view M[2nparams.+(1:nparams), 1:nparams]
     SW = @view M[2nparams.+(1:nparams), nparams.+(1:nparams)]
 
-    (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, drΔΩ_real, ddrΔΩ) =
+    pseudospectralop = operators.transforms.pseudospectralop_radial
+
+    ΔΩprofile_deriv =
         radial_differential_rotation_profile_derivatives(nℓ, m, r;
             operators, rotation_profile)
 
-    ddrΔΩ_over_g = g_cheby \ ddrΔΩ
+    (; drΔΩ_real, ΔΩ, Ω0, ddrΔΩ) = ΔΩprofile_deriv
+
+    ddrΔΩ_over_g = pseudospectralop(drΔΩ_real ./ g) # g_cheby \ ddrΔΩ
     ddrΔΩ_over_g_DDr = ddrΔΩ_over_g * DDr
 
     ℓs = range(m, length = nℓ)
@@ -1141,8 +968,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     cosθsinθdθ = (costheta_operator(nℓ + 1, m)*sintheta_dtheta_operator(nℓ + 1, m))[1:end-1, 1:end-1]
     cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs)
 
-    (; negr²Ω0W_rhs) = negr²Ω0W_rhs_radial(m, (ΔΩ_r, drΔΩ_real, ΔΩ_spl, ΔΩ),
-        (cosθ, sinθdθ); operators)
+    Wterms = negr²_ℓℓp1_Ω0W_rhs_radial(m, ΔΩprofile_deriv, (cosθ, sinθdθ); operators)
 
     (; ε, Wscaling) = operators.constants.scalings
 
@@ -1155,12 +981,12 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
         # numerical green function
         Gℓ = greenfn_cheby_numerical2(ℓ, operators)
         ℓℓp1 = ℓ * (ℓ + 1)
-        Gℓ_invℓℓp1_invΩ0 = Gℓ * ((1 / Ω0) * (1 / ℓℓp1))
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
+        Gℓ_invΩ0 = Gℓ * (1 / Ω0)
         two_over_ℓℓp1 = 2 / ℓℓp1
 
         @. VV[inds_ℓℓ] += (1 / Ω0) * m * (two_over_ℓℓp1 - 1) * ΔΩ
-        @views WW[inds_ℓℓ] .+= Gℓ_invℓℓp1_invΩ0 * negr²Ω0W_rhs.W[inds_ℓℓ]
+        @views WW[inds_ℓℓ] .+= Gℓ_invΩ0 * Wterms.W[inds_ℓℓ]
 
         for ℓ′ in ℓ-1:2:ℓ+1
             ℓ′ in ℓs || continue
@@ -1171,7 +997,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
                                            sinθdθo[ℓ, ℓ′] * (
                                    (ΔΩ_DDr - ℓ′ℓ′p1 * ΔΩ_by_r) - ℓ′ℓ′p1 / 2 * ddrΔΩ))
 
-            @views WV[inds_ℓℓ′] .+= (1 / Wscaling) * Gℓ_invℓℓp1_invΩ0 * negr²Ω0W_rhs.V[inds_ℓℓ′]
+            @views WV[inds_ℓℓ′] .+= (1 / Wscaling) * Gℓ_invΩ0 * Wterms.V[inds_ℓℓ′]
             @. SV[inds_ℓℓ′] -= (1 / ε) * cosθo[ℓ, ℓ′] * 2m * ddrΔΩ_over_g
         end
 
@@ -1393,8 +1219,6 @@ function _differential_rotation_matrix!(M, nr, nℓ, m, rotation_profile; operat
         solar_differential_rotation_terms!(M, nr, nℓ, m; operators, rotation_profile = :radial)
     elseif rotation_profile === :solar_constant
         solar_differential_rotation_terms!(M, nr, nℓ, m; operators, rotation_profile = :constant)
-    elseif rotation_profile === :linear
-        linear_differential_rotation_terms!(M, nr, nℓ, m; operators)
     elseif rotation_profile === :constant
         constant_differential_rotation_terms!(M, nr, nℓ, m; operators)
     else
@@ -1682,14 +1506,12 @@ function filter_eigenvalues(λ::AbstractVector{<:AbstractVector},
     nparams = nr * nℓ
     (; nfields) = constraints
     Ms = [zeros(ComplexF64, 3nparams, 3nparams) for _ in 1:Threads.nthreads()]
-    filtercaches = [allocate_filter_caches(m; operators, constraints) for _ in 1:Threads.nthreads()]
     λv = @maybe_reduce_blas_threads(
         Folds.map(zip(λ, v, mr)) do (λm, vm, m)
             M = Ms[Threads.threadid()]
-            filtercache = filtercaches[Threads.threadid()]
             Mfn(M, nr, nℓ, m; operators)
             _M = _maybetrimM(M, nfields, nparams)
-            filter_eigenvalues(λm, vm, _M, m; operators, BC, filtercache, kw...)
+            filter_eigenvalues(λm, vm, _M, m; operators, BC, kw...)
         end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
     )
     first.(λv), last.(λv)
@@ -1703,16 +1525,14 @@ function filter_eigenvalues(f, mr::AbstractVector; #= inplace function =#
     (; nr, nℓ, nparams) = operators.radial_params
     Ms = [zeros(ComplexF64, 3nparams, 3nparams) for _ in 1:Threads.nthreads()]
     caches = [constrained_matmul_cache(constraints) for _ in 1:Threads.nthreads()]
-    filtercaches = [allocate_filter_caches(m; operators, constraints) for _ in 1:Threads.nthreads()]
     (; BC) = constraints
 
     λv = @maybe_reduce_blas_threads(
         Folds.map(mr) do m
             M = Ms[Threads.threadid()]
             cache = caches[Threads.threadid()]
-            filtercache = filtercaches[Threads.threadid()]
             λm, vm, _M = f(M, nr, nℓ, m; operators, constraints, cache, kw...)
-            filter_eigenvalues(λm, vm, _M, m; operators, BC, filtercache, kw...)
+            filter_eigenvalues(λm, vm, _M, m; operators, BC, kw...)
         end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
     )
     first.(λv), last.(λv)
