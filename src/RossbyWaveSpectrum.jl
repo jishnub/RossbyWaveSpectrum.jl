@@ -252,7 +252,7 @@ function constraintmatrix(operators)
     MWno = OffsetArray(MWn, :, 0:nr-1)
     MSn = MWn
 
-    nfields = 3
+    (; nfields) = operators.constants
     BC = zeros(nfields * 2nℓ, nfields * nparams)
 
     # constraints on V, Robin
@@ -424,6 +424,9 @@ function (op::SpectralOperatorForm)(A::AbstractMatrix)
 end
 
 function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
+
+    nfields = 3 # V, W, S
+
     r_in = r_in_frac * Rsun
     r_out = r_out_frac * Rsun
     radial_params = parameters(nr, nℓ; r_in, r_out)
@@ -476,7 +479,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     Wscaling = Rsun
     scalings = (; ε, Wscaling)
 
-    constants = (; κ, scalings)
+    constants = (; κ, scalings, nfields)
     identities = (; Ir, Iℓ)
     coordinates = (; r, r_chebyshev)
     transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
@@ -513,15 +516,13 @@ end
 
 function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
-    (; radial_params, rad_terms, diff_operators) = operators
-
-    (; nchebyr, r_out) = radial_params
-
-    (; DDr, DDr_minus_2byr, ddr, d2dr2, rddr, ddrDDr) = diff_operators
+    (; nfields) = operators.constants
+    (; nchebyr, r_out) = operators.radial_params
+    (; DDr, DDr_minus_2byr, ddr, d2dr2, rddr, ddrDDr) = operators.diff_operators
     (; onebyr_cheby, onebyr2_cheby, ddr_lnκρT, κ_cheby,
-        g_cheby, ηρ_cheby, r_cheby, ddr_S0_by_cp) = rad_terms
+        g_cheby, ηρ_cheby, r_cheby, ddr_S0_by_cp) = operators.rad_terms
 
-    Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out/Rsun)
+    Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
 
     Cℓ′ = similar(DDr)
     WVℓℓ′ = similar(Cℓ′)
@@ -530,18 +531,18 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     GℓC1_ddr = similar(GℓC1)
     GℓCℓ′ = similar(Cℓ′)
 
-    nparams = nchebyr * nℓ
     ℓs = range(m, length = nℓ)
 
     M .= 0
 
-    VV = @view M[1:nparams, 1:nparams]
-    WV = @view M[nparams+1:2nparams, 1:nparams]
-    VW = @view M[1:nparams, nparams+1:2nparams]
-    WW = @view M[nparams+1:2nparams, nparams+1:2nparams]
-    SW = @view M[2nparams+1:end, nparams+1:2nparams]
-    WS = @view M[nparams+1:2nparams, 2nparams+1:end]
-    SS = @view M[2nparams+1:end, 2nparams+1:end]
+    VV = matrix_block(M, 1, 1, nfields)
+    VW = matrix_block(M, 1, 2, nfields)
+    WV = matrix_block(M, 2, 1, nfields)
+    WW = matrix_block(M, 2, 2, nfields)
+    # the following are only valid if S is included
+    WS = matrix_block(M, 2, 3, nfields)
+    SW = matrix_block(M, 3, 2, nfields)
+    SS = matrix_block(M, 3, 3, nfields)
 
     VV .= 2m * kron(Diagonal(@. 1 / (ℓs * (ℓs + 1))), I(nchebyr))
 
@@ -604,8 +605,9 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
     ν = 1e10
     ν = ν / Ω
     nparams = nchebyr * nℓ
-    VV = @view M[1:nparams, 1:nparams]
-    WW = @view M[nparams+1:2nparams, nparams+1:2nparams]
+    (; nfields) = operators.constants
+    VV = matrix_block(M, 1, 1, nfields)
+    WW = matrix_block(M, 2, 2, nfields)
 
     ℓmin = m
     ℓs = range(ℓmin, length = nℓ)
@@ -656,10 +658,6 @@ function interp1d(xin, z, xout; s = 0.0)
 end
 
 function interp2d(xin, yin, z, xout, yout; s = 0.0)
-    xmin = minimum(xout)
-    # rinds_inrange = xin.>=xmin
-    # xin = xin[rinds_inrange]
-    # z = z[rinds_inrange, :]
     evalgrid(Spline2D(xin, yin, z; s), xout, yout)
 end
 
@@ -721,8 +719,8 @@ function laplacian_operator(nℓ, m)
     Diagonal(@. -ℓs * (ℓs + 1))
 end
 
-function matrix_block(M, rowind, colind)
-    nparams = div(size(M, 1), 3)
+function matrix_block(M, rowind, colind, nfields = 3)
+    nparams = div(size(M, 1), nfields)
     inds1 = (rowind - 1) * nparams .+ (1:nparams)
     inds2 = (colind - 1) * nparams .+ (1:nparams)
     inds = CartesianIndices((inds1, inds2))
@@ -790,9 +788,10 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
 end
 function radial_differential_rotation_profile(operators, thetaGL, model = :solar_equator;
         smoothing_param = 1e-3)
+
     (; r) = operators.coordinates
-    (; radial_params) = operators
-    (; r_out, nr, r_in) = radial_params
+    (; r_out, nr, r_in) = operators.radial_params
+
     if model == :solar_equator
         ΔΩ_rθ, Ω0 = read_angular_velocity(operators, thetaGL)
         θind_equator = findmin(abs.(thetaGL .- pi / 2))[2]
@@ -802,7 +801,7 @@ function radial_differential_rotation_profile(operators, thetaGL, model = :solar
         ΔΩ_r = Spline1D(r, ΔΩ_r, s = s)(r)
     elseif model == :linear
         Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
-        f = 0.02/(r_in/Rsun - 1)
+        f = 0.02 / (r_in / Rsun - 1)
         ΔΩ_r = @. Ω0 * f * (r / Rsun - 1)
     elseif model == :constant # for testing
         ΔΩ_by_Ω = 0.02
@@ -884,18 +883,17 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     operators = radial_operators(nr, nℓ),
     rotation_profile = :constant)
 
-    nparams = nr * nℓ
-    (; diff_operators, rad_terms, coordinates) = operators
-    (; r) = coordinates
-    (; DDr, ddr, ddrDDr) = diff_operators
-    (; onebyr_cheby, g, onebyr2_cheby, ηρ_cheby) = rad_terms
+    (; nfields) = operators.constants
+    (; r) = operators.coordinates
+    (; DDr, ddr, ddrDDr) = operators.diff_operators
+    (; onebyr_cheby, g, onebyr2_cheby, ηρ_cheby) = operators.rad_terms
 
-    VV = @view M[1:nparams, 1:nparams]
-    VW = @view M[1:nparams, nparams.+(1:nparams)]
-    WV = @view M[nparams.+(1:nparams), 1:nparams]
-    WW = @view M[nparams.+(1:nparams), nparams.+(1:nparams)]
-    SV = @view M[2nparams.+(1:nparams), 1:nparams]
-    SW = @view M[2nparams.+(1:nparams), nparams.+(1:nparams)]
+    VV = matrix_block(M, 1, 1, nfields)
+    VW = matrix_block(M, 1, 2, nfields)
+    WV = matrix_block(M, 2, 1, nfields)
+    WW = matrix_block(M, 2, 2, nfields)
+    SV = matrix_block(M, 3, 1, nfields)
+    SW = matrix_block(M, 3, 2, nfields)
 
     pseudospectralop = operators.transforms.pseudospectralop_radial
 
@@ -952,12 +950,12 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
             @. VW[inds_ℓℓ′] -= Wscaling * two_over_ℓℓp1 *
-                    (1 / Ω0) * (ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * ΔΩ_DDr_min_2byr +
-                        sinθdθo[ℓ, ℓ′] * ((ΔΩ_DDr - ℓ′ℓ′p1 * ΔΩ_by_r) - ℓ′ℓ′p1 / 2 * ddrΔΩ))
+                               (1 / Ω0) * (ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * ΔΩ_DDr_min_2byr +
+                                           sinθdθo[ℓ, ℓ′] * ((ΔΩ_DDr - ℓ′ℓ′p1 * ΔΩ_by_r) - ℓ′ℓ′p1 / 2 * ddrΔΩ))
 
             @views WV[inds_ℓℓ′] .+= Gℓ_invΩ0 * @. (1 / Wscaling) * (-1) / ℓℓp1 * (
                 (4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′] +
-                    ∇²_sinθdθo[ℓ, ℓ′]) * ddrΔΩ_plus_ΔΩddr +
+                 ∇²_sinθdθo[ℓ, ℓ′]) * ddrΔΩ_plus_ΔΩddr +
                 ∇²_sinθdθo[ℓ, ℓ′] * twoΔΩ_by_r
             )
 
@@ -1016,13 +1014,12 @@ function solar_differential_rotation_terms!(M, nr, nℓ, m;
     operators = radial_operators(nr, nℓ),
     rotation_profile = :constant)
 
-    nparams = nr * nℓ
-    (; transforms, diff_operators, rad_terms, identities, coordinates) = operators
-    (; Iℓ, Ir) = identities
-    (; ddr, DDr, d2dr2, rddr, r2d2dr2, DDr_minus_2byr) = diff_operators
-    (; Tcrfwd, Tcrinv) = transforms
-    (; g_cheby, onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby) = rad_terms
-    (; r, r_chebyshev) = coordinates
+    (; nfields) = operators.constants
+    (; Iℓ, Ir) = operators.identities
+    (; ddr, DDr, d2dr2, rddr, r2d2dr2, DDr_minus_2byr) = operators.diff_operators
+    (; Tcrfwd, Tcrinv) = operators.transforms
+    (; g_cheby, onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby) = operators.rad_terms
+    (; r, r_chebyshev) = operators.coordinates
     two_over_g = 2g_cheby^-1
 
     ddr_plus_2byr = ddr + 2onebyr_cheby
@@ -1033,12 +1030,12 @@ function solar_differential_rotation_terms!(M, nr, nℓ, m;
     invbig_SF = kron(PLMinv, Tcrinv)
     spectralop = SpectralOperatorForm(fwdbig_SF, invbig_SF)
 
-    VV = @view M[1:nparams, 1:nparams]
-    VW = @view M[1:nparams, nparams.+(1:nparams)]
-    WV = @view M[nparams.+(1:nparams), 1:nparams]
-    WW = @view M[nparams.+(1:nparams), nparams.+(1:nparams)]
-    SV = @view M[2nparams.+(1:nparams), 1:nparams]
-    SW = @view M[2nparams.+(1:nparams), nparams.+(1:nparams)]
+    VV = matrix_block(M, 1, 1, nfields)
+    VW = matrix_block(M, 1, 2, nfields)
+    WV = matrix_block(M, 2, 1, nfields)
+    WW = matrix_block(M, 2, 2, nfields)
+    SV = matrix_block(M, 3, 1, nfields)
+    SW = matrix_block(M, 3, 2, nfields)
 
     # this is somewhat arbitrary, as we don't know the maximum ℓ of Ω before reading it in
     ntheta = ntheta_ℓmax(nℓ, m)
@@ -1209,7 +1206,7 @@ function constrained_eigensystem(M, operators, constraints = constraintmatrix(op
     M = _maybetrimM(M, nfields, nparams)
     (; M_constrained, MZCcache) = cache #= not thread safe =#
     mul!(M_constrained, permutedims(ZC), mul!(MZCcache, M, ZC))
-    # M_constrained = permutedims(ZC) * M * ZC
+    # M_constrained = permutedims(ZC) * M * ZC # thread-safe but allocating
     λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(M_constrained)
     v = ZC * w
     λ, v, M
