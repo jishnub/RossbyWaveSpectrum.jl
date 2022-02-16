@@ -573,8 +573,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         @. SW[diaginds_ℓ] = (Wscaling / ε) * (1 / Ω0) * ℓ * (ℓ + 1) * onebyr2_cheby_ddr_S0_by_cp
         @. SS[diaginds_ℓ] = -im / Ω0 * (κ_d2dr2_plus_ddr_lnκρT_ddr - ℓ * (ℓ + 1) * κ_by_r2)
 
-        for ℓ′ = ℓ-1:2:ℓ+1
-            ℓ′ in ℓs || continue
+        for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             @. Cℓ′ = DDr - ℓ′ * (ℓ′ + 1) * onebyr_cheby
             @. VWℓℓ′ = -2 / (ℓ * (ℓ + 1)) * (ℓ′ * (ℓ′ + 1) * C1 * cosθ[ℓ, ℓ′] + Cℓ′ * sinθdθ[ℓ, ℓ′]) * Wscaling
 
@@ -881,56 +880,6 @@ function radial_differential_rotation_profile_derivatives(nℓ, m, r;
     (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, drΔΩ_real, d2dr2ΔΩ_real, ddrΔΩ, d2dr2ΔΩ)
 end
 
-function negr²_ℓℓp1_Ω0W_rhs_radial(m, ΔΩprofile_deriv, (cosθ, sinθdθ); operators)
-    (; nℓ, nparams, nr) = operators.radial_params
-    (; r) = operators.coordinates
-
-    (; onebyr_cheby, onebyr2_cheby, ηρ_cheby) = operators.rad_terms
-    (; ddr, DDr, ddrDDr) = operators.diff_operators
-
-    pseudospectralop = operators.transforms.pseudospectralop_radial
-
-    (; ΔΩ_r, ΔΩ, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv
-
-    ℓs = range(m, length = nℓ)
-
-    ddrΔΩ_plus_ΔΩddr = ddrΔΩ + ΔΩ * ddr
-    twoΔΩ_by_r = pseudospectralop(@. 2ΔΩ_r / r)
-    two_ΔΩbyr_ηρ = twoΔΩ_by_r * ηρ_cheby
-    ΔΩ_ddrDDr = ΔΩ * ddrDDr
-    ΔΩ_by_r2 = ΔΩ * onebyr2_cheby
-    ∂rΔΩ_ddr_plus_2byr = ddrΔΩ * (ddr + 2onebyr_cheby)
-
-    ddrΔΩ_DDr = ddrΔΩ * DDr
-
-    WV = zeros(Float64, nparams, nparams)
-    WW = zeros(Float64, nparams, nparams)
-    Wterms = VWArrays(WV, WW)
-
-    cosθo = OffsetArray(cosθ, ℓs, ℓs)
-    sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs)
-    ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs)
-
-    for ℓ in ℓs
-        ℓℓp1 = ℓ * (ℓ + 1)
-        inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
-
-        @. WW[inds_ℓℓ] = m * ((2 / ℓℓp1 - 1) * (ddrΔΩ_DDr + ΔΩ_ddrDDr - ℓℓp1 * ΔΩ_by_r2) -
-                              two_ΔΩbyr_ηρ + d2dr2ΔΩ + ∂rΔΩ_ddr_plus_2byr)
-
-        for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
-            inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-            @. WV[inds_ℓℓ′] = -1 / ℓℓp1 * (
-                (4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′] + ∇²_sinθdθo[ℓ, ℓ′]) * ddrΔΩ_plus_ΔΩddr +
-                ∇²_sinθdθo[ℓ, ℓ′] * twoΔΩ_by_r
-            )
-        end
-    end
-
-    return Wterms
-end
-
 function radial_differential_rotation_terms!(M, nr, nℓ, m;
     operators = radial_operators(nr, nℓ),
     rotation_profile = :constant)
@@ -938,8 +887,8 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     nparams = nr * nℓ
     (; diff_operators, rad_terms, coordinates) = operators
     (; r) = coordinates
-    (; DDr) = diff_operators
-    (; onebyr_cheby, g) = rad_terms
+    (; DDr, ddr, ddrDDr) = diff_operators
+    (; onebyr_cheby, g, onebyr2_cheby, ηρ_cheby) = rad_terms
 
     VV = @view M[1:nparams, 1:nparams]
     VW = @view M[1:nparams, nparams.+(1:nparams)]
@@ -954,10 +903,18 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
         radial_differential_rotation_profile_derivatives(nℓ, m, r;
             operators, rotation_profile)
 
-    (; drΔΩ_real, ΔΩ, Ω0, ddrΔΩ) = ΔΩprofile_deriv
+    (; drΔΩ_real, ΔΩ, Ω0, ΔΩ_r, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv
 
     ddrΔΩ_over_g = pseudospectralop(drΔΩ_real ./ g) # g_cheby \ ddrΔΩ
     ddrΔΩ_over_g_DDr = ddrΔΩ_over_g * DDr
+    ddrΔΩ_plus_ΔΩddr = ddrΔΩ + ΔΩ * ddr
+    twoΔΩ_by_r = pseudospectralop(@. 2ΔΩ_r / r)
+    two_ΔΩbyr_ηρ = twoΔΩ_by_r * ηρ_cheby
+    ΔΩ_ddrDDr = ΔΩ * ddrDDr
+    ΔΩ_by_r2 = ΔΩ * onebyr2_cheby
+    ∂rΔΩ_ddr_plus_2byr = ddrΔΩ * (ddr + 2onebyr_cheby)
+    ddrΔΩ_DDr = ddrΔΩ * DDr
+    ddrΔΩ_DDr_plus_ΔΩ_ddrDDr = ddrΔΩ_DDr + ΔΩ_ddrDDr
 
     ℓs = range(m, length = nℓ)
 
@@ -967,8 +924,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs)
     cosθsinθdθ = (costheta_operator(nℓ + 1, m)*sintheta_dtheta_operator(nℓ + 1, m))[1:end-1, 1:end-1]
     cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs)
-
-    Wterms = negr²_ℓℓp1_Ω0W_rhs_radial(m, ΔΩprofile_deriv, (cosθ, sinθdθ); operators)
+    ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs)
 
     (; ε, Wscaling) = operators.constants.scalings
 
@@ -976,6 +932,8 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     ΔΩ_DDr_min_2byr = ΔΩ * DDr_min_2byr
     ΔΩ_DDr = ΔΩ * DDr
     ΔΩ_by_r = ΔΩ * onebyr_cheby
+
+    WWfixedterms = @. -two_ΔΩbyr_ηρ + d2dr2ΔΩ + ∂rΔΩ_ddr_plus_2byr
 
     for ℓ in ℓs
         # numerical green function
@@ -986,23 +944,27 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
         two_over_ℓℓp1 = 2 / ℓℓp1
 
         @. VV[inds_ℓℓ] += (1 / Ω0) * m * (two_over_ℓℓp1 - 1) * ΔΩ
-        @views WW[inds_ℓℓ] .+= Gℓ_invΩ0 * Wterms.W[inds_ℓℓ]
+        @views WW[inds_ℓℓ] .+= Gℓ_invΩ0 * @. m * (
+            (2 / ℓℓp1 - 1) * (ddrΔΩ_DDr_plus_ΔΩ_ddrDDr - ℓℓp1 * ΔΩ_by_r2) + WWfixedterms
+        )
 
-        for ℓ′ in ℓ-1:2:ℓ+1
-            ℓ′ in ℓs || continue
+        for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
             @. VW[inds_ℓℓ′] -= Wscaling * two_over_ℓℓp1 *
-                               (1 / Ω0) * (ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * ΔΩ_DDr_min_2byr +
-                                           sinθdθo[ℓ, ℓ′] * (
-                                   (ΔΩ_DDr - ℓ′ℓ′p1 * ΔΩ_by_r) - ℓ′ℓ′p1 / 2 * ddrΔΩ))
+                    (1 / Ω0) * (ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * ΔΩ_DDr_min_2byr +
+                        sinθdθo[ℓ, ℓ′] * ((ΔΩ_DDr - ℓ′ℓ′p1 * ΔΩ_by_r) - ℓ′ℓ′p1 / 2 * ddrΔΩ))
 
-            @views WV[inds_ℓℓ′] .+= (1 / Wscaling) * Gℓ_invΩ0 * Wterms.V[inds_ℓℓ′]
+            @views WV[inds_ℓℓ′] .+= Gℓ_invΩ0 * @. (1 / Wscaling) * (-1) / ℓℓp1 * (
+                (4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′] +
+                    ∇²_sinθdθo[ℓ, ℓ′]) * ddrΔΩ_plus_ΔΩddr +
+                ∇²_sinθdθo[ℓ, ℓ′] * twoΔΩ_by_r
+            )
+
             @. SV[inds_ℓℓ′] -= (1 / ε) * cosθo[ℓ, ℓ′] * 2m * ddrΔΩ_over_g
         end
 
-        for ℓ′ in ℓ-2:2:ℓ+2
-            ℓ′ in ℓs || continue
+        for ℓ′ in intersect(ℓs, ℓ-2:2:ℓ+2)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
             @. SW[inds_ℓℓ′] += (Wscaling / ε) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDr
