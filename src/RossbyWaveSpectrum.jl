@@ -435,11 +435,11 @@ end
 
 function greenfn_realspace_numerical2(ℓ, operators)
     (; diff_operators, rad_terms, transforms) = operators
-    (; r_chebyshev) = operators.coordinates
     (; ddrDDr) = diff_operators
     (; onebyr2_cheby) = rad_terms
     (; Tcrinv, Tcrfwd) = transforms
-    Bℓ = chebyshevmatrix(ddrDDr - ℓ * (ℓ + 1) * onebyr2_cheby, r_chebyshev)
+    (; mat) = operators
+    Bℓ = mat(ddrDDr - ℓ * (ℓ + 1) * onebyr2_cheby)
     Bℓ_realspace = Tcrinv * Bℓ * Tcrfwd
     G = pinv(Bℓ_realspace[2:end-1, 2:end-1])
     A = zero(Bℓ_realspace)
