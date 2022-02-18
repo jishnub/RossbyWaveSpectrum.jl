@@ -195,7 +195,8 @@ function eigenfunction(v, m, operators; theory = false, f = figure(), kw...)
     axsurf.xaxis.set_major_formatter(ticker.FuncFormatter(piformatter))
 
     if theory
-        θmarkers = @view θ[1:10:end]
+        markevery_theory = get(kw, :markevery_theory, 10)
+        θmarkers = @view θ[1:markevery_theory:end]
         axsurf.plot(θmarkers, sin.(θmarkers) .^ m,
             marker = "o",
             mfc = "0.7",
@@ -233,8 +234,10 @@ function eigenfunction_rossbyridge(λs::AbstractVector{<:AbstractVector},
 end
 
 function eigenfunction_rossbyridge(λs::AbstractVector{<:Number},
-        vs::AbstractMatrix{<:Number}, m, operators; kw...)
-    minind = findmin(abs, real(λs) .- RossbyWaveSpectrum.rossby_ridge(m))[2]
+    vs::AbstractMatrix{<:Number}, m, operators; kw...)
+
+    ΔΩ_by_Ω = get(kw, :ΔΩ_by_Ω, 0)
+    minind = findmin(abs, real(λs) .- RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_by_Ω))[2]
     eigenfunction(vs[:, minind], m, operators; theory = true, kw...)
 end
 

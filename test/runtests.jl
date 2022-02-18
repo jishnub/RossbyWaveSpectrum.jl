@@ -16,6 +16,10 @@ using RossbyWaveSpectrum: matrix_block, Rsun, kron2
     )
 end
 
+@testset "operators inferred" begin
+    @inferred RossbyWaveSpectrum.radial_operators(5, 2)
+end
+
 @testset "differential rotation" begin
     @testset "compare with constant" begin
         nr, nℓ = 20, 2
@@ -36,18 +40,18 @@ end
             end
         end
 
-        @testset "solar constant and constant" begin
-            Ms = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m,
-                rotation_profile = :solar_constant; operators)
+        # @testset "solar constant and constant" begin
+        #     Ms = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m,
+        #         rotation_profile = :solar_constant; operators)
 
-            @testset for colind in 1:nfields, rowind in 1:nfields
-                if rowind == 2 && colind ∈ (1,2)
-                    @test_broken matrix_block(Ms, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
-                else
-                    @test matrix_block(Ms, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
-                end
-            end
-        end
+        #     @testset for colind in 1:nfields, rowind in 1:nfields
+        #         if rowind == 2 && colind ∈ (1, 2)
+        #             @test_broken matrix_block(Ms, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
+        #         else
+        #             @test matrix_block(Ms, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
+        #         end
+        #     end
+        # end
     end
 
     # nr, nℓ = 40, 2
