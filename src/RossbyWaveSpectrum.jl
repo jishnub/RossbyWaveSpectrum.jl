@@ -483,8 +483,6 @@ struct SpectralOperatorForm
     inv::Matrix{Float64}
 end
 
-dealias_cutoff(n) = floor(Int, 2(n + 1) / 3)
-
 function (op::SpectralOperatorForm)(A::Diagonal)
     op.fwd * A * op.inv
 end
@@ -524,7 +522,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     # density stratification
     ρ = sρ.(r)
     ηρ = sηρ.(r)
-    ηρ_cheby = chop(Fun(sηρ ∘ r_cheby, Chebyshev()), 1e-3)::TFunSpline
+    ηρ_cheby = ApproxFun.chop(Fun(sηρ ∘ r_cheby, Chebyshev()), 1e-3)::TFunSpline
 
     DDr = (ddr + ηρ_cheby)::Tplus
     rDDr = (r_cheby * DDr)::Tmul
@@ -560,6 +558,11 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     Wscaling = Rsun
     scalings = (; ε, Wscaling)
 
+    # viscosity
+    Ω0 = 2pi * 453e-9
+    ν = 1e10
+    ν = ν / Ω0
+
     mat = x -> chebyshevmatrix(x, r_chebyshev, pseudospectralop_radial)
 
     # matrix forms of operators
@@ -579,7 +582,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     gM = mat(g_cheby)
     grddrM = mat((g_cheby * rddr)::Tmul)
 
-    constants = (; κ, scalings, nfields)
+    constants = (; κ, ν, scalings, nfields, Ω0)
     identities = (; Ir, Iℓ)
     coordinates = (; r, r_chebyshev)
     transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
@@ -712,10 +715,8 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
     (; onebyr_cheby, onebyr2_cheby, ηρ_cheby, r_cheby) = rad_terms
     (; d2dr2M, onebyr2_chebyM) = operators.diff_operator_matrices
     (; mat) = operators
+    (; ν) = operators.constants
 
-    Ω = 2pi * 453e-9
-    ν = 1e10
-    ν = ν / Ω
     (; nfields) = operators.constants
     VV = matrix_block(M, 1, 1, nfields)
     WW = matrix_block(M, 2, 2, nfields)
@@ -752,9 +753,9 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
         ℓℓp1_by_r2 = ℓℓp1 * onebyr2_cheby
         ℓℓp1_by_r2M = ℓℓp1 * onebyr2_chebyM
 
-        @views @. VV[diaginds_ℓ] -= im * ν * (d2dr2M - ℓℓp1_by_r2M + ηρ_ddr_minus_2byrM)
+        @views VV[diaginds_ℓ] .-= im * ν * mat(d2dr2 - ℓℓp1_by_r2 + ηρ_ddr_minus_2byr)
 
-        T1 = (ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_r - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2 +
+        T1 = ((ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_r - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2)::Tplus +
               ((d2dr2 - ℓℓp1_by_r2)::Tplus * (d2dr2_plus_4ηρ_by_r - ℓℓp1_by_r2)::Tplus)::Tmul)::Tplus
 
         T3 = (ddr_ηρ_cheby_ddr_minus_2byr_DDr +
@@ -1400,7 +1401,9 @@ function chebyshev_filter!(VWinv, F, v, m, operators, n_cutoff = 7, n_power_cuto
     P_frac > n_power_cutoff
 end
 
-function equator_filter!(VWinv, VWinvsh, F, v, m, operators, θ_cutoff = deg2rad(75), equator_power_cutoff_frac = 0.3;
+function spatial_filter!(VWinv, VWinvsh, F, v, m, operators,
+    θ_cutoff = deg2rad(75), equator_power_cutoff_frac = 0.3,
+    rad_cutoff = 0.05, rad_power_cutoff_frac = 0.8;
     nℓ = operators.radial_params.nℓ,
     ℓmax = m + nℓ - 1,
     Plcosθ = SphericalHarmonics.allocate_p(ℓmax))
@@ -1413,7 +1416,19 @@ function equator_filter!(VWinv, VWinvsh, F, v, m, operators, θ_cutoff = deg2rad
     powfrac = sum(abs2, @view V_surf[θlowind:θhighind]) / sum(abs2, V_surf)
     powflag = powfrac > equator_power_cutoff_frac
     peakflag = maximum(abs2, @view V_surf[θlowind:θhighind]) == maximum(abs2, V_surf)
-    powflag & peakflag
+    eqfilter = powflag & peakflag
+
+    (; r) = operators.coordinates
+    θeqind = findmin(abs.(θ .- pi / 2))[2]
+    nr = size(V, 1)
+    radcutoffind = findmin(abs.(r .- (1 - rad_cutoff) * Rsun))[2]
+
+    radpowtop = sum(abs2, @view V[radcutoffind:end, θeqind])
+    radpowfull = sum(abs2, @view V[:, θeqind])
+    radpowfrac = radpowtop / radpowfull
+    radfilter = radpowfrac > rad_power_cutoff_frac
+
+    eqfilter * radfilter
 end
 
 function filterfn(λ, v, m, M, operators, additional_params; kw...)
@@ -1423,7 +1438,7 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
         Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
         VWinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
         θ_cutoff, equator_power_cutoff_frac, MVcache, eigen_rtol, VWinvsh, F,
-        filters) = additional_params
+        filters, rad_cutoff, rad_power_cutoff_frac) = additional_params
 
     ℓmax = m + nℓ - 1
 
@@ -1448,8 +1463,9 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
     end
 
     if get(filters, :equator, true)
-        equator_filter!(VWinv, VWinvsh, F, v, m, operators,
-            θ_cutoff, equator_power_cutoff_frac; nℓ, ℓmax, Plcosθ) || return false
+        spatial_filter!(VWinv, VWinvsh, F, v, m, operators,
+            θ_cutoff, equator_power_cutoff_frac,
+            rad_cutoff, rad_power_cutoff_frac; nℓ, ℓmax, Plcosθ) || return false
     end
 
     if get(filters, :eigensystem_satisfy, true)
@@ -1497,15 +1513,24 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     ΔΩ_by_Ω_high = ΔΩ_by_Ω_low,
     θ_cutoff = deg2rad(75),
     equator_power_cutoff_frac = 0.3,
-    filters = (;
-        eigenvalue = true,
-        sphericalharmonic = true,
-        chebyshev = true,
-        boundarycondition = true,
-        equator = true,
-        eigensystem_satisfy = true
-    ),
+    rad_cutoff = 0.05,
+    rad_power_cutoff_frac = 0.8,
+    eigenvalue_filter = true,
+    sphericalharmonic_filter = true,
+    chebyshev_filter = true,
+    boundarycondition_filter = true,
+    equator_filter = true,
+    eigensystem_satisfy_filter = true,
     kw...)
+
+    filters = (;
+        eigenvalue = eigenvalue_filter,
+        sphericalharmonic = sphericalharmonic_filter,
+        chebyshev = chebyshev_filter,
+        boundarycondition = boundarycondition_filter,
+        equator = equator_filter,
+        eigensystem_satisfy = eigensystem_satisfy_filter
+    )
 
     (; BC) = constraints
     (; nℓ) = operators.radial_params
@@ -1515,7 +1540,10 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
         ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff,
         Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
         VWinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
-        θ_cutoff, equator_power_cutoff_frac, MVcache, eigen_rtol, VWinvsh, F, filters)
+        θ_cutoff, equator_power_cutoff_frac, MVcache,
+        eigen_rtol, VWinvsh, F, filters, rad_cutoff,
+        rad_power_cutoff_frac,
+    )
 
     inds_bool = filterfn.(λ, eachcol(v), m, (M,), (operators,), (additional_params,))
     filtinds = axes(λ, 1)[inds_bool]

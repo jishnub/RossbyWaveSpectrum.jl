@@ -70,9 +70,9 @@ version = "4.0.3"
 
 [[deps.ArrayLayouts]]
 deps = ["FillArrays", "LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "e1ba79094cae97b688fb42d31cbbfd63a69706e4"
+git-tree-sha1 = "56c347caf09ad8acb3e261fe75f8e09652b7b05b"
 uuid = "4c555306-a7a7-4459-81d9-ec55ddd5c99a"
-version = "0.7.8"
+version = "0.7.10"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
@@ -105,9 +105,9 @@ version = "0.5.10"
 
 [[deps.BlockArrays]]
 deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra"]
-git-tree-sha1 = "5524e27323cf4c4505699c3fb008c3f772269945"
+git-tree-sha1 = "21490270d1fcf2efa9ddb2126d6958e9b72a4db0"
 uuid = "8e7c35d0-a365-5155-bbbb-fb81a777f24e"
-version = "0.16.9"
+version = "0.16.11"
 
 [[deps.BlockBandedMatrices]]
 deps = ["ArrayLayouts", "BandedMatrices", "BlockArrays", "FillArrays", "LinearAlgebra", "MatrixFactorizations", "SparseArrays", "Statistics"]
@@ -123,9 +123,9 @@ version = "0.5.1"
 
 [[deps.ChainRulesCore]]
 deps = ["Compat", "LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "f9982ef575e19b0e5c7a98c6e75ee496c0f73a93"
+git-tree-sha1 = "7dd38532a1115a215de51775f9891f0f3e1bac6a"
 uuid = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
-version = "1.12.0"
+version = "1.12.1"
 
 [[deps.ChangesOfVariables]]
 deps = ["ChainRulesCore", "LinearAlgebra", "Test"]
@@ -246,9 +246,9 @@ version = "1.0.3"
 
 [[deps.DiffRules]]
 deps = ["IrrationalConstants", "LogExpFunctions", "NaNMath", "Random", "SpecialFunctions"]
-git-tree-sha1 = "84083a5136b6abf426174a58325ffd159dd6d94f"
+git-tree-sha1 = "dd933c4ef7b4c270aacd4eb88fa64c147492acf0"
 uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
-version = "1.9.1"
+version = "1.10.0"
 
 [[deps.Distributed]]
 deps = ["Random", "Serialization", "Sockets"]
@@ -307,9 +307,9 @@ version = "0.4.9"
 
 [[deps.FastTransforms]]
 deps = ["AbstractFFTs", "ArrayLayouts", "BinaryProvider", "DSP", "FFTW", "FastGaussQuadrature", "FastTransforms_jll", "FillArrays", "Libdl", "LinearAlgebra", "Reexport", "SpecialFunctions", "Test", "ToeplitzMatrices"]
-git-tree-sha1 = "4df3553cf975e22287c216017923ad7eb7a95f9a"
+git-tree-sha1 = "aeba91014487025f20a9e7a4c74da625961580ff"
 uuid = "057dd010-8810-581a-b7be-e3fc3b93f78c"
-version = "0.13.5"
+version = "0.13.6"
 
 [[deps.FastTransforms_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "FFTW_jll", "JLLWrappers", "Libdl", "MPFR_jll", "OpenBLAS_jll", "Pkg"]
@@ -464,9 +464,9 @@ version = "1.3.0"
 
 [[deps.LazyArrays]]
 deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra", "MacroTools", "MatrixFactorizations", "SparseArrays", "StaticArrays"]
-git-tree-sha1 = "6dfb5dc9426e0cb7e237a71aa78c6b8c3e78a7fc"
+git-tree-sha1 = "e20371e416fd9e7cac1963b024b2243d3d36c03a"
 uuid = "5078a376-72f3-5289-bfd5-ec5146d43c02"
-version = "0.22.4"
+version = "0.22.5"
 
 [[deps.LazyArtifacts]]
 deps = ["Artifacts", "Pkg"]
@@ -584,9 +584,9 @@ uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
 
 [[deps.MutableArithmetics]]
 deps = ["LinearAlgebra", "SparseArrays", "Test"]
-git-tree-sha1 = "842b5ccd156e432f369b204bb704fd4020e383ac"
+git-tree-sha1 = "ba8c0f8732a24facba709388c74ba99dcbfdda1e"
 uuid = "d8a4904e-b15c-11e9-3269-09a3773c0cb0"
-version = "0.3.3"
+version = "1.0.0"
 
 [[deps.NaNMath]]
 git-tree-sha1 = "b086b7ea07f8e38cf122f5016af580881ac914fe"
@@ -650,9 +650,9 @@ uuid = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 
 [[deps.Polynomials]]
 deps = ["Intervals", "LinearAlgebra", "MutableArithmetics", "RecipesBase"]
-git-tree-sha1 = "f184bc53e9add8c737e50fa82885bc3f7d70f628"
+git-tree-sha1 = "a1f7f4e41404bed760213ca01d7f384319f717a5"
 uuid = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
-version = "2.0.24"
+version = "2.0.25"
 
 [[deps.Preferences]]
 deps = ["TOML"]
@@ -741,7 +741,7 @@ deps = ["Distributed", "Mmap", "Random", "Serialization"]
 uuid = "1a1011a3-84de-559e-8e89-a11a2f7dc383"
 
 [[deps.SimpleDelimitedFiles]]
-git-tree-sha1 = "80694e07f177c3fc6bd34f792ed9b841d21f75c2"
+git-tree-sha1 = "9a34b5bb1d1cd36d74cd23df8d0a5708f7335c1d"
 repo-rev = "main"
 repo-url = "https://github.com/jishnub/SimpleDelimitedFiles.jl"
 uuid = "44ac6da9-39e0-40c2-8ac2-dc1cb273e973"
@@ -762,9 +762,9 @@ uuid = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 
 [[deps.SpecialFunctions]]
 deps = ["ChainRulesCore", "IrrationalConstants", "LogExpFunctions", "OpenLibm_jll", "OpenSpecFun_jll"]
-git-tree-sha1 = "f0bccf98e16759818ffc5d97ac3ebf87eb950150"
+git-tree-sha1 = "2735e252e72ee0367ebdb10b6148343fd15c2481"
 uuid = "276daf66-3868-5448-9aa4-cd146d93841b"
-version = "1.8.1"
+version = "1.8.3"
 
 [[deps.SphericalHarmonicArrays]]
 deps = ["SphericalHarmonicModes", "TupleTools"]

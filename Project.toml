@@ -43,7 +43,7 @@ OffsetArrays = "1.10"
 PyCall = "1.93"
 PyPlot = "2.10"
 SimpleDelimitedFiles = "0.1"
-SpecialPolynomials = "0.2"
+SpecialPolynomials = "0.3"
 SphericalHarmonics = "0.1"
 
 [extras]
