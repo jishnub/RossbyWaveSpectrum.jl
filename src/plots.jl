@@ -325,7 +325,7 @@ function plot_matrix_block(M, rowind, colind)
     f.tight_layout()
 end
 
-function plot_radial_block(M, rowind, colind, nr, ℓind, ℓ′ind)
+function plot_matrix_block(M, rowind, colind, nr, ℓind, ℓ′ind)
     f, axlist = subplots(1, 2)
     M = RossbyWaveSpectrum.matrix_block(M, rowind, colind)
     ℓinds = (ℓind - 1) * nr .+ (1:nr)
