@@ -303,9 +303,8 @@ end
 
 function constraintmatrix(operators)
     (; radial_params) = operators
-    (; nr, r_in, r_out, nℓ, Δr) = radial_params
+    (; nr, r_in, r_out, nℓ, Δr, nparams) = radial_params
 
-    nparams = nr * nℓ
     nradconstraints = 2
     nconstraints = nradconstraints * nℓ
 
@@ -554,7 +553,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     Iℓ = I(nℓ)
 
     # scaling for S and W
-    ε = 1e-18
+    ε = 1e-17
     Wscaling = Rsun
     scalings = (; ε, Wscaling)
 
@@ -619,7 +618,8 @@ end
 
 function uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
     nparams = nr * nℓ
-    M = zeros(ComplexF64, 3nparams, 3nparams)
+    nfields = operators.constants.nfields
+    M = zeros(ComplexF64, nfields * nparams, nfields * nparams)
     uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     return M
 end
@@ -653,11 +653,11 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     WV = matrix_block(M, 2, 1, nfields)
     WW = matrix_block(M, 2, 2, nfields)
     # the following are only valid if S is included
-    WS = matrix_block(M, 2, 3, nfields)
-    SW = matrix_block(M, 3, 2, nfields)
-    SS = matrix_block(M, 3, 3, nfields)
-
-    VV .= 2m * kron(Diagonal(@. 1 / (ℓs * (ℓs + 1))), I(nchebyr))
+    if nfields === 3
+        WS = matrix_block(M, 2, 3, nfields)
+        SW = matrix_block(M, 3, 2, nfields)
+        SS = matrix_block(M, 3, 3, nfields)
+    end
 
     cosθ = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs)
     sinθdθ = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
@@ -681,11 +681,19 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         ℓℓp1 = ℓ * (ℓ + 1)
 
         diaginds_ℓ = blockinds((m, nr), ℓ)
-        WW[diaginds_ℓ] = Gℓ * @. 2m / ℓℓp1 * (ddrDDrM - onebyr2_IplusrηρM * ℓℓp1)
-        WS[diaginds_ℓ] = Gℓ * @. (ε / Wscaling) * (-1 / Ω0) * (2 / ℓℓp1 * grddrM + gM)
 
-        @. SW[diaginds_ℓ] = (Wscaling / ε) * (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
-        @. SS[diaginds_ℓ] = -im / Ω0 * (κ_d2dr2_plus_ddr_lnκρT_ddrM - ℓℓp1 * κ_by_r2M)
+        VV[diaginds_ℓ] .= 2m/ℓℓp1 * I(nchebyr)
+
+        WW[diaginds_ℓ] = Gℓ * @. 2m / ℓℓp1 * (ddrDDrM - onebyr2_IplusrηρM * ℓℓp1)
+
+        if nfields === 3
+            WS[diaginds_ℓ] = Gℓ * @. (ε / Wscaling) * (-1 / Ω0) * (2 / ℓℓp1 * grddrM + gM)
+        end
+
+        if nfields === 3
+            @. SW[diaginds_ℓ] = (Wscaling / ε) * (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
+            @. SS[diaginds_ℓ] = -im / Ω0 * (κ_d2dr2_plus_ddr_lnκρT_ddrM - ℓℓp1 * κ_by_r2M)
+        end
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
@@ -713,7 +721,6 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
     (; nchebyr) = radial_params
     (; DDr, ddr, d2dr2) = diff_operators
     (; onebyr_cheby, onebyr2_cheby, ηρ_cheby, r_cheby) = rad_terms
-    (; d2dr2M, onebyr2_chebyM) = operators.diff_operator_matrices
     (; mat) = operators
     (; ν) = operators.constants
 
@@ -727,7 +734,6 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
     ddr_minus_2byr = (ddr - 2onebyr_cheby)::Tplus
 
     ηρ_ddr_minus_2byr = (ηρ_cheby * ddr_minus_2byr)::Tmul
-    ηρ_ddr_minus_2byrM = mat(ηρ_ddr_minus_2byr)
 
     ηρ_by_r = onebyr_cheby * ηρ_cheby
     ηρ_by_r2 = onebyr2_cheby * ηρ_cheby
@@ -751,7 +757,6 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         ℓℓp1 = ℓ * (ℓ + 1)
         ℓℓp1_by_r2 = ℓℓp1 * onebyr2_cheby
-        ℓℓp1_by_r2M = ℓℓp1 * onebyr2_chebyM
 
         @views VV[diaginds_ℓ] .-= im * ν * mat(d2dr2 - ℓℓp1_by_r2 + ηρ_ddr_minus_2byr)
 
@@ -971,14 +976,18 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     VW = matrix_block(M, 1, 2, nfields)
     WV = matrix_block(M, 2, 1, nfields)
     WW = matrix_block(M, 2, 2, nfields)
-    SV = matrix_block(M, 3, 1, nfields)
-    SW = matrix_block(M, 3, 2, nfields)
+    if nfields === 3
+        SV = matrix_block(M, 3, 1, nfields)
+        SW = matrix_block(M, 3, 2, nfields)
+    end
 
     ΔΩprofile_deriv =
         radial_differential_rotation_profile_derivatives(nℓ, m, r;
             operators, rotation_profile)
 
     (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv
+    # ddrΔΩ = 0 * ddrΔΩ
+    # d2dr2ΔΩ = 0 * d2dr2ΔΩ
 
     ΔΩM = mat(ΔΩ)
 
@@ -1012,7 +1021,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     ΔΩ_DDr = (ΔΩ * DDr)::Tmul
     ΔΩ_by_r = ΔΩ * onebyr_cheby
 
-    WWfixedterms = (-two_ΔΩbyr_ηρ + d2dr2ΔΩ) + ∂rΔΩ_ddr_plus_2byr
+    WWfixedterms = (-two_ΔΩbyr_ηρ + d2dr2ΔΩ + ∂rΔΩ_ddr_plus_2byr)::Tplus
 
     for ℓ in ℓs
         # numerical green function
@@ -1042,13 +1051,17 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
                 ∇²_sinθdθo[ℓ, ℓ′] * twoΔΩ_by_r
             )
 
-            @. SV[inds_ℓℓ′] -= (1 / ε) * cosθo[ℓ, ℓ′] * 2m * ddrΔΩ_over_gM
+            if nfields === 3
+                @. SV[inds_ℓℓ′] -= (1 / ε) * cosθo[ℓ, ℓ′] * 2m * ddrΔΩ_over_gM
+            end
         end
 
         for ℓ′ in intersect(ℓs, ℓ-2:2:ℓ+2)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
-            @. SW[inds_ℓℓ′] += (Wscaling / ε) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM
+            if nfields === 3
+                @. SW[inds_ℓℓ′] += (Wscaling / ε) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM
+            end
         end
     end
     return M
@@ -1403,7 +1416,7 @@ end
 
 function spatial_filter!(VWinv, VWinvsh, F, v, m, operators,
     θ_cutoff = deg2rad(75), equator_power_cutoff_frac = 0.3,
-    rad_cutoff = 0.05, rad_power_cutoff_frac = 0.8;
+    rad_cutoff = 0.15, rad_power_cutoff_frac = 0.8;
     nℓ = operators.radial_params.nℓ,
     ℓmax = m + nℓ - 1,
     Plcosθ = SphericalHarmonics.allocate_p(ℓmax))
@@ -1418,17 +1431,17 @@ function spatial_filter!(VWinv, VWinvsh, F, v, m, operators,
     peakflag = maximum(abs2, @view V_surf[θlowind:θhighind]) == maximum(abs2, V_surf)
     eqfilter = powflag & peakflag
 
-    (; r) = operators.coordinates
-    θeqind = findmin(abs.(θ .- pi / 2))[2]
-    nr = size(V, 1)
-    radcutoffind = findmin(abs.(r .- (1 - rad_cutoff) * Rsun))[2]
+    # (; r) = operators.coordinates
+    # θeqind = findmin(abs.(θ .- pi / 2))[2]
+    # radcutoffind = findmin(abs.(r .- (1 - rad_cutoff) * Rsun))[2]
 
-    radpowtop = sum(abs2, @view V[radcutoffind:end, θeqind])
-    radpowfull = sum(abs2, @view V[:, θeqind])
-    radpowfrac = radpowtop / radpowfull
-    radfilter = radpowfrac > rad_power_cutoff_frac
+    # radpowtop = sum(abs2, @view V[radcutoffind:end, θeqind])
+    # radpowfull = sum(abs2, @view V[:, θeqind])
+    # radpowfrac = radpowtop / radpowfull
+    # radfilter = radpowfrac > rad_power_cutoff_frac
 
-    eqfilter * radfilter
+    # @show eqfilter radfilter
+    eqfilter
 end
 
 function filterfn(λ, v, m, M, operators, additional_params; kw...)
@@ -1462,7 +1475,7 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
             n_power_cutoff; nℓ, ℓmax, Plcosθ) || return false
     end
 
-    if get(filters, :equator, true)
+    if get(filters, :spatial, true)
         spatial_filter!(VWinv, VWinvsh, F, v, m, operators,
             θ_cutoff, equator_power_cutoff_frac,
             rad_cutoff, rad_power_cutoff_frac; nℓ, ℓmax, Plcosθ) || return false
@@ -1519,7 +1532,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     sphericalharmonic_filter = true,
     chebyshev_filter = true,
     boundarycondition_filter = true,
-    equator_filter = true,
+    spatial_filter = true,
     eigensystem_satisfy_filter = true,
     kw...)
 
@@ -1528,7 +1541,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
         sphericalharmonic = sphericalharmonic_filter,
         chebyshev = chebyshev_filter,
         boundarycondition = boundarycondition_filter,
-        equator = equator_filter,
+        spatial = spatial_filter,
         eigensystem_satisfy = eigensystem_satisfy_filter
     )
 

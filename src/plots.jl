@@ -246,7 +246,11 @@ function eignorm(v)
     abs(minval) > abs(maxval) ? minval : maxval
 end
 
-function multiple_eigenfunctions_m(λs, vecs, m, operators; f = figure(), kw...)
+function multiple_eigenfunctions_m(λs::AbstractVector, vecs::AbstractVector,
+        m, operators; f = figure(), kw...)
+    multiple_eigenfunctions_m(λs[m], vecs[m], m, operators; f, kw...)
+end
+function multiple_eigenfunctions_m(λs::AbstractVector, vecs::AbstractMatrix, m, operators; f = figure(), kw...)
     ax = f.add_subplot()
     ax.set_xlabel("colatitude (θ) [radians]", fontsize = 12)
     ax.set_ylabel("Angular profile", fontsize = 12)
@@ -258,8 +262,8 @@ function multiple_eigenfunctions_m(λs, vecs, m, operators; f = figure(), kw...)
 
     lscm = Iterators.product(("solid", "dashed", "dotted"), ("black", "0.5", "0.3"), ("None", "."))
 
-    vm = reverse(vecs[m], dims = 2)
-    λm = reverse(λs[m])
+    vm = reverse(vecs, dims = 2)
+    λm = reverse(λs)
 
     λ0 = 2 / (m + 1)
     λm ./= λ0
@@ -273,10 +277,10 @@ function multiple_eigenfunctions_m(λs, vecs, m, operators; f = figure(), kw...)
         Vr_surf .*= Vrmax_sign
         normalize!(Vr_surf)
 
-        label = round(real(λm[ind]), sigdigits = 2)
+        eigvalfrac = round(real(λm[ind]), sigdigits = 2)
 
         ax.plot(θ, Vr_surf; ls, color = c,
-            label = string(label),
+            label = string(eigvalfrac),
             marker, markevery = 10)
     end
 
