@@ -170,18 +170,20 @@ function differential_rotation_spectrum(lam_rad, lam_solar, mr = axes(lam_rad, 1
     end
 end
 
-function eigenfunction(v, m, operators; theory = false, f = figure(), kw...)
-    (; V, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m, operators)
+function eigenfunction(v, m, operators; field = :V, theory = false, f = figure(), kw...)
+    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m, operators)
+    V = getproperty(VWSinv, field)::Matrix{ComplexF64}
     Vr = real(V)
     Vrmax = eignorm(Vr)
     if Vrmax != 0
         Vr ./= Vrmax
     end
-    Vrmax = maximum(abs, Vr)
     (; coordinates) = operators
     (; r) = coordinates
     r_frac = r ./ Rsun
     nθ = length(θ)
+    V_equator_depthprofile = @view Vr[:, nθ÷2]
+    r_max_ind = argmax(abs.(V_equator_depthprofile))
 
     spec = f.add_gridspec(3, 3)
 
@@ -189,7 +191,7 @@ function eigenfunction(v, m, operators; theory = false, f = figure(), kw...)
     axsurf = f.add_subplot(py"$(spec)[0, 1:]", sharex = axprofile)
     axdepth = f.add_subplot(py"$(spec)[1:, 0]", sharey = axprofile)
 
-    axsurf.plot(θ, (@view Vr[end, :]), color = "black")
+    axsurf.plot(θ, (@view Vr[r_max_ind, :]), color = "black")
     axsurf.set_ylabel("Angular\nprofile", fontsize = 11)
     axsurf.set_xticks(pi * (1/4:1/4:1))
     axsurf.xaxis.set_major_formatter(ticker.FuncFormatter(piformatter))
@@ -208,7 +210,7 @@ function eigenfunction(v, m, operators; theory = false, f = figure(), kw...)
         axsurf.legend(loc = "best")
     end
 
-    axdepth.plot((@view Vr[:, nθ÷2]), r_frac,
+    axdepth.plot(V_equator_depthprofile, r_frac,
         color = "black",
     )
     axdepth.set_xlabel("Depth profile", fontsize = 11)
