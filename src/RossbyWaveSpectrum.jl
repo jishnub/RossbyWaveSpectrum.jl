@@ -1625,7 +1625,6 @@ function filter_eigenvalues(λ::AbstractVector{<:AbstractVector},
     Mfn = uniform_rotation_matrix!,
     operators,
     constraints = constraintmatrix(operators),
-    BC = constraints.BC,
     kw...)
 
     (; nr, nℓ, nparams) = operators.radial_params
@@ -1637,7 +1636,7 @@ function filter_eigenvalues(λ::AbstractVector{<:AbstractVector},
             M = Ms[Threads.threadid()]
             Mfn(M, nr, nℓ, m; operators)
             _M = _maybetrimM(M, nfields, nparams)
-            filter_eigenvalues(λm, vm, _M, m; operators, BC, kw...)
+            filter_eigenvalues(λm, vm, _M, m; operators, constraints, kw...)
         end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
     )
     first.(λv), last.(λv)
@@ -1651,14 +1650,13 @@ function filter_eigenvalues(f, mr::AbstractVector; #= inplace function =#
     (; nr, nℓ, nparams) = operators.radial_params
     Ms = [zeros(ComplexF64, 3nparams, 3nparams) for _ in 1:Threads.nthreads()]
     caches = [constrained_matmul_cache(constraints) for _ in 1:Threads.nthreads()]
-    (; BC) = constraints
 
     λv = @maybe_reduce_blas_threads(
         Folds.map(mr) do m
             M = Ms[Threads.threadid()]
             cache = caches[Threads.threadid()]
             λm, vm, _M = f(M, nr, nℓ, m; operators, constraints, cache, kw...)
-            filter_eigenvalues(λm, vm, _M, m; operators, BC, kw...)
+            filter_eigenvalues(λm, vm, _M, m; operators, constraints, kw...)
         end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
     )
     first.(λv), last.(λv)
