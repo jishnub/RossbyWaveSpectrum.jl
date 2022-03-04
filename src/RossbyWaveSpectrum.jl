@@ -313,20 +313,45 @@ function constraintmatrix(operators)
     MWn = @view M[nradconstraints.+(1:nradconstraints), :]
     MWno = OffsetArray(MWn, :, 0:nr-1)
     MSn = MWn
+    MSn = zero(MWn)
+    MSno = OffsetArray(MSn, :, 0:nr-1)
 
     (; nfields) = operators.constants
     BC = zeros(nfields * 2nℓ, nfields * nparams)
 
     # constraints on V, Robin
     for n = 0:nr-1
+        # inner boundary
+        # impenetrable, stress-free
         MVno[1, n] = (-1)^n * (n^2 + Δr / r_in)
+        # outer boundary
+        # impenetrable, stress-free
         MVno[2, n] = n^2 - Δr / r_out
     end
 
     # constraints on W, Dirichlet
     for n = 0:nr-1
+        # inner boundary
+        # impenetrable, stress-free
+        # equivalently, zero Dirichlet
         MWno[1, n] = (-1)^n
+        # outer boundary
+        # impenetrable, stress-free
+        # equivalently, zero Dirichlet
         MWno[2, n] = 1
+    end
+
+    for n = 0:nr-1
+        # inner boundary
+        # zero Dirichlet
+        MSno[1, n] = (-1)^n
+        # outer boundary
+        # zero Dirichlet
+        # MSno[2, n] = 1
+        # zero Neumann
+        MSno[2, n] = n^2
+        # dS/dr = S/r
+        # MSno[2, n] = n^2 - (1/2) * Δr / r_out
     end
 
     indstart = 1
@@ -1395,16 +1420,20 @@ function eigensystem_satisfy_filter(λ, v, M, MVcache, rtol = 1e-1)
 end
 
 function filterfields(coll, v, nparams; filterfieldpowercutoff = 1e-2)
-    filterfields = [coll.V]
     Vpow = sum(abs2, @view v[1:nparams])
     Wpow = sum(abs2, @view v[nparams .+ (1:nparams)])
     Spow = sum(abs2, @view v[2nparams .+ (1:nparams)])
 
-    if Spow/Vpow > filterfieldpowercutoff
+    filterfields = typeof(coll.V)[]
+
+    if Spow/max(Vpow, Wpow) > filterfieldpowercutoff
         push!(filterfields, coll.S)
     end
+    if Vpow/max(Vpow, Wpow) > filterfieldpowercutoff
+        push!(filterfields, coll.V)
+    end
 
-    if Wpow/Vpow > filterfieldpowercutoff
+    if Wpow/max(Vpow, Wpow) > filterfieldpowercutoff
         push!(filterfields, coll.W)
     end
     return filterfields

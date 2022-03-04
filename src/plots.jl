@@ -12,6 +12,10 @@ plotdir = joinpath(dirname(dirname(@__DIR__)), "plots")
 ticker = pyimport("matplotlib.ticker")
 axes_grid1 = pyimport("mpl_toolkits.axes_grid1")
 
+function realview(M::Matrix{Complex{T}}) where {T}
+    @view reinterpret(reshape, T, M)[1, :, :]
+end
+
 function cbformat(x, _)
     a, b = split((@sprintf "%.1e" x), 'e')
     c = parse(Int, b)
@@ -170,12 +174,15 @@ function differential_rotation_spectrum(lam_rad, lam_solar, mr = axes(lam_rad, 1
     end
 end
 
-function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators; field = :V, theory = false, f = figure(), kw...)
+function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators;
+    field = :V, theory = false, f = figure(), kw...)
     V = getproperty(VWSinv, field)::Matrix{ComplexF64}
-    Vr = real(V)
-    Vrmax = eignorm(Vr)
-    if Vrmax != 0
-        Vr ./= Vrmax
+    Vr = realview(V)
+    scale = get(kw, :scale) do
+        eignorm(Vr)
+    end
+    if scale != 0
+        Vr ./= scale
     end
     (; coordinates) = operators
     (; r) = coordinates
@@ -196,9 +203,14 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators; fie
     axdepth = f.add_subplot(py"$(spec)[1:, 0]", sharey = axprofile)
 
     axsurf.plot(θ, (@view Vr[r_max_ind, :]), color = "black")
-    axsurf.set_ylabel("Angular\nprofile", fontsize = 11)
+    if get(kw, :setylabel, true)
+        axsurf.set_ylabel("Angular\nprofile", fontsize = 11)
+    end
     axsurf.set_xticks(pi * (1/4:1/4:1))
     axsurf.xaxis.set_major_formatter(ticker.FuncFormatter(piformatter))
+    yfmt = ticker.ScalarFormatter(useMathText = true)
+    yfmt.set_powerlimits((-1,1))
+    axsurf.yaxis.set_major_formatter(yfmt)
 
     if theory
         markevery_theory = get(kw, :markevery_theory, 10)
@@ -219,9 +231,13 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators; fie
         color = "black",
     )
     axdepth.set_xlabel("Depth profile", fontsize = 11)
-    axdepth.set_ylabel("Fractional radius", fontsize = 11)
+    axdepth.set_ylabel(L"r/R_\odot", fontsize = 11)
     axdepth.yaxis.set_major_locator(ticker.MaxNLocator(4))
     axdepth.xaxis.set_major_locator(ticker.MaxNLocator(2))
+    xfmt = ticker.ScalarFormatter(useMathText = true)
+    xfmt.set_powerlimits((-1,1))
+    axdepth.xaxis.set_major_formatter(xfmt)
+    axdepth.xaxis.tick_top()
 
     axprofile.pcolormesh(θ, r_frac, Vr, cmap = "Greys", rasterized = true, shading = "auto")
     xlabel = get(kw, :longxlabel, true) ? "colatitude (θ) [radians]" : "θ [radians]"
@@ -255,10 +271,14 @@ function eigenfunctions_all(VWSinv::NamedTuple, θ, m, operators; theory = false
     kw2[:constrained_layout] = true
     kw2[:suptitle] = false
     kw2[:longxlabel] = false
+    scale = eignorm(realview(VWSinv.V))
+    kw2[:scale] = scale
     for (ind, field) in enumerate((:V, :W, :S))
         eigenfunction(VWSinv, θ, m, operators;
             field, theory, f = subfigs[ind],
-            constrained_layout = true, kw2...)
+            constrained_layout = true,
+            setylabel = ind == 1 ? true : false,
+            kw2...)
         subfigs[ind].suptitle(string(field), x = 0.8)
     end
 end
@@ -305,7 +325,7 @@ function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMa
 
     for (ind, (v, (ls, c, marker))) in enumerate(zip(eachcol(vm), lscm))
         (; V, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m, operators)
-        Vr = real(V)
+        Vr = realview(V)
         Vr_surf = Vr[end, :]
 
         Vrmax_sign = sign(eignorm(Vr_surf))
@@ -353,7 +373,7 @@ end
 function plot_matrix_block(M, rowind, colind)
     f, axlist = subplots(1, 2)
     M = RossbyWaveSpectrum.matrix_block(M, rowind, colind)
-    A = real(M)
+    A = realview(M)
     Amax = maximum(abs, A)
     p1 = axlist[1].pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
     cb1 = colorbar(mappable = p1, ax = axlist[1])
@@ -369,7 +389,7 @@ function plot_matrix_block(M, rowind, colind, nr, ℓind, ℓ′ind)
     M = RossbyWaveSpectrum.matrix_block(M, rowind, colind)
     ℓinds = (ℓind - 1) * nr .+ (1:nr)
     ℓ′inds = (ℓ′ind - 1) * nr .+ (1:nr)
-    A = real(M)[ℓinds, ℓ′inds]
+    A = realview(M)[ℓinds, ℓ′inds]
     Amax = maximum(abs, A)
     p1 = axlist[1].pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
     cb1 = colorbar(mappable = p1, ax = axlist[1])
