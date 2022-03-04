@@ -16,7 +16,6 @@ using LegendrePolynomials
 using MKL
 using OffsetArrays
 using SimpleDelimitedFiles: readdlm
-using SphericalHarmonics
 
 export datadir
 
@@ -282,12 +281,11 @@ function associatedlegendretransform_matrices(nℓ, m, costheta, w)
     PLMfwd = zeros(nℓ_transform, nθ)
     PLMinv = zeros(nθ, nℓ_transform)
     ℓs = range(m, length = nℓ_transform)
-    ℓmax = maximum(ℓs)
-    Pcache = SphericalHarmonics.allocate_p(ℓmax)
+    Pcache = zeros(ℓs)
     for (θind, costhetai) in enumerate(costheta)
-        computePlmx!(Pcache, costhetai, ℓmax, m, norm = SphericalHarmonics.Orthonormal())
+        collectPlm!(Pcache, costhetai; m, norm = Val(:normalized))
         for (ℓind, ℓ) in enumerate(ℓs)
-            Pℓm = Pcache[(ℓ, m)]
+            Pℓm = Pcache[ℓ]
             PLMfwd[ℓind, θind] = Pℓm
             PLMinv[θind, ℓind] = Pℓm
         end
@@ -540,9 +538,8 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     g = sg.(r)
     g_cheby = Fun(sg ∘ r_cheby, Chebyshev())::TFunSpline
 
-    κ = thermal_diffusivity(ρ)
-    κ_cheby = Fun(Chebyshev(), Tcrfwd * κ)
-    ddr_lnκρT = ddr * Fun(Chebyshev(), Tcrfwd * log.(κ .* ρ .* T))
+    κ = 3e10
+    ddr_lnρT = ddr * Fun(Chebyshev(), Tcrfwd * log.(ρ .* T))
 
     γ = 1.64
     cp = 1.7e8
@@ -553,8 +550,8 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     Iℓ = I(nℓ)
 
     # scaling for S and W
-    ε = 1e-17
-    Wscaling = Rsun
+    ε = 1e-20
+    Wscaling = Rsun * 1e-2
     scalings = (; ε, Wscaling)
 
     # viscosity
@@ -586,7 +583,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     coordinates = (; r, r_chebyshev)
     transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
     rad_terms = (; onebyr, onebyr_cheby, ηρ, ηρ_cheby, onebyr2_cheby,
-        ddr_lnκρT, ddr_S0_by_cp, g, g_cheby, r_cheby, r2_cheby, κ_cheby, twoηρ_by_r)
+        ddr_lnρT, ddr_S0_by_cp, g, g_cheby, r_cheby, r2_cheby, κ, twoηρ_by_r)
     diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr,
         ddr, d2dr2, r2d2dr2, ddrDDr, ddr_plus_2byr)
     diff_operator_matrices = (; onebyr_chebyM, onebyr2_chebyM, DDrM,
@@ -628,7 +625,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     (; nfields) = operators.constants
     (; nchebyr, r_out) = operators.radial_params
     (; ddr, d2dr2) = operators.diff_operators
-    (; onebyr2_cheby, ddr_lnκρT, κ_cheby,
+    (; onebyr2_cheby, ddr_lnρT, κ,
         ηρ_cheby, r_cheby, ddr_S0_by_cp) = operators.rad_terms
     (; ddrDDrM, ddrM, DDrM,
         onebyr_chebyM, grddrM, gM, ddr_minus_2byrM,
@@ -668,9 +665,9 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     onebyr2_IplusrηρM = mat((onefun + ηρ_cheby * r_cheby) * onebyr2_cheby)
 
     onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp)
-    d2dr2_plus_ddr_lnκρT_ddr = d2dr2 + ddr_lnκρT * ddr
-    κ_d2dr2_plus_ddr_lnκρT_ddrM = mat(κ_cheby * d2dr2_plus_ddr_lnκρT_ddr)
-    κ_by_r2M = mat(κ_cheby * onebyr2_cheby)
+    d2dr2_plus_ddr_lnρT_ddr = d2dr2 + ddr_lnρT * ddr
+    κ_d2dr2_plus_ddr_lnρT_ddrM = mat(κ * d2dr2_plus_ddr_lnρT_ddr)
+    κ_by_r2M = mat(κ * onebyr2_cheby)
 
     for ℓ in ℓs
         # numerical green function
@@ -692,7 +689,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
         if nfields === 3
             @. SW[diaginds_ℓ] = (Wscaling / ε) * (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
-            @. SS[diaginds_ℓ] = -im / Ω0 * (κ_d2dr2_plus_ddr_lnκρT_ddrM - ℓℓp1 * κ_by_r2M)
+            @. SS[diaginds_ℓ] = -im / Ω0 * (κ_d2dr2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M)
         end
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
@@ -854,7 +851,7 @@ function matrix_block(M, rowind, colind, nfields = 3)
     @view M[inds]
 end
 
-matrix_block_maximum(M, nfields = 3) = [maximum(abs, matrix_block(M, i, j)) for i in 1:nfields, j in 1:nfields]
+matrix_block_maximum(f, M, nfields = 3) = [maximum(f, matrix_block(M, i, j)) for i in 1:nfields, j in 1:nfields]
 
 function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radial_operators(nr, nℓ))
     (; nfields) = operators.constants
@@ -986,8 +983,6 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
             operators, rotation_profile)
 
     (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv
-    # ddrΔΩ = 0 * ddrΔΩ
-    # d2dr2ΔΩ = 0 * d2dr2ΔΩ
 
     ΔΩM = mat(ΔΩ)
 
@@ -1047,8 +1042,8 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
             @views WV[inds_ℓℓ′] .+= Gℓ_invΩ0 * (1 / Wscaling) * (-1) / ℓℓp1 * mat(
                 (4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′] +
-                 ∇²_sinθdθo[ℓ, ℓ′]) * ddrΔΩ_plus_ΔΩddr +
-                ∇²_sinθdθo[ℓ, ℓ′] * twoΔΩ_by_r
+                    ∇²_sinθdθo[ℓ, ℓ′]) * ddrΔΩ_plus_ΔΩddr
+                + ∇²_sinθdθo[ℓ, ℓ′] * twoΔΩ_by_r
             )
 
             if nfields === 3
@@ -1398,18 +1393,35 @@ function eigensystem_satisfy_filter(λ, v, M, MVcache, rtol = 1e-1)
     mul!(MVcache, M, v, 1 / λ, false)
     isapprox2(MVcache, v; rtol)
 end
-function sphericalharmonic_filter!(VWSinvsh, F, v, operators, Δl_cutoff = 7, power_cutoff = 0.9)
+
+function filterfields(coll, v, nparams; filterfieldpowercutoff = 1e-2)
+    filterfields = [coll.V]
+    Vpow = sum(abs2, @view v[1:nparams])
+    Wpow = sum(abs2, @view v[nparams .+ (1:nparams)])
+    Spow = sum(abs2, @view v[2nparams .+ (1:nparams)])
+
+    if Spow/Vpow > filterfieldpowercutoff
+        push!(filterfields, coll.S)
+    end
+
+    if Wpow/Vpow > filterfieldpowercutoff
+        push!(filterfields, coll.W)
+    end
+    return filterfields
+end
+
+function sphericalharmonic_filter!(VWSinvsh, F, v, operators,
+        Δl_cutoff = 7, power_cutoff = 0.9, filterfieldpowercutoff = 1e-2)
     eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
-    (; V, W) = VWSinvsh
     l_cutoff_ind = 1 + Δl_cutoff
-    # ensure that most of the power at the peak is below the cutoff
-    nθ = size(V, 2)
 
     flag = true
 
-    for X in (V, W)
-        X_lm_surface = @view X[end, :]
-        PV_frac = sum(abs2, @view X_lm_surface[1:l_cutoff_ind]) / sum(abs2, X_lm_surface)
+    (; nparams) = operators.radial_params
+    fields = filterfields(VWSinvsh, v, nparams; filterfieldpowercutoff)
+
+    for X in fields
+        PV_frac = sum(abs2, @view X[:, 1:l_cutoff_ind]) / sum(abs2, X)
         flag &= PV_frac > power_cutoff
     end
 
@@ -1418,22 +1430,28 @@ end
 
 function chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff = 7, n_power_cutoff = 0.9;
     nℓ = operators.radial_params.nℓ,
-    ℓmax = m + nℓ - 1,
-    Plcosθ = SphericalHarmonics.allocate_p(ℓmax))
+    Plcosθ = zeros(rnage(m, length=nℓ)),
+    filterfieldpowercutoff = 1e-2)
 
-    eigenfunction_n_theta!(VWSinv, F, v, m, operators; nℓ, ℓmax, Plcosθ)
-    (; V, W) = VWSinv
+    eigenfunction_n_theta!(VWSinv, F, v, m, operators; nℓ, Plcosθ)
 
+    (; V) = VWSinv
     n_cutoff_ind = 1 + n_cutoff
     # ensure that most of the power at the equator is below the cutoff
     nθ = size(V, 2)
     equator_ind = nθ÷2
 
+    Δθ_scan = div(nθ, 5)
+    rangescan = intersect(equator_ind .+ (-Δθ_scan:Δθ_scan), axes(V, 2))
+
     flag = true
 
-    for X in (V, W)
-        X_n_equator = @view X[:, equator_ind]
-        PV_frac = sum(abs2, @view X_n_equator[1:n_cutoff_ind]) / sum(abs2, X_n_equator)
+    (; nparams) = operators.radial_params
+    fields = filterfields(VWSinv, v, nparams; filterfieldpowercutoff)
+
+    for X in fields
+        Xrange = view(X, :, rangescan)
+        PV_frac = sum(abs2, @view X[1:n_cutoff_ind, rangescan]) / sum(abs2, X[:, rangescan])
         flag &= PV_frac > n_power_cutoff
     end
 
@@ -1444,15 +1462,17 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     θ_cutoff = deg2rad(75), equator_power_cutoff_frac = 0.3,
     rad_cutoff = 0.15, rad_power_cutoff_frac = 0.8;
     nℓ = operators.radial_params.nℓ,
-    ℓmax = m + nℓ - 1,
-    Plcosθ = SphericalHarmonics.allocate_p(ℓmax))
+    Plcosθ = zeros(range(m, length=nℓ)),
+    filterfieldpowercutoff = 1e-2)
 
-    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators; nℓ, ℓmax, Plcosθ)
-    (; V, W) = VWSinv
+    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators; nℓ, Plcosθ)
 
     eqfilter = true
 
-    for X in (V, W)
+    (; nparams) = operators.radial_params
+    fields = filterfields(VWSinv, v, nparams; filterfieldpowercutoff)
+
+    for X in fields
         peak_latprofile = @view X[end, :]
         θlowind = searchsortedfirst(θ, θ_cutoff)
         θhighind = searchsortedlast(θ, pi - θ_cutoff)
@@ -1472,9 +1492,7 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
         Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
         VWSinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
         θ_cutoff, equator_power_cutoff_frac, MVcache, eigen_rtol, VWSinvsh, F,
-        filters, rad_cutoff, rad_power_cutoff_frac) = additional_params
-
-    ℓmax = m + nℓ - 1
+        filters, rad_cutoff, rad_power_cutoff_frac, filterfieldpowercutoff) = additional_params
 
     if get(filters, :eigenvalue, true)
         eigenvalue_filter(λ, m;
@@ -1484,7 +1502,7 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
 
     if get(filters, :sphericalharmonic, true)
         sphericalharmonic_filter!(VWSinvsh, F, v, operators,
-            Δl_cutoff, Δl_power_cutoff) || return false
+            Δl_cutoff, Δl_power_cutoff, filterfieldpowercutoff) || return false
     end
 
     if get(filters, :boundarycondition, true)
@@ -1493,13 +1511,14 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
 
     if get(filters, :chebyshev, true)
         chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff,
-            n_power_cutoff; nℓ, ℓmax, Plcosθ) || return false
+            n_power_cutoff; nℓ, Plcosθ,filterfieldpowercutoff) || return false
     end
 
     if get(filters, :spatial, true)
         spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
             θ_cutoff, equator_power_cutoff_frac,
-            rad_cutoff, rad_power_cutoff_frac; nℓ, ℓmax, Plcosθ) || return false
+            rad_cutoff, rad_power_cutoff_frac; nℓ, Plcosθ,
+            filterfieldpowercutoff) || return false
     end
 
     if get(filters, :eigensystem_satisfy, true)
@@ -1527,9 +1546,7 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
 
     (; VWSinv, VWSinvsh, F) = allocate_field_caches(nr, nθ, nℓ)
 
-    ℓmax = m + nℓ - 1
-    Plcosθ = SphericalHarmonics.allocate_p(ℓmax)
-
+    Plcosθ = zeros(range(m, length=nℓ))
 
     return (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F)
 end
@@ -1554,6 +1571,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     equator_power_cutoff_frac = 0.3,
     rad_cutoff = 0.05,
     rad_power_cutoff_frac = 0.8,
+    filterfieldpowercutoff = 1e-2,
     eigenvalue_filter = true,
     sphericalharmonic_filter = true,
     chebyshev_filter = true,
@@ -1581,7 +1599,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
         VWSinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
         θ_cutoff, equator_power_cutoff_frac, MVcache,
         eigen_rtol, VWSinvsh, F, filters, rad_cutoff,
-        rad_power_cutoff_frac,
+        rad_power_cutoff_frac, filterfieldpowercutoff,
     )
 
     inds_bool = filterfn.(λ, eachcol(v), m, (M,), (operators,), (additional_params,))
@@ -1705,9 +1723,7 @@ end
 
 function invshtransform2!(VWSinv, VWS, m;
     nℓ = size(VWS.V, 2),
-    ℓmax = m + nℓ - 1,
-    Plcosθ = SphericalHarmonics.allocate_p(ℓmax)
-)
+    Plcosθ = zeros(range(m, length = nℓ)))
 
     V_r_lm = VWS.V
     W_r_lm = VWS.W
@@ -1723,9 +1739,9 @@ function invshtransform2!(VWSinv, VWS, m;
     S .= 0
 
     for (θind, θi) in enumerate(θ)
-        computePlmcostheta!(Plcosθ, θi, ℓmax, m, norm = SphericalHarmonics.Orthonormal())
+        collectPlm!(Plcosθ, cos(θi); m, norm = Val(:normalized))
         for (ℓind, ℓ) in enumerate(ℓs)
-            Plmcosθ = Plcosθ[(ℓ, m)]
+            Plmcosθ = Plcosθ[ℓ]
             for r_ind in axes(V, 1)
                 V[r_ind, θind] += V_r_lm[r_ind, ℓind] * Plmcosθ
                 W[r_ind, θind] += W_r_lm[r_ind, ℓind] * Plmcosθ
@@ -1739,12 +1755,10 @@ end
 
 function eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators;
     nℓ = operators.radial_params.nℓ,
-    ℓmax = m + nℓ - 1,
-    Plcosθ = SphericalHarmonics.allocate_p(ℓmax)
-)
+    Plcosθ = zeros(range(m, length=nℓ)))
 
     eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
-    invshtransform2!(VWSinv, VWSinvsh, m; nℓ, ℓmax, Plcosθ)
+    invshtransform2!(VWSinv, VWSinvsh, m; nℓ, Plcosθ)
 end
 
 function eigenfunction_realspace(v, m, operators)
@@ -1761,12 +1775,10 @@ end
 
 function eigenfunction_n_theta!(VWSinv, F, v, m, operators;
     nℓ = operators.radial_params.nℓ,
-    ℓmax = m + nℓ - 1,
-    Plcosθ = SphericalHarmonics.allocate_p(ℓmax)
-)
+    Plcosθ = zeros(range(m, length=nℓ)))
 
     VW = eigenfunction_cheby_ℓm_spectrum!(F, v, operators)
-    invshtransform2!(VWSinv, VW, m; nℓ, ℓmax, Plcosθ)
+    invshtransform2!(VWSinv, VW, m; nℓ, Plcosθ)
 end
 
 

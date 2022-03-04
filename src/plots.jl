@@ -170,8 +170,7 @@ function differential_rotation_spectrum(lam_rad, lam_solar, mr = axes(lam_rad, 1
     end
 end
 
-function eigenfunction(v, m, operators; field = :V, theory = false, f = figure(), kw...)
-    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m, operators)
+function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators; field = :V, theory = false, f = figure(), kw...)
     V = getproperty(VWSinv, field)::Matrix{ComplexF64}
     Vr = real(V)
     Vrmax = eignorm(Vr)
@@ -182,8 +181,13 @@ function eigenfunction(v, m, operators; field = :V, theory = false, f = figure()
     (; r) = coordinates
     r_frac = r ./ Rsun
     nθ = length(θ)
-    V_equator_depthprofile = @view Vr[:, nθ÷2]
-    r_max_ind = argmax(abs.(V_equator_depthprofile))
+    equator_ind = nθ÷2
+    Δθ_scan = div(nθ, 5)
+    rangescan = intersect(equator_ind .+ (-Δθ_scan:Δθ_scan), axes(V, 2))
+    ind_max = findmax(col -> maximum(real, col), eachcol(view(Vr, :, rangescan)))[2]
+    ind_max += first(rangescan) - 1
+    V_peak_depthprofile = @view Vr[:, ind_max]
+    r_max_ind = argmax(abs.(V_peak_depthprofile))
 
     spec = f.add_gridspec(3, 3)
 
@@ -210,23 +214,52 @@ function eigenfunction(v, m, operators; field = :V, theory = false, f = figure()
         axsurf.legend(loc = "best")
     end
 
-    axdepth.plot(V_equator_depthprofile, r_frac,
+    axdepth.axvline(0, ls="dotted", color="0.3")
+    axdepth.plot(V_peak_depthprofile, r_frac,
         color = "black",
     )
     axdepth.set_xlabel("Depth profile", fontsize = 11)
     axdepth.set_ylabel("Fractional radius", fontsize = 11)
     axdepth.yaxis.set_major_locator(ticker.MaxNLocator(4))
+    axdepth.xaxis.set_major_locator(ticker.MaxNLocator(2))
 
     axprofile.pcolormesh(θ, r_frac, Vr, cmap = "Greys", rasterized = true, shading = "auto")
-    axprofile.set_xlabel("colatitude (θ) [radians]", fontsize = 11)
+    xlabel = get(kw, :longxlabel, true) ? "colatitude (θ) [radians]" : "θ [radians]"
+    axprofile.set_xlabel(xlabel, fontsize = 11)
 
-    f.suptitle("Sectoral eigenfunction for m = $m")
+    if get(kw, :suptitle, true)
+        f.suptitle("Sectoral eigenfunction for m = $m")
+    end
 
     if !get(kw, :constrained_layout, false)
         f.tight_layout()
     end
     if get(kw, :save, false)
         savefig(joinpath(plotdir, "eigenfunction.eps"))
+    end
+end
+
+function eigenfunction(v::AbstractVector, m, operators; theory = false, f = figure(), kw...)
+    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m, operators)
+    eigenfunction(VWSinv, θ, m, operators; theory, f, kw...)
+end
+
+function eigenfunctions_all(v::AbstractVector, m, operators; theory = false, kw...)
+    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m, operators)
+    eigenfunctions_all(VWSinv, θ, m, operators; theory, kw...)
+end
+function eigenfunctions_all(VWSinv::NamedTuple, θ, m, operators; theory = false, kw...)
+    f = plt.figure(constrained_layout = true, figsize = (12, 4))
+    subfigs = f.subfigures(1, 3, wspace = 0.15, width_ratios = [1, 1, 1])
+    kw2 = Dict{Symbol, Any}(kw);
+    kw2[:constrained_layout] = true
+    kw2[:suptitle] = false
+    kw2[:longxlabel] = false
+    for (ind, field) in enumerate((:V, :W, :S))
+        eigenfunction(VWSinv, θ, m, operators;
+            field, theory, f = subfigs[ind],
+            constrained_layout = true, kw2...)
+        subfigs[ind].suptitle(string(field), x = 0.8)
     end
 end
 
@@ -248,11 +281,11 @@ function eignorm(v)
     abs(minval) > abs(maxval) ? minval : maxval
 end
 
-function multiple_eigenfunctions_m(λs::AbstractVector, vecs::AbstractVector,
+function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractVector,
         m, operators; f = figure(), kw...)
-    multiple_eigenfunctions_m(λs[m], vecs[m], m, operators; f, kw...)
+    multiple_eigenfunctions_surface_m(λs[m], vecs[m], m, operators; f, kw...)
 end
-function multiple_eigenfunctions_m(λs::AbstractVector, vecs::AbstractMatrix, m, operators; f = figure(), kw...)
+function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMatrix, m, operators; f = figure(), kw...)
     ax = f.add_subplot()
     ax.set_xlabel("colatitude (θ) [radians]", fontsize = 12)
     ax.set_ylabel("Angular profile", fontsize = 12)
@@ -297,7 +330,7 @@ function eigenfunctions_rossbyridge_all(λs, vs, m, operators; kw...)
     fig = plt.figure(constrained_layout = true, figsize = (8, 4))
     subfigs = fig.subfigures(1, 2, wspace = 0.15, width_ratios = [1, 1])
     eigenfunction_rossbyridge(λs, vs, m, operators; f = subfigs[1], constrained_layout = true)
-    multiple_eigenfunctions_m(λs, vs, m, operators; f = subfigs[2], constrained_layout = true)
+    multiple_eigenfunctions_surface_m(λs, vs, m, operators; f = subfigs[2], constrained_layout = true)
     if get(kw, :save, false)
         savefig(joinpath(plotdir, "eigenfunction_rossby_all.eps"))
     end
