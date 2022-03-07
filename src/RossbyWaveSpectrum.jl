@@ -299,7 +299,7 @@ function associatedlegendretransform_matrices(nℓ, m)
     associatedlegendretransform_matrices(nℓ, m, costheta, w)
 end
 
-function constraintmatrix(operators)
+function constraintmatrix(operators; entropy_outer_boundary = :neumann)
     (; radial_params) = operators
     (; nr, r_in, r_out, nℓ, Δr, nparams) = radial_params
 
@@ -341,17 +341,21 @@ function constraintmatrix(operators)
         MWno[2, n] = 1
     end
 
+    # constraints on S
     for n = 0:nr-1
         # inner boundary
         # zero Dirichlet
         MSno[1, n] = (-1)^n
         # outer boundary
-        # zero Dirichlet
-        # MSno[2, n] = 1
-        # zero Neumann
-        MSno[2, n] = n^2
-        # dS/dr = S/r
-        # MSno[2, n] = n^2 - (1/2) * Δr / r_out
+        if entropy_outer_boundary == :dirichlet
+            # zero Dirichlet
+            MSno[2, n] = 1
+        elseif entropy_outer_boundary == :neumann
+            # zero Neumann
+            MSno[2, n] = n^2
+        else
+            error("Invalid boundary condition on entropy")
+        end
     end
 
     indstart = 1
@@ -1419,7 +1423,7 @@ function eigensystem_satisfy_filter(λ, v, M, MVcache, rtol = 1e-1)
     isapprox2(MVcache, v; rtol)
 end
 
-function filterfields(coll, v, nparams; filterfieldpowercutoff = 1e-2)
+function filterfields(coll, v, nparams; filterfieldpowercutoff = 1e-4)
     Vpow = sum(abs2, @view v[1:nparams])
     Wpow = sum(abs2, @view v[nparams .+ (1:nparams)])
     Spow = sum(abs2, @view v[2nparams .+ (1:nparams)])
@@ -1440,7 +1444,7 @@ function filterfields(coll, v, nparams; filterfieldpowercutoff = 1e-2)
 end
 
 function sphericalharmonic_filter!(VWSinvsh, F, v, operators,
-        Δl_cutoff = 7, power_cutoff = 0.9, filterfieldpowercutoff = 1e-2)
+        Δl_cutoff = 7, power_cutoff = 0.9, filterfieldpowercutoff = 1e-4)
     eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
     l_cutoff_ind = 1 + Δl_cutoff
 
@@ -1460,7 +1464,7 @@ end
 function chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff = 7, n_power_cutoff = 0.9;
     nℓ = operators.radial_params.nℓ,
     Plcosθ = zeros(rnage(m, length=nℓ)),
-    filterfieldpowercutoff = 1e-2)
+    filterfieldpowercutoff = 1e-4)
 
     eigenfunction_n_theta!(VWSinv, F, v, m, operators; nℓ, Plcosθ)
 
@@ -1492,7 +1496,7 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     rad_cutoff = 0.15, rad_power_cutoff_frac = 0.8;
     nℓ = operators.radial_params.nℓ,
     Plcosθ = zeros(range(m, length=nℓ)),
-    filterfieldpowercutoff = 1e-2)
+    filterfieldpowercutoff = 1e-4)
 
     (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators; nℓ, Plcosθ)
 
@@ -1524,34 +1528,58 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
         filters, rad_cutoff, rad_power_cutoff_frac, filterfieldpowercutoff) = additional_params
 
     if get(filters, :eigenvalue, true)
-        eigenvalue_filter(λ, m;
+        f1 = eigenvalue_filter(λ, m;
             eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
-            ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff) || return false
+            ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff)
+        # if 0.2 < real(λ) < 0.22
+        #     @show λ, f1
+        # end
+        f1 || return false
     end
 
     if get(filters, :sphericalharmonic, true)
-        sphericalharmonic_filter!(VWSinvsh, F, v, operators,
-            Δl_cutoff, Δl_power_cutoff, filterfieldpowercutoff) || return false
+        f2 = sphericalharmonic_filter!(VWSinvsh, F, v, operators,
+            Δl_cutoff, Δl_power_cutoff, filterfieldpowercutoff)
+        # if 0.2 < real(λ) < 0.22
+        #     @show λ, f2
+        # end
+        f2 || return false
     end
 
     if get(filters, :boundarycondition, true)
-        boundary_condition_filter(v, BC, BCVcache, atol_constraint) || return false
+        f3 = boundary_condition_filter(v, BC, BCVcache, atol_constraint)
+        # if 0.2 < real(λ) < 0.22
+        #     @show λ, f3
+        # end
+        f3 || return false
     end
 
     if get(filters, :chebyshev, true)
-        chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff,
-            n_power_cutoff; nℓ, Plcosθ,filterfieldpowercutoff) || return false
+        f4 = chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff,
+            n_power_cutoff; nℓ, Plcosθ,filterfieldpowercutoff)
+        # if 0.2 < real(λ) < 0.22
+        #     @show λ, f4
+        # end
+        f4 || return false
     end
 
     if get(filters, :spatial, true)
-        spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
+        f5 = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
             θ_cutoff, equator_power_cutoff_frac,
             rad_cutoff, rad_power_cutoff_frac; nℓ, Plcosθ,
-            filterfieldpowercutoff) || return false
+            filterfieldpowercutoff)
+        # if 0.2 < real(λ) < 0.22
+        #     @show λ, f5
+        # end
+        f5 || return false
     end
 
     if get(filters, :eigensystem_satisfy, true)
-        eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol) || return false
+        f6 = eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
+        # if 0.2 < real(λ) < 0.22
+        #     @show λ, f6
+        # end
+        f6 || return false
     end
 
     return true
@@ -1600,7 +1628,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     equator_power_cutoff_frac = 0.3,
     rad_cutoff = 0.05,
     rad_power_cutoff_frac = 0.8,
-    filterfieldpowercutoff = 1e-2,
+    filterfieldpowercutoff = 1e-4,
     eigenvalue_filter = true,
     sphericalharmonic_filter = true,
     chebyshev_filter = true,
