@@ -24,6 +24,13 @@ df(f, r) = df(f)(r)
 d2f(f) = df(df(f))
 d2f(f, r) = df(df(f))(r)
 
+# define an alias to avoid clashes in the REPL with Chebyshev from ApproxFun
+const ChebyshevT = SpecialPolynomials.Chebyshev
+chebyshevT(n) = ChebyshevT([zeros(n); 1])
+chebyshevT(n, x) = chebyshevT(n)(x)
+chebyshevU(n) = ChebyshevU([zeros(n); 1])
+chebyshevU(n, x) = chebyshevU(n)(x)
+
 function chebyfwd(f, r_in, r_out, nr, scalefactor = 5)
     w = FastTransforms.chebyshevpoints(scalefactor * nr)
     r_mid = (r_in + r_out)/2
@@ -72,7 +79,7 @@ const P11norm = -2/√3
     @testset "V terms" begin
         function ddr_term(r, n)
             r̄_r = r̄(r)
-            Unm1 = ChebyshevU([zeros(n-1); 1])(r̄_r)
+            Unm1 = chebyshevU(n-1, r̄_r)
             a * n * Unm1
         end
 
@@ -85,7 +92,7 @@ const P11norm = -2/√3
 
         function onebyrTn_term(r, n)
             r̄_r = r̄(r)
-            Tn = SpecialPolynomials.Chebyshev([zeros(n); 1])(r̄_r)
+            Tn = chebyshevT(n, r̄_r)
             1/r * Tn
         end
 
@@ -99,7 +106,7 @@ const P11norm = -2/√3
         Vn1 = P11norm
         function WVtermfn(r, n)
             r̄_r = r̄(r)
-            Tn = SpecialPolynomials.Chebyshev([zeros(n); 1])(r̄_r)
+            Tn = chebyshevT(n, r̄_r)
             2√(1/15) * (ddr_term(r, n) - 2onebyrTn_term(r, n)) / Wscaling
         end
         @testset "WV term" begin
@@ -124,8 +131,8 @@ const P11norm = -2/√3
     @testset "W terms" begin
         function Drρterm(r, n)
             r̄_r = r̄(r)
-            Tn = SpecialPolynomials.Chebyshev([zeros(n); 1])(r̄_r)
-            Unm1 = ChebyshevU([zeros(n-1); 1])(r̄_r)
+            Tn = chebyshevT(n, r̄_r)
+            Unm1 = chebyshevU(n-1, r̄_r)
             a * n * Unm1 + ηρ_cheby(r̄_r) * Tn
         end
 
@@ -138,7 +145,7 @@ const P11norm = -2/√3
 
         function VWtermfn(r, n)
             r̄_r = r̄(r)
-            Tn = SpecialPolynomials.Chebyshev([zeros(n); 1])(r̄_r)
+            Tn = chebyshevT(n, r̄_r)
             -2√(1/15) * (Drρterm(r, n) - 2/r * Tn) * Wscaling
         end
 
@@ -158,13 +165,13 @@ const P11norm = -2/√3
 
         function ddrDrρTn_term(r, n)
             r̄_r = r̄(r)
-            Tn = SpecialPolynomials.Chebyshev([zeros(n); 1])(r̄_r)
-            Unm1 = ChebyshevU([zeros(n-1); 1])(r̄_r)
+            Tn = chebyshevT(n, r̄_r)
+            Unm1 = chebyshevU(n-1, r̄_r)
             ηr = ηρ_cheby(r̄_r)
             η′r = ddrηρ(r̄_r)
             T1 = a * n * Unm1 * ηr + Tn * η′r
             if n > 1
-                Unm2 = ChebyshevU([zeros(n-2); 1])(r̄_r)
+                Unm2 = chebyshevU(n-2, r̄_r)
                 return a^2 * n * (-n*Unm2 + (n-1)*Unm1*r̄_r)/(r̄_r^2 - 1) + T1
             elseif n == 1
                 return T1
@@ -182,7 +189,7 @@ const P11norm = -2/√3
 
         function onebyr2Tn_term(r, n)
             r̄_r = r̄(r)
-            Tn = SpecialPolynomials.Chebyshev([zeros(n); 1])(r̄_r)
+            Tn = chebyshevT(n, r̄_r)
             1/r^2 * Tn
         end
 
@@ -195,7 +202,7 @@ const P11norm = -2/√3
 
         function onebyr2_Iplusrηρ_Tn_term(r, n)
             r̄_r = r̄(r)
-            Tn = SpecialPolynomials.Chebyshev([zeros(n); 1])(r̄_r)
+            Tn = chebyshevT(n, r̄_r)
             ηr = ηρ_cheby(r̄_r)
             1/r^2 * (1 + ηr * r) * Tn
         end
@@ -252,7 +259,7 @@ end
 
         function VVterm1fn(r, n)
             r̄_r = r̄(r)
-            T = Chebyshev([zeros(n); 1])
+            T = chebyshevT(n)
             Tn = T(r̄_r)
             d2Tn = a^2 * d2f(T)(r̄_r)
             Vn1 * (d2Tn - 2 / r^2 * Tn)
@@ -260,8 +267,8 @@ end
 
         function VVterm3fn(r, n)
             r̄_r = r̄(r)
-            Tn = Chebyshev([zeros(n); 1])(r̄_r)
-            Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄_r)
+            Tn = chebyshevT(n, r̄_r)
+            Unm1 = chebyshevU(n-1, r̄_r)
             anr = a * n * r
             Vn1 * (-2Tn + anr * Unm1) * ηρ_cheby(r̄_r) / r
         end
@@ -279,6 +286,11 @@ end
                 V_explicit = chebyfwdnr(r -> VVtermfn(r, n))
                 @test V_op ≈ V_explicit rtol = 1e-5
             end
+        end
+    end
+    @testset "W terms" begin
+        function WWtermfn(r, n)
+
         end
     end
 end
@@ -302,35 +314,98 @@ end
                 @test matrix_block(Mr, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
             end
         end
-
-        # @testset "solar constant and constant" begin
-        #     Ms = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m,
-        #         rotation_profile = :solar_constant; operators)
-
-        #     @testset for colind in 1:nfields, rowind in 1:nfields
-        #         if rowind == 2 && colind ∈ (1, 2)
-        #             @test_broken matrix_block(Ms, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
-        #         else
-        #             @test matrix_block(Ms, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
-        #         end
-        #     end
-        # end
     end
 
-    # nr, nℓ = 40, 2
-    # nparams = nr * nℓ
-    # m = 1
-    # operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-    # (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators
-    # (; r, r_chebyshev) = coordinates
-    # (; r_mid, Δr) = radial_params
-    # (; Tcrfwd) = transforms
-    # (; Iℓ) = identities
-    # (; ddr, d2dr2) = diff_operators
-    # (; onebyr_cheby, r2_cheby, r_cheby) = rad_terms
+    @testset "radial differential rotation" begin
+        nr, nℓ = 30, 2
+        nparams = nr * nℓ
+        m = 1
+        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
+        (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators
+        (; r, r_chebyshev) = coordinates
+        (; nfields, ν) = operators.constants
+        r_mid = radial_params.r_mid::Float64
+        Δr = radial_params.Δr::Float64
+        a = 1 / (Δr / 2)
+        b = -r_mid / (Δr / 2)
+        r̄(r) = clamp(a * r + b, -1.0, 1.0)
+        (; Tcrfwd) = transforms
+        (; Iℓ) = identities
+        (; ddr, d2dr2, DDr) = diff_operators
+        (; onebyr_cheby, r2_cheby, r_cheby, ηρ_cheby) = rad_terms
+        (; r_in, r_out) = operators.radial_params
+        (; mat) = operators
+        chebyfwdnr(f, scalefactor = 5) = chebyfwd(f, r_in, r_out, nr, scalefactor)
 
-    # r̄(r) = (r - r_mid::Float64) / (Δr::Float64 / 2)
+        ℓ = 2
+        ℓℓp1 = ℓ*(ℓ+1)
+        ℓ′ = 1
+        cosθ21 = 1/√5
+        sinθdθ21 = 1/√5
+        ∇²_sinθdθ21 = -ℓℓp1 * sinθdθ21
 
-    # cosθ = RossbyWaveSpectrum.costheta_operator(nℓ, m)
-    # sinθdθ = RossbyWaveSpectrum.sintheta_dtheta_operator(nℓ, m)
+        (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) =
+            RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
+                    nℓ, m, r; operators, rotation_profile = :linear)
+
+        ΔΩ_by_r = ΔΩ * onebyr_cheby
+        ΔΩ_DDr = ΔΩ * DDr
+        DDr_min_2byr = DDr - 2onebyr_cheby
+        ΔΩ_DDr_min_2byr = ΔΩ * DDr_min_2byr
+        ddrΔΩ_plus_ΔΩddr = ddrΔΩ + ΔΩ * ddr
+        twoΔΩ_by_r = 2ΔΩ * onebyr_cheby
+
+        (; VWterm, WVterm) = RossbyWaveSpectrum.radial_differential_rotation_terms_inner(
+                    (ℓ, ℓ′), (cosθ21, sinθdθ21, ∇²_sinθdθ21),
+                    (ΔΩ, ddrΔΩ, Ω0),
+                    (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r);
+                    operators)
+
+        @testset "WV terms" begin
+            Vn1 = P11norm
+
+            @testset "ddrΔΩ_plus_ΔΩddr" begin
+                function ddrΔΩ_plus_ΔΩddr_term(r, n)
+                    r̄_r = r̄(r)
+                    Tn = chebyshevT(n, r̄_r)
+                    Unm1 = chebyshevU(n-1, r̄_r)
+                    ddrΔΩ(r̄_r) * Tn + ΔΩ(r̄_r) * a * n * Unm1
+                end
+                @testset for n in 1:nr-1
+                    ddrΔΩ_plus_ΔΩddr_op = mat(ddrΔΩ_plus_ΔΩddr)[:, n + 1]
+                    ddrΔΩ_plus_ΔΩddr_explicit = chebyfwdnr(r -> ddrΔΩ_plus_ΔΩddr_term(r, n))
+                    @test ddrΔΩ_plus_ΔΩddr_op ≈ ddrΔΩ_plus_ΔΩddr_explicit rtol = 1e-8
+                end
+            end
+
+            @testset "twoΔΩ_by_r" begin
+                function twoΔΩ_by_r_term(r, n)
+                    r̄_r = r̄(r)
+                    Tn = chebyshevT(n, r̄_r)
+                    2ΔΩ(r̄_r)/r * Tn
+                end
+                @testset for n in 1:nr-1
+                    twoΔΩ_by_r_op = mat(twoΔΩ_by_r)[:, n + 1]
+                    twoΔΩ_by_r_explicit = chebyfwdnr(r -> twoΔΩ_by_r_term(r, n))
+                    @test twoΔΩ_by_r_op ≈ twoΔΩ_by_r_explicit rtol = 1e-4
+                end
+            end
+
+            @testset "WVterms" begin
+                function WVterms(r, n)
+                    r̄_r = r̄(r)
+                    Tn = chebyshevT(n, r̄_r)
+                    Unm1 = chebyshevU(n-1, r̄_r)
+                    2√(1/15) * (ΔΩ(r̄_r) * (a * n * Unm1 - 2/r * Tn)  + ddrΔΩ(r̄_r) * Tn) / Ω0
+                end
+                @testset for n in 1:nr-1
+                    WV_op = Vn1 * mat(WVterm)[:, n + 1]
+                    WV_explicit = chebyfwdnr(r -> WVterms(r, n))
+                    @test WV_op ≈ WV_explicit rtol = 1e-4
+                end
+            end
+        end
+        @testset "WW terms" begin
+        end
+    end
 end

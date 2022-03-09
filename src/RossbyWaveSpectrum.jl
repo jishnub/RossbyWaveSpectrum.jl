@@ -978,6 +978,32 @@ function radial_differential_rotation_profile_derivatives(nℓ, m, r;
     (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, drΔΩ_real, d2dr2ΔΩ_real, ddrΔΩ, d2dr2ΔΩ)
 end
 
+function radial_differential_rotation_terms_inner((ℓ, ℓ′),
+    (cosθ_ℓℓ′, sinθdθ_ℓℓ′, ∇²_sinθdθ_ℓℓ′),
+    (ΔΩ, ddrΔΩ, Ω0),
+    (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r);
+    operators)
+
+    (; DDr, ddr) = operators.diff_operators
+    (; onebyr_cheby) = operators.rad_terms
+
+    ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
+    ℓℓp1 = ℓ * (ℓ + 1)
+    two_over_ℓℓp1 = 2/ℓℓp1
+
+    VWterm = -two_over_ℓℓp1 *
+            (1 / Ω0) * (ℓ′ℓ′p1 * cosθ_ℓℓ′ * ΔΩ_DDr_min_2byr +
+            sinθdθ_ℓℓ′ * ((ΔΩ_DDr - ℓ′ℓ′p1 * ΔΩ_by_r) - ℓ′ℓ′p1 / 2 * ddrΔΩ))
+
+
+    WVterm = -1/ℓℓp1 * (1/Ω0) * (
+                (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * ddrΔΩ_plus_ΔΩddr
+                + ∇²_sinθdθ_ℓℓ′ * twoΔΩ_by_r
+            )
+
+    (; VWterm, WVterm)
+end
+
 function radial_differential_rotation_terms!(M, nr, nℓ, m;
     operators = radial_operators(nr, nℓ),
     rotation_profile = :constant)
@@ -1055,15 +1081,16 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-            VW[inds_ℓℓ′] .-= Wscaling * two_over_ℓℓp1 *
-                             (1 / Ω0) * mat(ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * ΔΩ_DDr_min_2byr +
-                                            sinθdθo[ℓ, ℓ′] * ((ΔΩ_DDr - ℓ′ℓ′p1 * ΔΩ_by_r) - ℓ′ℓ′p1 / 2 * ddrΔΩ))
 
-            @views WV[inds_ℓℓ′] .+= Gℓ_invΩ0 * (1 / Wscaling) * (-1) / ℓℓp1 * mat(
-                (4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′] +
-                    ∇²_sinθdθo[ℓ, ℓ′]) * ddrΔΩ_plus_ΔΩddr
-                + ∇²_sinθdθo[ℓ, ℓ′] * twoΔΩ_by_r
-            )
+            (; VWterm, WVterm) = radial_differential_rotation_terms_inner(
+                    (ℓ, ℓ′), (cosθo[ℓ, ℓ′], sinθdθo[ℓ, ℓ′], ∇²_sinθdθo[ℓ, ℓ′]),
+                    (ΔΩ, ddrΔΩ, Ω0),
+                    (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r);
+                    operators)
+
+            @views VW[inds_ℓℓ′] .+= Wscaling * mat(VWterm)
+
+            @views WV[inds_ℓℓ′] .+= Gℓ * (1 / Wscaling) * mat(WVterm)
 
             if nfields === 3
                 @. SV[inds_ℓℓ′] -= (1 / ε) * cosθo[ℓ, ℓ′] * 2m * ddrΔΩ_over_gM
