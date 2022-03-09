@@ -141,34 +141,24 @@ function chebyshevpoly!(Tc, x, n = length(Tc))
     Tc
 end
 
-function UltrasphericaltoChebyshev(ncheby, order)
-    M = zeros(Float64, ncheby, ncheby)
-    Mo = OffsetArray(M, OffsetArrays.Origin(0))
-    v = zeros(ncheby)
-    vo = OffsetArray(v, OffsetArrays.Origin(0))
-    for n in 0:ncheby-1
-        vo[n] = 1
-        if n > 0
-            vo[n-1] = 0
+function chebyshevmatrix(f::Fun, nr)::Matrix{Float64}
+    chebyshevmatrix(ApproxFun.Multiplication(f), nr)
+end
+
+function chebyshevmatrix(A, nr)::Matrix{Float64}
+    B = A:ApproxFun.Chebyshev()
+    scalefactor = 2
+    BM = B[1:scalefactor*nr, 1:scalefactor*nr]
+    C = zeros(eltype(BM), nr, nr)
+    B_rangespace = rangespace(B)
+    if B_rangespace isa ApproxFun.Ultraspherical
+        order = B_rangespace.order
+        for colind in axes(C, 2)
+            col = @view BM[:, colind]
+            C[:, colind] = @view FastTransforms.ultra2cheb(col, order)[axes(C, 1)]
         end
-        Mo[0:ncheby-1, n] .= FastTransforms.ultra2cheb(v, order)
-    end
-    return M
-end
-
-function chebyshevmatrix(f::Fun, r_chebyshev, psop)::Matrix{Float64}
-    fr = f.(r_chebyshev)
-    psop(fr)
-end
-
-function chebyshevmatrix(A, r_chebyshev, psop = nothing)::Matrix{Float64}
-    n = length(r_chebyshev)
-    B = A:Chebyshev()
-    BM = B[1:n, 1:n]
-    C = zeros(eltype(BM), size(BM))
-    order = (rangespace(B)::Ultraspherical).order
-    for (colind, col) in enumerate(eachcol(BM))
-        C[:, colind] = FastTransforms.ultra2cheb(col, order)
+    elseif B_rangespace isa ApproxFun.Chebyshev
+        C .= @view BM[axes(C)...]
     end
     return C
 end
@@ -558,7 +548,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
 
     onebyr = 1 ./ r
     onebyr_cheby = (1 / r_cheby)::typeof(r_cheby)
-    onebyr2_cheby = (1 / r2_cheby)::typeof(r_cheby)
+    onebyr2_cheby = (onebyr_cheby*onebyr_cheby)::typeof(r_cheby)
     DDr_minus_2byr = (DDr - 2onebyr_cheby)::Tplus
     ddr_plus_2byr = (ddr + 2onebyr_cheby)::Tplus
 
@@ -588,7 +578,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     ν = 1e10
     ν = ν / Ω0
 
-    mat = x -> chebyshevmatrix(x, r_chebyshev, pseudospectralop_radial)
+    mat = x -> chebyshevmatrix(x, nr)
 
     # matrix forms of operators
     onebyr_chebyM = mat(onebyr_cheby)
@@ -690,8 +680,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     (; ε, Wscaling) = operators.constants.scalings
 
-    onefun = Fun(Chebyshev(), [1])
-    onebyr2_IplusrηρM = mat((onefun + ηρ_cheby * r_cheby) * onebyr2_cheby)
+    onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby)
 
     onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp)
     d2dr2_plus_ddr_lnρT_ddr = d2dr2 + ddr_lnρT * ddr
@@ -723,8 +712,9 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-            @. Cℓ′ = DDrM - ℓ′ℓ′p1 * onebyr_chebyM
-            @. VWℓℓ′ = Wscaling * (-2) / ℓℓp1 * (ℓ′ℓ′p1 * DDr_minus_2byrM * cosθ[ℓ, ℓ′] + Cℓ′ * sinθdθ[ℓ, ℓ′])
+
+            @. VWℓℓ′ = Wscaling * (-2) / ℓℓp1 * (ℓ′ℓ′p1 * DDr_minus_2byrM * cosθ[ℓ, ℓ′] + 
+                    (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθ[ℓ, ℓ′])
 
             @. Cℓ′ = ddrM - ℓ′ℓ′p1 * onebyr_chebyM
             mul!(GℓCℓ′, Gℓ, Cℓ′)
@@ -1525,60 +1515,41 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
         Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
         VWSinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
         θ_cutoff, equator_power_cutoff_frac, MVcache, eigen_rtol, VWSinvsh, F,
-        filters, rad_cutoff, rad_power_cutoff_frac, filterfieldpowercutoff) = additional_params
+        filters, filterfieldpowercutoff) = additional_params
 
     if get(filters, :eigenvalue, true)
         f1 = eigenvalue_filter(λ, m;
             eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
             ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff)
-        # if 0.2 < real(λ) < 0.22
-        #     @show λ, f1
-        # end
         f1 || return false
     end
 
     if get(filters, :sphericalharmonic, true)
         f2 = sphericalharmonic_filter!(VWSinvsh, F, v, operators,
             Δl_cutoff, Δl_power_cutoff, filterfieldpowercutoff)
-        # if 0.2 < real(λ) < 0.22
-        #     @show λ, f2
-        # end
         f2 || return false
     end
 
     if get(filters, :boundarycondition, true)
         f3 = boundary_condition_filter(v, BC, BCVcache, atol_constraint)
-        # if 0.2 < real(λ) < 0.22
-        #     @show λ, f3
-        # end
         f3 || return false
     end
 
     if get(filters, :chebyshev, true)
         f4 = chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff,
             n_power_cutoff; nℓ, Plcosθ,filterfieldpowercutoff)
-        # if 0.2 < real(λ) < 0.22
-        #     @show λ, f4
-        # end
         f4 || return false
     end
 
     if get(filters, :spatial, true)
         f5 = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
-            θ_cutoff, equator_power_cutoff_frac,
-            rad_cutoff, rad_power_cutoff_frac; nℓ, Plcosθ,
+            θ_cutoff, equator_power_cutoff_frac; nℓ, Plcosθ,
             filterfieldpowercutoff)
-        # if 0.2 < real(λ) < 0.22
-        #     @show λ, f5
-        # end
         f5 || return false
     end
 
     if get(filters, :eigensystem_satisfy, true)
         f6 = eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
-        # if 0.2 < real(λ) < 0.22
-        #     @show λ, f6
-        # end
         f6 || return false
     end
 
@@ -1626,8 +1597,6 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     ΔΩ_by_Ω_high = ΔΩ_by_Ω_low,
     θ_cutoff = deg2rad(75),
     equator_power_cutoff_frac = 0.3,
-    rad_cutoff = 0.05,
-    rad_power_cutoff_frac = 0.8,
     filterfieldpowercutoff = 1e-4,
     eigenvalue_filter = true,
     sphericalharmonic_filter = true,
@@ -1655,8 +1624,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
         Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
         VWSinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
         θ_cutoff, equator_power_cutoff_frac, MVcache,
-        eigen_rtol, VWSinvsh, F, filters, rad_cutoff,
-        rad_power_cutoff_frac, filterfieldpowercutoff,
+        eigen_rtol, VWSinvsh, F, filters, filterfieldpowercutoff,
     )
 
     inds_bool = filterfn.(λ, eachcol(v), m, (M,), (operators,), (additional_params,))
