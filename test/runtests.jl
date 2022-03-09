@@ -1,5 +1,4 @@
-using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun, kron2
-using ApproxFun
+using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun
 using Test
 using LinearAlgebra
 using OffsetArrays
@@ -25,9 +24,6 @@ df(f, r) = df(f)(r)
 d2f(f) = df(df(f))
 d2f(f, r) = df(df(f))(r)
 
-r̄(r, a, b) = clamp(a * r + b, -1.0, 1.0)
-r̄tor(r̄, a, b) = (r̄ - b)/a
-
 function chebyfwd(f, r_in, r_out, nr, scalefactor = 5)
     w = FastTransforms.chebyshevpoints(scalefactor * nr)
     r_mid = (r_in + r_out)/2
@@ -36,6 +32,8 @@ function chebyfwd(f, r_in, r_out, nr, scalefactor = 5)
     v = FastTransforms.chebyshevtransform(f.(r_fine))
     v[1:nr]
 end
+
+const P11norm = -2/√3
 
 @testset "uniform rotation" begin
     nr, nℓ = 50, 2
@@ -50,13 +48,14 @@ end
     Δr = radial_params.Δr::Float64
     a = 1 / (Δr / 2)
     b = -r_mid / (Δr / 2)
-    r̄(r) = r̄(r, a, b)
+    r̄(r) = clamp(a * r + b, -1.0, 1.0)
     (; Tcrfwd) = operators.transforms
     (; ddr, d2dr2, DDr) = operators.diff_operators
-    (; DDrM, ddrDDrM, onebyr2_chebyM) = operators.diff_operator_matrices
+    (; DDrM, ddrDDrM, onebyr2_chebyM, ddrM, onebyr_chebyM) = operators.diff_operator_matrices
     (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby) = operators.rad_terms
     (; r_in, r_out) = operators.radial_params
-
+    (; mat) = operators
+ 
     @test isapprox(onebyr_cheby(-1), 1/r_in, rtol=1e-4)
     @test isapprox(onebyr_cheby(1), 1/r_out, rtol=1e-4)
     @test isapprox(onebyr2_cheby(-1), 1/r_in^2, rtol=1e-4)
@@ -68,11 +67,58 @@ end
 
     M = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m; operators)
 
-    nmax_check = nr - ApproxFun.bandwidths(ApproxFun.Multiplication(ηρ_cheby):ApproxFun.Chebyshev())[1] - 1
-
-    chebyfwdnr(f, n, scalefactor = 5) = chebyfwd(r -> f(r, n), r_in, r_out, nr, scalefactor)
+    chebyfwdnr(f, scalefactor = 5) = chebyfwd(f, r_in, r_out, nr, scalefactor)
 
     @testset "V terms" begin
+        function ddr_term(r, n)
+            r̄_r = r̄(r)
+            Unm1 = ChebyshevU([zeros(n-1); 1])(r̄_r)
+            a * n * Unm1
+        end
+
+        @testset "ddr" begin
+            @testset for n in 1:nr - 1
+                ddr_Tn_analytical = chebyfwdnr(r -> ddr_term(r,n))
+                @test ddrM[:, n+1] ≈ ddr_Tn_analytical rtol=1e-8
+            end
+        end
+
+        function onebyrTn_term(r, n)
+            r̄_r = r̄(r)
+            Tn = SpecialPolynomials.Chebyshev([zeros(n); 1])(r̄_r)
+            1/r * Tn
+        end
+
+        @testset "onebyrTn" begin
+            @testset for n in 1:nr - 1
+                onebyr_Tn_analytical = chebyfwdnr(r -> onebyrTn_term(r,n))
+                @test onebyr_chebyM[:, n+1] ≈ onebyr_Tn_analytical rtol=1e-4
+            end
+        end
+
+        Vn1 = P11norm
+        function WVtermfn(r, n)
+            r̄_r = r̄(r)
+            Tn = SpecialPolynomials.Chebyshev([zeros(n); 1])(r̄_r)
+            2√(1/15) * (ddr_term(r, n) - 2onebyrTn_term(r, n)) / Wscaling
+        end
+        @testset "WV term" begin
+            ℓ = 2
+            ℓ′ = 1
+            m = 1
+            ℓℓp1 = ℓ*(ℓ+1)
+            ℓ′ℓ′p1 = ℓ′*(ℓ′+1)
+
+            Cℓ′ = ddrM - ℓ′ℓ′p1 * onebyr_chebyM
+            C1 = ddrM - 2onebyr_chebyM
+            WV = -2 / ℓℓp1 * (ℓ′ℓ′p1 * C1 * (1/√5) + Cℓ′ * (1/√5)) / Wscaling
+
+            @testset for n in 1:nr-1
+                WV_op_times_W = Vn1 * real(WV[:, n+1])
+                WV_times_W_explicit = chebyfwdnr(r -> WVtermfn(r,n))
+                @test WV_op_times_W ≈ WV_times_W_explicit rtol = 1e-5
+            end
+        end
     end
 
     @testset "W terms" begin
@@ -85,7 +131,7 @@ end
 
         @testset "Drρ" begin
             @testset for n in 1:nr - 1
-                Drρ_Tn_analytical = chebyfwdnr(Drρterm, n)
+                Drρ_Tn_analytical = chebyfwdnr(r -> Drρterm(r,n))
                 @test DDrM[:, n+1] ≈ Drρ_Tn_analytical rtol=1e-8
             end
         end
@@ -96,7 +142,7 @@ end
             -2√(1/15) * (Drρterm(r, n) - 2/r * Tn) * Wscaling
         end
 
-        Wn1 = -2√(1/ 3)
+        Wn1 = P11norm
 
         @testset "VW term" begin
             VW = RossbyWaveSpectrum.matrix_block(M, 1, 2, nfields)
@@ -105,7 +151,7 @@ end
 
             @testset for n in 1:nr-1
                 VW_op_times_W = Wn1 * real(VW[W1_inds, n+1])
-                VW_times_W_explicit = chebyfwdnr(VWtermfn, n)
+                VW_times_W_explicit = chebyfwdnr(r -> VWtermfn(r, n))
                 @test VW_op_times_W ≈ -VW_times_W_explicit rtol = 1e-6
             end
         end
@@ -129,7 +175,7 @@ end
 
         @testset "ddrDrρTn" begin
             @testset for n in 1:nr - 1
-                ddrDrρ_Tn_analytical = chebyfwdnr(ddrDrρTn_term, n)
+                ddrDrρ_Tn_analytical = chebyfwdnr(r -> ddrDrρTn_term(r, n))
                 @test ddrDDrM[:, n+1] ≈ ddrDrρ_Tn_analytical rtol=1e-8
             end
         end
@@ -142,7 +188,7 @@ end
 
         @testset "onebyr2Tn" begin
             @testset for n in 1:nr - 1
-                onebyr2_Tn_analytical = chebyfwdnr(onebyr2Tn_term, n)
+                onebyr2_Tn_analytical = chebyfwdnr(r -> onebyr2Tn_term(r, n))
                 @test onebyr2_chebyM[:, n+1] ≈ onebyr2_Tn_analytical rtol=1e-4
             end
         end
@@ -156,7 +202,7 @@ end
 
         @testset "onebyr2_IplusrηρM" begin
             @testset for n in 1:nr - 1
-                onebyr2_Iplusrηρ_Tn_analytical = chebyfwdnr(onebyr2_Iplusrηρ_Tn_term, n)
+                onebyr2_Iplusrηρ_Tn_analytical = chebyfwdnr(r -> onebyr2_Iplusrηρ_Tn_term(r, n))
                 @test onebyr2_IplusrηρM[:, n+1] ≈ onebyr2_Iplusrηρ_Tn_analytical rtol=1e-4
             end
         end
@@ -171,23 +217,17 @@ end
             ℓℓp1 = ℓ*(ℓ+1)
             WW = 2m / ℓℓp1 * (ddrDDrM - onebyr2_IplusrηρM * ℓℓp1)
 
-            W1_inds = (1:nr)
-
             @testset for n in 1:nr-1
-                WW_op_times_W = Wn1 * real(WW[W1_inds, n+1])
-                WW_times_W_explicit = chebyfwdnr(WWtermfn, n)
+                WW_op_times_W = Wn1 * real(WW[:, n+1])
+                WW_times_W_explicit = chebyfwdnr(r -> WWtermfn(r, n))
                 @test WW_op_times_W ≈ WW_times_W_explicit rtol = 1e-4
             end
         end
     end
-
-    @testset "S term" begin
-    end
-
 end
 
 @testset "viscosity" begin
-    nr, nℓ = 40, 2
+    nr, nℓ = 50, 2
     nparams = nr * nℓ
     m = 1
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
@@ -203,36 +243,43 @@ end
     (; Iℓ) = identities
     (; ddr, d2dr2) = diff_operators
     (; onebyr_cheby, r2_cheby, r_cheby, ηρ_cheby) = rad_terms
+    (; r_in, r_out) = operators.radial_params
 
-    function VVterm1fn(r, n)
-        r̄_r = r̄(r)
-        T = Chebyshev([zeros(n); 1])
-        Tn = T(r̄_r)
-        d2Tn = a^2 * d2f(T)(r̄_r)
-        -√(2 / 3) * (d2Tn - 2 / r^2 * Tn)
-    end
+    chebyfwdnr(f, scalefactor = 5) = chebyfwd(f, r_in, r_out, nr, scalefactor)
 
-    function VVterm3fn(r, n)
-        r̄_r = r̄(r)
-        Tn = Chebyshev([zeros(n); 1])(r̄_r)
-        Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄_r)
-        anr = a * n * r
-        -√(2 / 3) * (-2Tn + anr * Unm1) * ηρ_cheby(r̄_r) / r
-    end
+    @testset "V terms" begin
+        Vn1 = P11norm
 
-    VVtermfn(r, n) = VVterm1fn(r, n) + VVterm3fn(r, n)
+        function VVterm1fn(r, n)
+            r̄_r = r̄(r)
+            T = Chebyshev([zeros(n); 1])
+            Tn = T(r̄_r)
+            d2Tn = a^2 * d2f(T)(r̄_r)
+            Vn1 * (d2Tn - 2 / r^2 * Tn)
+        end
 
-    M = zeros(ComplexF64, nfields * nparams, nfields * nparams)
-    RossbyWaveSpectrum.viscosity_terms!(M, nr, nℓ, m; operators)
-    VV = RossbyWaveSpectrum.matrix_block(M, 1, 1, nfields)
+        function VVterm3fn(r, n)
+            r̄_r = r̄(r)
+            Tn = Chebyshev([zeros(n); 1])(r̄_r)
+            Unm1 = ChebyshevU([zeros(n - 1); 1])(r̄_r)
+            anr = a * n * r
+            Vn1 * (-2Tn + anr * Unm1) * ηρ_cheby(r̄_r) / r
+        end
 
-    V1_inds = 1:nr
+        VVtermfn(r, n) = VVterm1fn(r, n) + VVterm3fn(r, n)
 
-    @testset for n in 1:10
-        V_cheby = [zeros(n); -√(2 / 3); zeros(nparams - (n + 1))]
-        V_op = real((VV*V_cheby)[V1_inds] ./ (-im * ν))
-        V_explicit = Tcrfwd * VVtermfn.(r, n)
-        @test V_op ≈ V_explicit rtol = 1e-3
+        M = zeros(ComplexF64, nfields * nparams, nfields * nparams)
+        RossbyWaveSpectrum.viscosity_terms!(M, nr, nℓ, m; operators)
+
+        @testset "VV terms" begin
+            VV = RossbyWaveSpectrum.matrix_block(M, 1, 1, nfields)
+            V1_inds = 1:nr
+            @testset for n in 1:nr-1
+                V_op = Vn1 * real(VV[V1_inds, n + 1] ./ (-im * ν))
+                V_explicit = chebyfwdnr(r -> VVtermfn(r, n))
+                @test V_op ≈ V_explicit rtol = 1e-5
+            end
+        end
     end
 end
 

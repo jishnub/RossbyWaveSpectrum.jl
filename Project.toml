@@ -46,8 +46,9 @@ SpecialPolynomials = "0.3"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 SpecialPolynomials = "a25cea48-d430-424a-8ee7-0d3ad3742e9e"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "SpecialPolynomials", "Test"]
+test = ["Aqua", "ForwardDiff", "SpecialPolynomials", "Test"]
