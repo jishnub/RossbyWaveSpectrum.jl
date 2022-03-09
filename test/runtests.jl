@@ -28,7 +28,7 @@ function chebyfwd(f, r_in, r_out, nr, scalefactor = 5)
     w = FastTransforms.chebyshevpoints(scalefactor * nr)
     r_mid = (r_in + r_out)/2
     Δr = r_out - r_in
-    r_fine = (Δr/2) * w .+ r_mid
+    r_fine = @. (Δr/2) * w + r_mid
     v = FastTransforms.chebyshevtransform(f.(r_fine))
     v[1:nr]
 end
@@ -36,7 +36,7 @@ end
 const P11norm = -2/√3
 
 @testset "uniform rotation" begin
-    nr, nℓ = 50, 2
+    nr, nℓ = 30, 2
     nparams = nr * nℓ
     m = 1
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
@@ -55,7 +55,7 @@ const P11norm = -2/√3
     (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby) = operators.rad_terms
     (; r_in, r_out) = operators.radial_params
     (; mat) = operators
- 
+
     @test isapprox(onebyr_cheby(-1), 1/r_in, rtol=1e-4)
     @test isapprox(onebyr_cheby(1), 1/r_out, rtol=1e-4)
     @test isapprox(onebyr2_cheby(-1), 1/r_in^2, rtol=1e-4)
@@ -227,7 +227,7 @@ const P11norm = -2/√3
 end
 
 @testset "viscosity" begin
-    nr, nℓ = 50, 2
+    nr, nℓ = 30, 2
     nparams = nr * nℓ
     m = 1
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
@@ -285,7 +285,7 @@ end
 
 @testset "differential rotation" begin
     @testset "compare with constant" begin
-        nr, nℓ = 20, 2
+        nr, nℓ = 30, 2
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
         (; nfields) = operators.constants
 
