@@ -480,17 +480,21 @@ function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun)
     T_modelS = reverse(ModelS[r_inds, 3])
     ρ_modelS = reverse(ModelS[r_inds, 5])
     logρ_modelS = log.(ρ_modelS)
+    logT_modelS = log.(T_modelS)
 
     sρ = Spline1D(r_modelS, ρ_modelS)
-
     slogρ = Spline1D(r_modelS, logρ_modelS, s = sum(abs2, logρ_modelS) * 1e-5)
     ddrlogρ = Dierckx.derivative(slogρ, r_modelS)
     sηρ = Spline1D(r_modelS, ddrlogρ, s = sum(abs2, ddrlogρ) * 1e-5)
+
     sT = Spline1D(r_modelS, T_modelS)
+    slogT = Spline1D(r_modelS, logT_modelS, s = sum(abs2, logT_modelS) * 1e-5)
+    ddrlogT = Dierckx.derivative(slogT, r_modelS)
+    sηT = Spline1D(r_modelS, ddrlogT, s = sum(abs2, ddrlogρ) * 1e-5)
 
     g_modelS = @. G * Msun * q_modelS / r_modelS^2
     sg = Spline1D(r_modelS, g_modelS, s = sum(abs2, g_modelS))
-    (; sρ, sT, sg, sηρ)
+    (; sρ, sT, sg, sηρ, sηT)
 end
 
 struct SpectralOperatorForm
@@ -525,7 +529,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     r_cheby = Fun(Chebyshev(), [r_mid, Δr / 2])
     r2_cheby = r_cheby * r_cheby
 
-    (; sρ, sg, sηρ, sT) = read_solar_model(; r_in, r_out)
+    (; sρ, sg, sηρ, sT, sηT) = read_solar_model(; r_in, r_out)
 
     T = sT.(r)
 
@@ -537,7 +541,9 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     # density stratification
     ρ = sρ.(r)
     ηρ = sηρ.(r)
-    ηρ_cheby = ApproxFun.chop(Fun(sηρ ∘ r_cheby, Chebyshev()), 1e-3)::TFunSpline
+    ηρ_cheby = ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev()), 1e-3)::TFunSpline
+    ηT = sηT.(r)
+    ηT_cheby = ApproxFun.chop(Fun(sηT ∘ r_cheby, ApproxFun.Chebyshev()), 1e-2)::TFunSpline
 
     DDr = (ddr + ηρ_cheby)::Tplus
     rDDr = (r_cheby * DDr)::Tmul
@@ -557,7 +563,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     g_cheby = Fun(sg ∘ r_cheby, Chebyshev())::TFunSpline
 
     κ = 3e10
-    ddr_lnρT = ddr * Fun(Chebyshev(), Tcrfwd * log.(ρ .* T))
+    ddr_lnρT = ηρ_cheby + ηT_cheby
 
     γ = 1.64
     cp = 1.7e8
@@ -598,11 +604,15 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     constants = (; κ, ν, scalings, nfields, Ω0)
     identities = (; Ir, Iℓ)
     coordinates = (; r, r_chebyshev)
+
     transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
-    rad_terms = (; onebyr, onebyr_cheby, ηρ, ηρ_cheby, onebyr2_cheby,
+
+    rad_terms = (; onebyr, onebyr_cheby, ηρ, ηρ_cheby, ηT_cheby, onebyr2_cheby,
         ddr_lnρT, ddr_S0_by_cp, g, g_cheby, r_cheby, r2_cheby, κ, twoηρ_by_r)
+
     diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr,
         ddr, d2dr2, r2d2dr2, ddrDDr, ddr_plus_2byr)
+
     diff_operator_matrices = (; onebyr_chebyM, onebyr2_chebyM, DDrM,
         ddrM, d2dr2M, ddrDDrM, rddrM, twoηρ_by_rM, ddr_plus_2byrM,
         ddr_minus_2byrM, DDr_minus_2byrM,
@@ -638,20 +648,22 @@ function uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
     return M
 end
 
-function uniform_rotation_matrix_terms_outer((ℓ, m), nchebyr, (ddrDDrM, onebyr2_IplusrηρM, gM), Ω0)
+function uniform_rotation_matrix_terms_outer((ℓ, m), nchebyr,
+    (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M), Ω0)
     ℓℓp1 = ℓ*(ℓ+1)
 
     WWterm = @. 2m / ℓℓp1 * (ddrDDrM - onebyr2_IplusrηρM * ℓℓp1)
     WSterm = @. (-1 / Ω0) * gM
+    SSterm = @. (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M) / Ω0
 
-    (; WWterm, WSterm)
+    (; WWterm, WSterm, SSterm)
 end
 
 function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     (; nfields) = operators.constants
     (; nchebyr, r_out) = operators.radial_params
     (; ddr, d2dr2) = operators.diff_operators
-    (; onebyr2_cheby, ddr_lnρT, κ,
+    (; onebyr2_cheby, onebyr_cheby, ddr_lnρT, κ,
         ηρ_cheby, r_cheby, ddr_S0_by_cp) = operators.rad_terms
     (; ddrDDrM, ddrM, DDrM,
         onebyr_chebyM, grddrM, gM, ddr_minus_2byrM,
@@ -690,8 +702,8 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby)
 
     onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp)
-    d2dr2_plus_ddr_lnρT_ddr = d2dr2 + ddr_lnρT * ddr
-    κ_d2dr2_plus_ddr_lnρT_ddrM = mat(κ * d2dr2_plus_ddr_lnρT_ddr)
+    ∇r2_plus_ddr_lnρT_ddr = d2dr2 + 2onebyr_cheby*ddr + ddr_lnρT * ddr
+    κ_∇r2_plus_ddr_lnρT_ddrM = chebyshevmatrix(κ * ∇r2_plus_ddr_lnρT_ddr, nr, 3)
     κ_by_r2M = mat(κ * onebyr2_cheby)
 
     for ℓ in ℓs
@@ -704,8 +716,10 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
         diaginds_ℓ = blockinds((m, nr), ℓ)
 
-        (; WWterm, WSterm) = uniform_rotation_matrix_terms_outer(
-                (ℓ, m), nchebyr, (ddrDDrM, onebyr2_IplusrηρM, gM), Ω0)
+        (; WWterm, WSterm, SSterm) = uniform_rotation_matrix_terms_outer(
+                (ℓ, m), nchebyr,
+                (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M),
+                Ω0)
 
         VV[diaginds_ℓ] .= 2m/ℓℓp1 * I(nchebyr)
 
@@ -717,7 +731,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
         if nfields === 3
             @. SW[diaginds_ℓ] = (Wscaling / ε) * (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
-            @. SS[diaginds_ℓ] = -im / Ω0 * (κ_d2dr2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M)
+            @. SS[diaginds_ℓ] = -im * SSterm
         end
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)

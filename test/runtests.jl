@@ -59,7 +59,8 @@ const P11norm = -2/√3
     (; Tcrfwd) = operators.transforms
     (; ddr, d2dr2, DDr) = operators.diff_operators
     (; DDrM, ddrDDrM, onebyr2_chebyM, ddrM, onebyr_chebyM, gM) = operators.diff_operator_matrices
-    (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby, g_cheby) = operators.rad_terms
+    (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby, ηT_cheby,
+            g_cheby, ddr_lnρT, κ) = operators.rad_terms
     (; r_in, r_out, nchebyr) = operators.radial_params
     (; mat) = operators
 
@@ -69,6 +70,10 @@ const P11norm = -2/√3
     @test isapprox(onebyr2_cheby(1), 1/r_out^2, rtol=1e-4)
 
     onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby)
+
+    ∇r2_plus_ddr_lnρT_ddr = d2dr2 + 2onebyr_cheby*ddr + ddr_lnρT * ddr
+    κ_∇r2_plus_ddr_lnρT_ddrM = RossbyWaveSpectrum.chebyshevmatrix(κ * ∇r2_plus_ddr_lnρT_ddr, nr, 3)
+    κ_by_r2M = mat(κ * onebyr2_cheby)
 
     ddrηρ = ddr * ηρ_cheby
 
@@ -80,8 +85,10 @@ const P11norm = -2/√3
 
     ℓ′ = 1
     # for these terms ℓ = ℓ′ (= 1 in this case)
-    (; WWterm, WSterm) = RossbyWaveSpectrum.uniform_rotation_matrix_terms_outer(
-                        (ℓ′, m), nchebyr, (ddrDDrM, onebyr2_IplusrηρM, gM), Ω0)
+    (; WWterm, WSterm, SSterm) = RossbyWaveSpectrum.uniform_rotation_matrix_terms_outer(
+                        (ℓ′, m), nchebyr,
+                        (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M),
+                        Ω0)
 
     @testset "V terms" begin
         function ddr_term(r, n)
@@ -150,15 +157,15 @@ const P11norm = -2/√3
             end
         end
 
-        function VWterm_fn(r, n)
-            r̄_r = r̄(r)
-            Tn = chebyshevT(n, r̄_r)
-            -2√(1/15) * (Drρ_fn(r, n) - 2/r * Tn) * Wscaling
-        end
-
         Wn1 = P11norm
 
         @testset "VW term" begin
+            function VWterm_fn(r, n)
+                r̄_r = r̄(r)
+                Tn = chebyshevT(n, r̄_r)
+                -2√(1/15) * (Drρ_fn(r, n) - 2/r * Tn) * Wscaling
+            end
+
             VW = RossbyWaveSpectrum.matrix_block(M, 1, 2, nfields)
 
             W1_inds = nr .+ (1:nr)
@@ -246,6 +253,63 @@ const P11norm = -2/√3
                 WStermM_op = WSterm[:, n+1]
                 WStermM_analytical = chebyfwdnr(r -> WSterm_fn(r, n))
                 @test WStermM_op ≈ WStermM_analytical rtol=1e-8
+            end
+        end
+        @testset "SS term" begin
+            function ddr_lnρT_fn(r, n)
+                r̄_r = r̄(r)
+                Tn = chebyshevT(n, r̄_r)
+                ηρr = ηρ_cheby(r̄_r)
+                ηTr = ηT_cheby(r̄_r)
+                (ηρr + ηTr) * Tn
+            end
+            ddr_lnρTM = mat(ddr_lnρT)
+            @testset for n in 1:nr-1
+                ddr_lnρT_op = ddr_lnρTM[:, n+1]
+                ddr_lnρT_analytical = chebyfwdnr(r -> ddr_lnρT_fn(r, n))
+                @test ddr_lnρT_op ≈ ddr_lnρT_analytical rtol=1e-8
+            end
+            function ddr_lnρT_ddr_fn(r, n)
+                r̄_r = r̄(r)
+                Unm1 = n >= 1 ? chebyshevU(n-1, r̄_r) : 0.0
+                ηρr = ηρ_cheby(r̄_r)
+                ηTr = ηT_cheby(r̄_r)
+                (ηρr + ηTr) * a * n * Unm1
+            end
+            ddr_lnρT_ddrM = RossbyWaveSpectrum.chebyshevmatrix(ddr_lnρT * ddr, nr, 3)
+            @testset for n in 1:nr-1
+                ddr_lnρT_ddr_op = ddr_lnρT_ddrM[:, n+1]
+                ddr_lnρT_ddr_analytical = chebyfwdnr(r -> ddr_lnρT_ddr_fn(r, n))
+                @test ddr_lnρT_ddr_op ≈ ddr_lnρT_ddr_analytical rtol=1e-8
+            end
+
+            function onebyr_ddr_fn(r, n)
+                r̄_r = r̄(r)
+                Unm1 = n >= 1 ? chebyshevU(n-1, r̄_r) : 0.0
+                1/r * a * n * Unm1
+            end
+            onebyr_ddrM = mat(onebyr_cheby * ddr)
+            @testset for n in 1:nr-1
+                onebyr_ddr_op = onebyr_ddrM[:, n+1]
+                onebyr_ddr_analytical = chebyfwdnr(r -> onebyr_ddr_fn(r, n))
+                @test onebyr_ddr_op ≈ onebyr_ddr_analytical rtol=1e-4
+            end
+
+            function SSterm_fn(r, n)
+                r̄_r = r̄(r)
+                Tn = chebyshevT(n, r̄_r)
+                Unm1 = n >= 1 ? chebyshevU(n-1, r̄_r) : 0.0
+                Unm2 = n >= 2 ? chebyshevU(n-2, r̄_r) : 0.0
+                ηρr = ηρ_cheby(r̄_r)
+                ηTr = ηT_cheby(r̄_r)
+                f = a^2 * n * ((n-1)*r̄_r*Unm1 - n*Unm2)/(r̄_r^2 - 1) +
+                    2/r^2 * (a*n*r*Unm1 - Tn) + a*n*Unm1*(ηρr + ηTr)
+                κ/Ω0 * f
+            end
+            @testset for n in 1:nr-1
+                SStermM_op = SSterm[:, n+1]
+                SStermM_analytical = chebyfwdnr(r -> SSterm_fn(r, n))
+                @test SStermM_op ≈ SStermM_analytical rtol=1e-4
             end
         end
     end
