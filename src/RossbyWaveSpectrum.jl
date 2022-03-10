@@ -568,7 +568,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     γ = 1.64
     cp = 1.7e8
     δ_superadiabatic = superadiabaticity.(r; r_out)
-    ddr_S0_by_cp = Fun(Chebyshev(), Tcrfwd * @. γ * δ_superadiabatic * ηρ / cp)
+    ddr_S0_by_cp = ApproxFun.chop(Fun(ApproxFun.Chebyshev(), Tcrfwd * @. γ * δ_superadiabatic * ηρ / cp), 1e-3)
 
     Ir = I(nchebyr)
     Iℓ = I(nℓ)
@@ -649,14 +649,16 @@ function uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
 end
 
 function uniform_rotation_matrix_terms_outer((ℓ, m), nchebyr,
-    (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M), Ω0)
+    (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
+        onebyr2_cheby_ddr_S0_by_cpM), Ω0)
     ℓℓp1 = ℓ*(ℓ+1)
 
     WWterm = @. 2m / ℓℓp1 * (ddrDDrM - onebyr2_IplusrηρM * ℓℓp1)
     WSterm = @. (-1 / Ω0) * gM
+    SWterm = @. (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
     SSterm = @. (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M) / Ω0
 
-    (; WWterm, WSterm, SSterm)
+    (; WWterm, WSterm, SWterm, SSterm)
 end
 
 function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
@@ -716,9 +718,10 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
         diaginds_ℓ = blockinds((m, nr), ℓ)
 
-        (; WWterm, WSterm, SSterm) = uniform_rotation_matrix_terms_outer(
+        (; WWterm, WSterm, SSterm, SWterm) = uniform_rotation_matrix_terms_outer(
                 (ℓ, m), nchebyr,
-                (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M),
+                (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
+                    onebyr2_cheby_ddr_S0_by_cpM),
                 Ω0)
 
         VV[diaginds_ℓ] .= 2m/ℓℓp1 * I(nchebyr)
@@ -730,7 +733,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         end
 
         if nfields === 3
-            @. SW[diaginds_ℓ] = (Wscaling / ε) * (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
+            @. SW[diaginds_ℓ] = (Wscaling / ε) * SWterm
             @. SS[diaginds_ℓ] = -im * SSterm
         end
 

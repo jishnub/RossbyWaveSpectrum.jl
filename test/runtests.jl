@@ -60,7 +60,7 @@ const P11norm = -2/√3
     (; ddr, d2dr2, DDr) = operators.diff_operators
     (; DDrM, ddrDDrM, onebyr2_chebyM, ddrM, onebyr_chebyM, gM) = operators.diff_operator_matrices
     (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby, ηT_cheby,
-            g_cheby, ddr_lnρT, κ) = operators.rad_terms
+            g_cheby, ddr_lnρT, κ, ddr_S0_by_cp) = operators.rad_terms
     (; r_in, r_out, nchebyr) = operators.radial_params
     (; mat) = operators
 
@@ -74,6 +74,7 @@ const P11norm = -2/√3
     ∇r2_plus_ddr_lnρT_ddr = d2dr2 + 2onebyr_cheby*ddr + ddr_lnρT * ddr
     κ_∇r2_plus_ddr_lnρT_ddrM = RossbyWaveSpectrum.chebyshevmatrix(κ * ∇r2_plus_ddr_lnρT_ddr, nr, 3)
     κ_by_r2M = mat(κ * onebyr2_cheby)
+    onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp)
 
     ddrηρ = ddr * ηρ_cheby
 
@@ -87,43 +88,45 @@ const P11norm = -2/√3
     # for these terms ℓ = ℓ′ (= 1 in this case)
     (; WWterm, WSterm, SSterm) = RossbyWaveSpectrum.uniform_rotation_matrix_terms_outer(
                         (ℓ′, m), nchebyr,
-                        (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M),
+                        (ddrDDrM, onebyr2_IplusrηρM, gM,
+                            κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M, onebyr2_cheby_ddr_S0_by_cpM),
                         Ω0)
 
     @testset "V terms" begin
-        function ddr_term(r, n)
-            r̄_r = r̄(r)
-            Unm1 = chebyshevU(n-1, r̄_r)
-            a * n * Unm1
-        end
-
-        @testset "ddr" begin
-            @testset for n in 1:nr - 1
-                ddr_Tn_analytical = chebyfwdnr(r -> ddr_term(r,n))
-                @test ddrM[:, n+1] ≈ ddr_Tn_analytical rtol=1e-8
-            end
-        end
-
-        function onebyrTn_term(r, n)
-            r̄_r = r̄(r)
-            Tn = chebyshevT(n, r̄_r)
-            1/r * Tn
-        end
-
-        @testset "onebyrTn" begin
-            @testset for n in 1:nr - 1
-                onebyr_Tn_analytical = chebyfwdnr(r -> onebyrTn_term(r,n))
-                @test onebyr_chebyM[:, n+1] ≈ onebyr_Tn_analytical rtol=1e-4
-            end
-        end
-
-        Vn1 = P11norm
-        function WVtermfn(r, n)
-            r̄_r = r̄(r)
-            Tn = chebyshevT(n, r̄_r)
-            2√(1/15) * (ddr_term(r, n) - 2onebyrTn_term(r, n)) / Wscaling
-        end
         @testset "WV term" begin
+            function ddr_term(r, n)
+                r̄_r = r̄(r)
+                Unm1 = chebyshevU(n-1, r̄_r)
+                a * n * Unm1
+            end
+
+            @testset "ddr" begin
+                @testset for n in 1:nr - 1
+                    ddr_Tn_analytical = chebyfwdnr(r -> ddr_term(r,n))
+                    @test ddrM[:, n+1] ≈ ddr_Tn_analytical rtol=1e-8
+                end
+            end
+
+            function onebyrTn_term(r, n)
+                r̄_r = r̄(r)
+                Tn = chebyshevT(n, r̄_r)
+                1/r * Tn
+            end
+
+            @testset "onebyrTn" begin
+                @testset for n in 1:nr - 1
+                    onebyr_Tn_analytical = chebyfwdnr(r -> onebyrTn_term(r,n))
+                    @test onebyr_chebyM[:, n+1] ≈ onebyr_Tn_analytical rtol=1e-4
+                end
+            end
+
+            Vn1 = P11norm
+            function WVtermfn(r, n)
+                r̄_r = r̄(r)
+                Tn = chebyshevT(n, r̄_r)
+                2√(1/15) * (ddr_term(r, n) - 2onebyrTn_term(r, n)) / Wscaling
+            end
+
             ℓ = 2
             ℓ′ = 1
             m = 1
@@ -143,23 +146,23 @@ const P11norm = -2/√3
     end
 
     @testset "W terms" begin
-        function Drρ_fn(r, n)
-            r̄_r = r̄(r)
-            Tn = chebyshevT(n, r̄_r)
-            Unm1 = chebyshevU(n-1, r̄_r)
-            a * n * Unm1 + ηρ_cheby(r̄_r) * Tn
-        end
-
-        @testset "Drρ" begin
-            @testset for n in 1:nr - 1
-                Drρ_Tn_analytical = chebyfwdnr(r -> Drρ_fn(r,n))
-                @test DDrM[:, n+1] ≈ Drρ_Tn_analytical rtol=1e-8
-            end
-        end
-
         Wn1 = P11norm
 
         @testset "VW term" begin
+            function Drρ_fn(r, n)
+                r̄_r = r̄(r)
+                Tn = chebyshevT(n, r̄_r)
+                Unm1 = chebyshevU(n-1, r̄_r)
+                a * n * Unm1 + ηρ_cheby(r̄_r) * Tn
+            end
+
+            @testset "Drρ" begin
+                @testset for n in 1:nr - 1
+                    Drρ_Tn_analytical = chebyfwdnr(r -> Drρ_fn(r,n))
+                    @test DDrM[:, n+1] ≈ Drρ_Tn_analytical rtol=1e-8
+                end
+            end
+
             function VWterm_fn(r, n)
                 r̄_r = r̄(r)
                 Tn = chebyshevT(n, r̄_r)
@@ -177,67 +180,79 @@ const P11norm = -2/√3
             end
         end
 
-        function ddrDrρTn_fn(r, n)
-            r̄_r = r̄(r)
-            Tn = chebyshevT(n, r̄_r)
-            Unm1 = chebyshevU(n-1, r̄_r)
-            ηr = ηρ_cheby(r̄_r)
-            η′r = ddrηρ(r̄_r)
-            T1 = a * n * Unm1 * ηr + Tn * η′r
-            if n > 1
-                Unm2 = chebyshevU(n-2, r̄_r)
-                return a^2 * n * (-n*Unm2 + (n-1)*Unm1*r̄_r)/(r̄_r^2 - 1) + T1
-            elseif n == 1
-                return T1
-            else
-                error("invalid n")
-            end
-        end
-
-        @testset "ddrDrρTn" begin
-            @testset for n in 1:nr - 1
-                ddrDrρ_Tn_analytical = chebyfwdnr(r -> ddrDrρTn_fn(r, n))
-                @test ddrDDrM[:, n+1] ≈ ddrDrρ_Tn_analytical rtol=1e-8
-            end
-        end
-
-        function onebyr2Tn_fn(r, n)
-            r̄_r = r̄(r)
-            Tn = chebyshevT(n, r̄_r)
-            1/r^2 * Tn
-        end
-
-        @testset "onebyr2Tn" begin
-            @testset for n in 1:nr - 1
-                onebyr2_Tn_analytical = chebyfwdnr(r -> onebyr2Tn_fn(r, n))
-                @test onebyr2_chebyM[:, n+1] ≈ onebyr2_Tn_analytical rtol=1e-4
-            end
-        end
-
-        function onebyr2_Iplusrηρ_Tn_fn(r, n)
-            r̄_r = r̄(r)
-            Tn = chebyshevT(n, r̄_r)
-            ηr = ηρ_cheby(r̄_r)
-            1/r^2 * (1 + ηr * r) * Tn
-        end
-
-        @testset "onebyr2_IplusrηρM" begin
-            @testset for n in 1:nr - 1
-                onebyr2_Iplusrηρ_Tn_analytical = chebyfwdnr(r -> onebyr2_Iplusrηρ_Tn_fn(r, n))
-                @test onebyr2_IplusrηρM[:, n+1] ≈ onebyr2_Iplusrηρ_Tn_analytical rtol=1e-4
-            end
-        end
-
-        function WWterm_fn(r, n)
-            ℓℓp1 = 2
-            ddrDrρTn_fn(r, n) - ℓℓp1 * onebyr2_Iplusrηρ_Tn_fn(r, n)
-        end
-
         @testset "WW term" begin
+            function ddrDrρTn_fn(r, n)
+                r̄_r = r̄(r)
+                Tn = chebyshevT(n, r̄_r)
+                Unm1 = chebyshevU(n-1, r̄_r)
+                ηr = ηρ_cheby(r̄_r)
+                η′r = ddrηρ(r̄_r)
+                T1 = a * n * Unm1 * ηr + Tn * η′r
+                if n > 1
+                    Unm2 = chebyshevU(n-2, r̄_r)
+                    return a^2 * n * (-n*Unm2 + (n-1)*Unm1*r̄_r)/(r̄_r^2 - 1) + T1
+                elseif n == 1
+                    return T1
+                else
+                    error("invalid n")
+                end
+            end
+
+            @testset "ddrDrρTn" begin
+                @testset for n in 1:nr - 1
+                    ddrDrρ_Tn_analytical = chebyfwdnr(r -> ddrDrρTn_fn(r, n))
+                    @test ddrDDrM[:, n+1] ≈ ddrDrρ_Tn_analytical rtol=1e-8
+                end
+            end
+
+            function onebyr2Tn_fn(r, n)
+                r̄_r = r̄(r)
+                Tn = chebyshevT(n, r̄_r)
+                1/r^2 * Tn
+            end
+
+            @testset "onebyr2Tn" begin
+                @testset for n in 1:nr - 1
+                    onebyr2_Tn_analytical = chebyfwdnr(r -> onebyr2Tn_fn(r, n))
+                    @test onebyr2_chebyM[:, n+1] ≈ onebyr2_Tn_analytical rtol=1e-4
+                end
+            end
+
+            function onebyr2_Iplusrηρ_Tn_fn(r, n)
+                r̄_r = r̄(r)
+                Tn = chebyshevT(n, r̄_r)
+                ηr = ηρ_cheby(r̄_r)
+                1/r^2 * (1 + ηr * r) * Tn
+            end
+
+            @testset "onebyr2_IplusrηρM" begin
+                @testset for n in 1:nr - 1
+                    onebyr2_Iplusrηρ_Tn_analytical = chebyfwdnr(r -> onebyr2_Iplusrηρ_Tn_fn(r, n))
+                    @test onebyr2_IplusrηρM[:, n+1] ≈ onebyr2_Iplusrηρ_Tn_analytical rtol=1e-4
+                end
+            end
+
+            function WWterm_fn(r, n)
+                ℓℓp1 = 2
+                ddrDrρTn_fn(r, n) - ℓℓp1 * onebyr2_Iplusrηρ_Tn_fn(r, n)
+            end
             @testset for n in 1:nr-1
                 WW_op_times_W = WWterm[:, n+1]
                 WW_times_W_explicit = chebyfwdnr(r -> WWterm_fn(r, n))
                 @test WW_op_times_W ≈ WW_times_W_explicit rtol = 1e-4
+            end
+        end
+
+        @testset "SW term" begin
+            function onebyr2_ddr_S0_by_cp_fn(r, n)
+                r̄_r = r̄(r)
+                Tn = chebyshevT(n, r̄_r)
+                1/r^2 * ddr_S0_by_cp(r̄_r) * Tn
+            end
+            @testset for n in 1:nr-1
+                onebyr2_ddr_S0_by_cp_op = onebyr2_cheby_ddr_S0_by_cpM[:, n+1]
+                onebyr2_ddr_S0_by_cp_explicit = chebyfwdnr(r -> onebyr2_ddr_S0_by_cp_fn(r, n))
+                @test onebyr2_ddr_S0_by_cp_op ≈ onebyr2_ddr_S0_by_cp_explicit rtol = 1e-4
             end
         end
     end
