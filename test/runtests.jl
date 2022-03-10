@@ -331,8 +331,8 @@ end
         r̄(r) = clamp(a * r + b, -1.0, 1.0)
         (; Tcrfwd) = transforms
         (; Iℓ) = identities
-        (; ddr, d2dr2, DDr) = diff_operators
-        (; onebyr_cheby, r2_cheby, r_cheby, ηρ_cheby) = rad_terms
+        (; ddr, d2dr2, DDr, ddrDDr) = diff_operators
+        (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby) = rad_terms
         (; r_in, r_out) = operators.radial_params
         (; mat) = operators
         chebyfwdnr(f, scalefactor = 5) = chebyfwd(f, r_in, r_out, nr, scalefactor)
@@ -344,68 +344,156 @@ end
         sinθdθ21 = 1/√5
         ∇²_sinθdθ21 = -ℓℓp1 * sinθdθ21
 
-        (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) =
-            RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
-                    nℓ, m, r; operators, rotation_profile = :linear)
+        @testset for rotation_profile in [:constant, :linear, :solar_equator]
 
-        ΔΩ_by_r = ΔΩ * onebyr_cheby
-        ΔΩ_DDr = ΔΩ * DDr
-        DDr_min_2byr = DDr - 2onebyr_cheby
-        ΔΩ_DDr_min_2byr = ΔΩ * DDr_min_2byr
-        ddrΔΩ_plus_ΔΩddr = ddrΔΩ + ΔΩ * ddr
-        twoΔΩ_by_r = 2ΔΩ * onebyr_cheby
+            (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) =
+                RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
+                        nℓ, m, r; operators, rotation_profile)
 
-        (; VWterm, WVterm) = RossbyWaveSpectrum.radial_differential_rotation_terms_inner(
-                    (ℓ, ℓ′), (cosθ21, sinθdθ21, ∇²_sinθdθ21),
-                    (ΔΩ, ddrΔΩ, Ω0),
-                    (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r);
-                    operators)
+            ΔΩ_by_r = ΔΩ * onebyr_cheby
+            ΔΩ_DDr = ΔΩ * DDr
+            DDr_min_2byr = DDr - 2onebyr_cheby
+            ΔΩ_DDr_min_2byr = ΔΩ * DDr_min_2byr
+            ddrΔΩ_plus_ΔΩddr = ddrΔΩ + ΔΩ * ddr
+            twoΔΩ_by_r = 2ΔΩ * onebyr_cheby
 
-        @testset "WV terms" begin
-            Vn1 = P11norm
+            (; VWterm, WVterm) = RossbyWaveSpectrum.radial_differential_rotation_terms_inner(
+                        (ℓ, ℓ′), (cosθ21, sinθdθ21, ∇²_sinθdθ21),
+                        (ΔΩ, ddrΔΩ, Ω0),
+                        (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r))
 
-            @testset "ddrΔΩ_plus_ΔΩddr" begin
-                function ddrΔΩ_plus_ΔΩddr_term(r, n)
-                    r̄_r = r̄(r)
-                    Tn = chebyshevT(n, r̄_r)
-                    Unm1 = chebyshevU(n-1, r̄_r)
-                    ddrΔΩ(r̄_r) * Tn + ΔΩ(r̄_r) * a * n * Unm1
+
+            ΔΩ_ddrDDr = ΔΩ * ddrDDr
+            ddrΔΩ_DDr = ddrΔΩ * DDr
+            ddrΔΩ_DDr_plus_ΔΩ_ddrDDr = ddrΔΩ_DDr + ΔΩ_ddrDDr
+            ΔΩ_by_r2 = ΔΩ * onebyr2_cheby
+            two_ΔΩbyr_ηρ = twoΔΩ_by_r * ηρ_cheby
+            ddrΔΩ_ddr_plus_2byr = ddrΔΩ * (ddr + 2onebyr_cheby)
+            WWfixedterms = -two_ΔΩbyr_ηρ + d2dr2ΔΩ + ddrΔΩ_ddr_plus_2byr
+
+            # for these terms ℓ = ℓ′ (=1 in this case)
+            (; VVterm, WWterm) = RossbyWaveSpectrum.radial_differential_rotation_terms_outer(
+                                    (ℓ′, m), (ΔΩ, ddrΔΩ, d2dr2ΔΩ, Ω0),
+                                    (ddrΔΩ_DDr_plus_ΔΩ_ddrDDr, ΔΩ_by_r2, WWfixedterms))
+
+            @testset "V terms" begin
+                Vn1 = P11norm
+
+                @testset "ddrΔΩ_plus_ΔΩddr" begin
+                    function ddrΔΩ_plus_ΔΩddr_term(r, n)
+                        r̄_r = r̄(r)
+                        Tn = chebyshevT(n, r̄_r)
+                        Unm1 = chebyshevU(n-1, r̄_r)
+                        ddrΔΩ(r̄_r) * Tn + ΔΩ(r̄_r) * a * n * Unm1
+                    end
+                    @testset for n in 1:nr-1
+                        ddrΔΩ_plus_ΔΩddr_op = mat(ddrΔΩ_plus_ΔΩddr)[:, n + 1]
+                        ddrΔΩ_plus_ΔΩddr_explicit = chebyfwdnr(r -> ddrΔΩ_plus_ΔΩddr_term(r, n))
+                        @test ddrΔΩ_plus_ΔΩddr_op ≈ ddrΔΩ_plus_ΔΩddr_explicit rtol = 1e-8
+                    end
                 end
-                @testset for n in 1:nr-1
-                    ddrΔΩ_plus_ΔΩddr_op = mat(ddrΔΩ_plus_ΔΩddr)[:, n + 1]
-                    ddrΔΩ_plus_ΔΩddr_explicit = chebyfwdnr(r -> ddrΔΩ_plus_ΔΩddr_term(r, n))
-                    @test ddrΔΩ_plus_ΔΩddr_op ≈ ddrΔΩ_plus_ΔΩddr_explicit rtol = 1e-8
+
+                @testset "twoΔΩ_by_r" begin
+                    function twoΔΩ_by_r_term(r, n)
+                        r̄_r = r̄(r)
+                        Tn = chebyshevT(n, r̄_r)
+                        2ΔΩ(r̄_r)/r * Tn
+                    end
+                    twoΔΩ_by_rM = mat(twoΔΩ_by_r)
+                    @testset for n in 1:nr-1
+                        twoΔΩ_by_r_op = twoΔΩ_by_rM[:, n + 1]
+                        twoΔΩ_by_r_explicit = chebyfwdnr(r -> twoΔΩ_by_r_term(r, n))
+                        @test twoΔΩ_by_r_op ≈ twoΔΩ_by_r_explicit rtol = 1e-4
+                    end
+                end
+
+                @testset "WV term" begin
+                    function WVterms(r, n)
+                        r̄_r = r̄(r)
+                        Tn = chebyshevT(n, r̄_r)
+                        Unm1 = chebyshevU(n-1, r̄_r)
+                        2/√15 * (ΔΩ(r̄_r) * (a * n * Unm1 - 2/r * Tn)  + ddrΔΩ(r̄_r) * Tn) / Ω0
+                    end
+                    @testset for n in 1:nr-1
+                        WV_op = Vn1 * mat(WVterm)[:, n + 1]
+                        WV_explicit = chebyfwdnr(r -> WVterms(r, n))
+                        @test WV_op ≈ WV_explicit rtol = 1e-4
+                    end
+                end
+                @testset "VV term" begin
+                    @testset for n in 1:nr-1
+                        VV_op = Vn1 * mat(VVterm)[:, n + 1]
+                        @test all(iszero, VV_op)
+                    end
                 end
             end
+            @testset "W terms" begin
+                Wn1 = P11norm
+                @testset "VW term" begin
+                    function DDrmin2byr_term(r, n)
+                        r̄_r = r̄(r)
+                        Tn = chebyshevT(n, r̄_r)
+                        Unm1 = chebyshevU(n-1, r̄_r)
+                        ηr = ηρ_cheby(r̄_r)
+                        a * n * Unm1 - 2/r * Tn + ηr * Tn
+                    end
+                    DDr_min_2byrM = mat(DDr_min_2byr)
+                    @testset for n in 1:nr-1
+                        DDrmin2byr_op = DDr_min_2byrM[:, n + 1]
+                        DDrmin2byr_explicit = chebyfwdnr(r -> DDrmin2byr_term(r, n))
+                        @test DDrmin2byr_op ≈ DDrmin2byr_explicit rtol = 1e-4
+                    end
 
-            @testset "twoΔΩ_by_r" begin
-                function twoΔΩ_by_r_term(r, n)
-                    r̄_r = r̄(r)
-                    Tn = chebyshevT(n, r̄_r)
-                    2ΔΩ(r̄_r)/r * Tn
+                    function ddrΔΩ_term(r, n)
+                        r̄_r = r̄(r)
+                        Tn = chebyshevT(n, r̄_r)
+                        ddrΔΩ(r̄_r) * Tn
+                    end
+                    ddrΔΩM = mat(ddrΔΩ)
+                    @testset for n in 1:nr-1
+                        ddrΔΩ_op = ddrΔΩM[:, n + 1]
+                        ddrΔΩ_explicit = chebyfwdnr(r -> ddrΔΩ_term(r, n))
+                        @test ddrΔΩ_op ≈ ddrΔΩ_explicit rtol = 1e-4
+                    end
+
+                    function ΔΩDDr_min_2byr_min_ddrΔΩ_term(r, n)
+                        r̄_r = r̄(r)
+                        Tn = chebyshevT(n, r̄_r)
+                        ΔΩ(r̄_r) * DDrmin2byr_term(r, n)  - ddrΔΩ(r̄_r) * Tn
+                    end
+                    ΔΩDDr_min_2byr_min_ddrΔΩM = mat(ΔΩ * DDr_min_2byr - ddrΔΩ)
+                    @testset for n in 1:nr-1
+                        ΔΩDDr_min_2byr_min_ddrΔΩ_op = ΔΩDDr_min_2byr_min_ddrΔΩM[:, n + 1]
+                        ΔΩDDr_min_2byr_min_ddrΔΩ_explicit = chebyfwdnr(r -> ΔΩDDr_min_2byr_min_ddrΔΩ_term(r, n))
+                        @test ΔΩDDr_min_2byr_min_ddrΔΩ_op ≈ ΔΩDDr_min_2byr_min_ddrΔΩ_explicit rtol = 1e-4
+                    end
+
+                    VWterms(r, n) = -2/√15 * ΔΩDDr_min_2byr_min_ddrΔΩ_term(r, n) / Ω0
+
+                    VWtermM = mat(VWterm)
+                    @testset for n in 1:nr-1
+                        VW_op = Wn1 * VWtermM[:, n + 1]
+                        VW_explicit = chebyfwdnr(r -> VWterms(r, n))
+                        @test VW_op ≈ -VW_explicit rtol = 1e-4
+                    end
                 end
-                @testset for n in 1:nr-1
-                    twoΔΩ_by_r_op = mat(twoΔΩ_by_r)[:, n + 1]
-                    twoΔΩ_by_r_explicit = chebyfwdnr(r -> twoΔΩ_by_r_term(r, n))
-                    @test twoΔΩ_by_r_op ≈ twoΔΩ_by_r_explicit rtol = 1e-4
+                @testset "WW term" begin
+                    function WWterms(r, n)
+                        r̄_r = r̄(r)
+                        Tn = chebyshevT(n, r̄_r)
+                        Unm1 = chebyshevU(n-1, r̄_r)
+                        ηr = ηρ_cheby(r̄_r)
+                        -2/√3 * (ddrΔΩ(r̄_r) * (a * n * Unm1 + 2/r * Tn)  +
+                                (d2dr2ΔΩ(r̄_r) - 2ΔΩ(r̄_r)/r * ηr) * Tn) / Ω0
+                    end
+                    WWtermM = mat(WWterm)
+                    @testset for n in 1:nr-1
+                        WW_op = Wn1 * WWtermM[:, n + 1]
+                        WW_explicit = chebyfwdnr(r -> WWterms(r, n))
+                        @test WW_op ≈ WW_explicit rtol = 1e-4
+                    end
                 end
             end
-
-            @testset "WVterms" begin
-                function WVterms(r, n)
-                    r̄_r = r̄(r)
-                    Tn = chebyshevT(n, r̄_r)
-                    Unm1 = chebyshevU(n-1, r̄_r)
-                    2√(1/15) * (ΔΩ(r̄_r) * (a * n * Unm1 - 2/r * Tn)  + ddrΔΩ(r̄_r) * Tn) / Ω0
-                end
-                @testset for n in 1:nr-1
-                    WV_op = Vn1 * mat(WVterm)[:, n + 1]
-                    WV_explicit = chebyfwdnr(r -> WVterms(r, n))
-                    @test WV_op ≈ WV_explicit rtol = 1e-4
-                end
-            end
-        end
-        @testset "WW terms" begin
         end
     end
 end

@@ -141,13 +141,12 @@ function chebyshevpoly!(Tc, x, n = length(Tc))
     Tc
 end
 
-function chebyshevmatrix(f::Fun, nr)::Matrix{Float64}
+function chebyshevmatrix(f::Fun, nr, scalefactor = 2)::Matrix{Float64}
     chebyshevmatrix(ApproxFun.Multiplication(f), nr)
 end
 
-function chebyshevmatrix(A, nr)::Matrix{Float64}
+function chebyshevmatrix(A, nr, scalefactor = 2)::Matrix{Float64}
     B = A:ApproxFun.Chebyshev()
-    scalefactor = 2
     BM = B[1:scalefactor*nr, 1:scalefactor*nr]
     C = zeros(eltype(BM), nr, nr)
     B_rangespace = rangespace(B)
@@ -981,20 +980,15 @@ end
 function radial_differential_rotation_terms_inner((ℓ, ℓ′),
     (cosθ_ℓℓ′, sinθdθ_ℓℓ′, ∇²_sinθdθ_ℓℓ′),
     (ΔΩ, ddrΔΩ, Ω0),
-    (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r);
-    operators)
-
-    (; DDr, ddr) = operators.diff_operators
-    (; onebyr_cheby) = operators.rad_terms
+    (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r))
 
     ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
     ℓℓp1 = ℓ * (ℓ + 1)
     two_over_ℓℓp1 = 2/ℓℓp1
 
     VWterm = -two_over_ℓℓp1 *
-            (1 / Ω0) * (ℓ′ℓ′p1 * cosθ_ℓℓ′ * ΔΩ_DDr_min_2byr +
+            (1 / Ω0) * (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byr - ddrΔΩ) +
             sinθdθ_ℓℓ′ * ((ΔΩ_DDr - ℓ′ℓ′p1 * ΔΩ_by_r) - ℓ′ℓ′p1 / 2 * ddrΔΩ))
-
 
     WVterm = -1/ℓℓp1 * (1/Ω0) * (
                 (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * ddrΔΩ_plus_ΔΩddr
@@ -1002,6 +996,19 @@ function radial_differential_rotation_terms_inner((ℓ, ℓ′),
             )
 
     (; VWterm, WVterm)
+end
+
+function radial_differential_rotation_terms_outer((ℓ, m), (ΔΩ, ddrΔΩ, d2dr2ΔΩ, Ω0),
+    (ddrΔΩ_DDr_plus_ΔΩ_ddrDDr, ΔΩ_by_r2, WWfixedterms))
+
+    ℓℓp1 = ℓ * (ℓ + 1)
+    two_over_ℓℓp1 = 2/ℓℓp1
+    two_over_ℓℓp1_min_1 = two_over_ℓℓp1 - 1
+
+    VVterm = m * two_over_ℓℓp1_min_1 * ΔΩ / Ω0
+    WWterm = m * (two_over_ℓℓp1_min_1 * (ddrΔΩ_DDr_plus_ΔΩ_ddrDDr - ℓℓp1 * ΔΩ_by_r2) + WWfixedterms)/ Ω0
+
+    (; VVterm, WWterm)
 end
 
 function radial_differential_rotation_terms!(M, nr, nℓ, m;
@@ -1040,7 +1047,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     two_ΔΩbyr_ηρ = twoΔΩ_by_r * ηρ_cheby
     ΔΩ_ddrDDr = (ΔΩ * ddrDDr)::Tmul
     ΔΩ_by_r2 = ΔΩ * onebyr2_cheby
-    ∂rΔΩ_ddr_plus_2byr = (ddrΔΩ * (ddr + 2onebyr_cheby)::Tplus)::Tmul
+    ddrΔΩ_ddr_plus_2byr = (ddrΔΩ * (ddr + 2onebyr_cheby)::Tplus)::Tmul
     ddrΔΩ_DDr = (ddrΔΩ * DDr)::Tmul
     ddrΔΩ_DDr_plus_ΔΩ_ddrDDr = (ddrΔΩ_DDr + ΔΩ_ddrDDr)::Tplus
 
@@ -1061,22 +1068,21 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     ΔΩ_DDr = (ΔΩ * DDr)::Tmul
     ΔΩ_by_r = ΔΩ * onebyr_cheby
 
-    WWfixedterms = (-two_ΔΩbyr_ηρ + d2dr2ΔΩ + ∂rΔΩ_ddr_plus_2byr)::Tplus
+    WWfixedterms = (-two_ΔΩbyr_ηρ + d2dr2ΔΩ + ddrΔΩ_ddr_plus_2byr)::Tplus
 
     for ℓ in ℓs
         # numerical green function
         Gℓ = greenfn_cheby_numerical2(ℓ, operators)
         ℓℓp1 = ℓ * (ℓ + 1)
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
-        Gℓ_invΩ0 = Gℓ * (1 / Ω0)
         two_over_ℓℓp1 = 2 / ℓℓp1
 
-        @. VV[inds_ℓℓ] += (1 / Ω0) * m * (two_over_ℓℓp1 - 1) * ΔΩM
-        WWmat = mat(
-            (2 / ℓℓp1 - 1) * (ddrΔΩ_DDr_plus_ΔΩ_ddrDDr - ℓℓp1 * ΔΩ_by_r2) + WWfixedterms
-        ) / Ω0
+        (; VVterm, WWterm) = radial_differential_rotation_terms_outer(
+                                (ℓ, m), (ΔΩ, ddrΔΩ, d2dr2ΔΩ, Ω0),
+                                (ddrΔΩ_DDr_plus_ΔΩ_ddrDDr, ΔΩ_by_r2, WWfixedterms))
 
-        @views WW[inds_ℓℓ] .+= Gℓ * m * WWmat
+        @views VV[inds_ℓℓ] .+= mat(VVterm)
+        @views WW[inds_ℓℓ] .+= Gℓ * mat(WWterm)
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
@@ -1085,8 +1091,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
             (; VWterm, WVterm) = radial_differential_rotation_terms_inner(
                     (ℓ, ℓ′), (cosθo[ℓ, ℓ′], sinθdθo[ℓ, ℓ′], ∇²_sinθdθo[ℓ, ℓ′]),
                     (ΔΩ, ddrΔΩ, Ω0),
-                    (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r);
-                    operators)
+                    (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r))
 
             @views VW[inds_ℓℓ′] .+= Wscaling * mat(VWterm)
 
