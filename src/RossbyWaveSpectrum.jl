@@ -588,7 +588,6 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     ddrDDrM = mat(ddrDDr)
     rddrM = mat(rddr)
     ddrDDrM = mat(ddrDDr)
-    g_chebyM = mat(g_cheby)
     twoηρ_by_rM = mat(twoηρ_by_r)
     ddr_plus_2byrM = @. ddrM + 2 * onebyr_chebyM
     ddr_minus_2byrM = @. ddrM - 2 * onebyr_chebyM
@@ -605,7 +604,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr,
         ddr, d2dr2, r2d2dr2, ddrDDr, ddr_plus_2byr)
     diff_operator_matrices = (; onebyr_chebyM, onebyr2_chebyM, DDrM,
-        ddrM, d2dr2M, ddrDDrM, rddrM, g_chebyM, twoηρ_by_rM, ddr_plus_2byrM,
+        ddrM, d2dr2M, ddrDDrM, rddrM, twoηρ_by_rM, ddr_plus_2byrM,
         ddr_minus_2byrM, DDr_minus_2byrM,
         grddrM, gM
     )
@@ -637,6 +636,15 @@ function uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
     M = zeros(ComplexF64, nfields * nparams, nfields * nparams)
     uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     return M
+end
+
+function uniform_rotation_matrix_terms_outer((ℓ, m), nchebyr, (ddrDDrM, onebyr2_IplusrηρM, gM), Ω0)
+    ℓℓp1 = ℓ*(ℓ+1)
+
+    WWterm = @. 2m / ℓℓp1 * (ddrDDrM - onebyr2_IplusrηρM * ℓℓp1)
+    WSterm = @. (-1 / Ω0) * gM
+
+    (; WWterm, WSterm)
 end
 
 function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
@@ -696,12 +704,15 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
         diaginds_ℓ = blockinds((m, nr), ℓ)
 
+        (; WWterm, WSterm) = uniform_rotation_matrix_terms_outer(
+                (ℓ, m), nchebyr, (ddrDDrM, onebyr2_IplusrηρM, gM), Ω0)
+
         VV[diaginds_ℓ] .= 2m/ℓℓp1 * I(nchebyr)
 
-        WW[diaginds_ℓ] = Gℓ * @. 2m / ℓℓp1 * (ddrDDrM - onebyr2_IplusrηρM * ℓℓp1)
+        WW[diaginds_ℓ] = Gℓ * WWterm
 
         if nfields === 3
-            WS[diaginds_ℓ] = Gℓ * @. (ε / Wscaling) * (-1 / Ω0) * (2 / ℓℓp1 * grddrM + gM)
+            WS[diaginds_ℓ] = Gℓ * (ε / Wscaling) * WSterm
         end
 
         if nfields === 3
