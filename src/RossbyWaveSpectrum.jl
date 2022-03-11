@@ -162,6 +162,27 @@ function chebyshevmatrix(A, nr, scalefactor = 2)::Matrix{Float64}
     return C
 end
 
+# differentiation operator using N+1 points, with 2 extremal points
+function chebyderivGaussLobatto(n)
+    D = zeros(n+1, n+1)
+    Do = OffsetArray(D, OffsetArrays.Origin(0))
+    Do[0,0] = (2n^2 + 1)/6
+    Do[n,n] = -Do[0,0]
+    for j in 0:n, k in 0:n
+        k == j && (k == 0 || k == n) && continue
+        xk = cos(π*k/n)
+        if k == j
+            Do[k,k] = -1/2 * xk/(1-xk^2)
+        else
+            xj = cos(π*j/n)
+            cj = 1 + (j == 0) + (j == n)
+            ck = 1 + (k == 0) + (k == n)
+            Do[k, j] = ck/cj * (-1)^(j+k)/(xk - xj)
+        end
+    end
+    return D
+end
+
 # Legendre
 
 function legendretransform!(v::AbstractVector, PC = plan_chebyshevtransform!(v), PC2L = plan_cheb2leg(v))
@@ -448,24 +469,61 @@ function cottheta_dtheta_operator(nℓ)
     Matrix(M')
 end
 
-function greenfn_realspace_numerical2(ℓ, operators)
+# converts from Heinrichs basis to Chebyshev, so Cn = Anm Bm where Cn are the Chebyshev
+# coefficients, and Bm are the Heinrichs ones
+αheinrichs(n) = n < 0 ? 0 : n == 0 ? 2 : 1
+function heinrichs_chebyshev_matrix(n)
+    M = zeros(n, n-2)
+    Mo = OffsetArray(M, OffsetArrays.Origin(0))
+    for n in axes(Mo,1), m in intersect(n-2:2:n+2, axes(Mo,2))
+        T = 0.0
+        if m == n-2
+            T = -1/4 * αheinrichs(m)
+        elseif m == n
+            T = 1 - 1/4*(αheinrichs(n-1) + αheinrichs(n))
+        elseif m == n + 2
+            T = -1/4
+        end
+        Mo[n, m] = T
+    end
+    return M
+end
+
+function deltafn(x, y)
+    deltafn_scale = 3000
+    √(deltafn_scale/pi)*exp(-deltafn_scale*(x-y)^2)
+end
+
+function greenfn_cheby_numerical(ℓ, operators)
     (; diff_operators, rad_terms, transforms) = operators
     (; ddrDDr) = diff_operators
-    (; onebyr2_cheby) = rad_terms
+    (; onebyr2_cheby, ηρ_cheby) = rad_terms
+    (; nr, Δr) = operators.radial_params
     (; Tcrinv, Tcrfwd) = transforms
-    (; mat) = operators
-    Bℓ = mat(ddrDDr - ℓ * (ℓ + 1) * onebyr2_cheby)
-    Bℓ_realspace = Tcrinv * Bℓ * Tcrfwd
-    G = pinv(Bℓ_realspace[2:end-1, 2:end-1])
-    A = zero(Bℓ_realspace)
-    A[2:end-1, 2:end-1] .= G
-    return A
-end
-function greenfn_cheby_numerical2(ℓ, operators)
-    (; transforms) = operators
-    (; Tcrinv, Tcrfwd) = transforms
-    G = greenfn_realspace_numerical2(ℓ, operators)
-    Tcrfwd * G * Tcrinv
+
+    p = [cos(pi*j/nr) for j in 0:nr]
+    d = chebyderivGaussLobatto(nr) * (2 / Δr)
+    d2 = d*d
+
+    Bℓ = d2 + Diagonal(ηρ_cheby.(p)) .* d - ℓ * (ℓ + 1) * Diagonal(onebyr2_cheby.(p))
+    Bℓ[1, :] .= 0
+    Bℓ[1, 1] = 1
+    Bℓ[nr+1, :] .= 0
+    Bℓ[nr+1, nr+1] = 1
+    
+    δ = zeros(nr+1, nr+1)
+    for i in 1:nr-1, j in 1:nr-1
+        xi = p[i+1]
+        yj = p[j+1]
+        δ[i+1, j+1] = deltafn(xi, yj)
+    end
+
+    G = Bℓ \ δ
+
+    pin = [cos((2k-1)*pi/2nr) for k in 1:nr]
+
+    Gin = interp2d(reverse(p), reverse(p), reverse(G), reverse(pin), reverse(pin))
+    Tcrfwd * Gin * Tcrinv
 end
 
 splderiv(f::Vector, r::Vector) = splderiv(Spline1D(r, f), r)
@@ -605,6 +663,8 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     identities = (; Ir, Iℓ)
     coordinates = (; r, r_chebyshev)
 
+    HeinrichsChebyshevMatrix = heinrichs_chebyshev_matrix(nr)
+
     transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
 
     rad_terms = (; onebyr, onebyr_cheby, ηρ, ηρ_cheby, ηT_cheby, onebyr2_cheby,
@@ -625,7 +685,8 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
         transforms, coordinates,
         radial_params, identities,
         diff_operator_matrices,
-        mat
+        mat,
+        HeinrichsChebyshevMatrix
     )
 end
 precompile(radial_operators, (Int, Int, Float64, Float64))
@@ -710,7 +771,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     for ℓ in ℓs
         # numerical green function
-        Gℓ = greenfn_cheby_numerical2(ℓ, operators)
+        Gℓ = greenfn_cheby_numerical(ℓ, operators)
         mul!(GℓC1, Gℓ, DDr_minus_2byrM)
         mul!(GℓC1_ddr, Gℓ, ddr_minus_2byrM)
 
@@ -794,9 +855,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
     d2dr2_plus_4ηρ_by_r = (d2dr2 + 4ηρ_by_r)::Tplus
 
     for ℓ in ℓs
-        ABℓ′top = (ℓ - minimum(m)) * nchebyr + 1
-        ACℓ′vertinds = range(ABℓ′top, length = nr)
-        diaginds_ℓ = CartesianIndices((ACℓ′vertinds, ACℓ′vertinds))
+        diaginds_ℓ = blockinds((m, nr), ℓ)
 
         ℓℓp1 = ℓ * (ℓ + 1)
         ℓℓp1_by_r2 = ℓℓp1 * onebyr2_cheby
@@ -813,7 +872,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         WWop = mat((T1 + T3 + T4)::Tplus)
 
-        Gℓ = greenfn_cheby_numerical2(ℓ, operators)
+        Gℓ = greenfn_cheby_numerical(ℓ, operators)
         WWop2 = Gℓ * WWop
 
         @views @. WW[diaginds_ℓ] -= im * ν * WWop2
@@ -925,7 +984,7 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
 
     for ℓ in ℓs
         # numerical green function
-        Gℓ = greenfn_cheby_numerical2(ℓ, operators)
+        Gℓ = greenfn_cheby_numerical(ℓ, operators)
         ℓℓp1 = ℓ * (ℓ + 1)
         diaginds_ℓ = blockinds((m, nr), ℓ)
         two_over_ℓℓp1 = 2 / ℓℓp1
@@ -1100,7 +1159,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
     for ℓ in ℓs
         # numerical green function
-        Gℓ = greenfn_cheby_numerical2(ℓ, operators)
+        Gℓ = greenfn_cheby_numerical(ℓ, operators)
         ℓℓp1 = ℓ * (ℓ + 1)
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
         two_over_ℓℓp1 = 2 / ℓℓp1
