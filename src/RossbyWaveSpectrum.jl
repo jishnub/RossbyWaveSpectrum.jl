@@ -494,40 +494,56 @@ function deltafn(x, y)
     √(deltafn_scale/pi)*exp(-deltafn_scale*(x-y)^2)
 end
 
-function greenfn_cheby_numerical(ℓ, operators)
+function deltafn_matrix(pts)
+    n = length(pts) - 1
+    δ = zeros(n + 1, n + 1)
+    ptso = OffsetArray(pts, OffsetArrays.Origin(0))
+    δo = OffsetArray(δ, OffsetArrays.Origin(0))
+    # ignore boundaries, as these are set to zero
+    for i in 1:n-1, j in 1:n-1
+        xi = ptso[i]
+        yj = ptso[j]
+        δo[i, j] = deltafn(xi, yj)
+    end
+    return δ
+end
+
+function greenfn_radial_lobatto(ℓ, operators)
     (; diff_operators, rad_terms, transforms) = operators
-    (; ddrDDr) = diff_operators
+    (; ddr_lobatto, d2dr2_lobatto) = diff_operators
     (; onebyr2_cheby, ηρ_cheby) = rad_terms
-    (; nr, Δr) = operators.radial_params
-    (; Tcrinv, Tcrfwd) = transforms
+    (; nr) = operators.radial_params
+    (; r_chebyshev_lobatto) = operators.coordinates
 
-    p = [cos(pi*j/nr) for j in 0:nr]
-    d = chebyderivGaussLobatto(nr) * (2 / Δr)
-    d2 = d*d
+    Bℓ = d2dr2_lobatto + Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) .* ddr_lobatto -
+                        ℓ * (ℓ + 1) * Diagonal(onebyr2_cheby.(r_chebyshev_lobatto))
+    Bℓ .*= Rsun^2 # scale to improve the condition number
+    scale = maximum(abs, @view Bℓ[2:end-1, 2:end-1])
+    Bℓ ./= scale
 
-    Bℓ = d2 + Diagonal(ηρ_cheby.(p)) .* d - ℓ * (ℓ + 1) * Diagonal(onebyr2_cheby.(p))
+    # boundaries
     Bℓ[1, :] .= 0
     Bℓ[1, 1] = 1
     Bℓ[nr+1, :] .= 0
     Bℓ[nr+1, nr+1] = 1
-    
-    δ = zeros(nr+1, nr+1)
-    for i in 1:nr-1, j in 1:nr-1
-        xi = p[i+1]
-        yj = p[j+1]
-        δ[i+1, j+1] = deltafn(xi, yj)
-    end
+
+    δ = operators.deltafn_matrix_radial
 
     G = Bℓ \ δ
+    G .*= Rsun^2 / scale # scale the solution back
+    return G
+end
 
-    pin = [cos((2k-1)*pi/2nr) for k in 1:nr]
-
-    Gin = interp2d(reverse(p), reverse(p), reverse(G), reverse(pin), reverse(pin))
+function greenfn_cheby_numerical(ℓ, operators)
+    G = greenfn_radial_lobatto(ℓ, operators)
+    (; r_chebyshev, r_chebyshev_lobatto) = operators.coordinates
+    (; Tcrinv, Tcrfwd) = operators.transforms
+    Gin = interp2d(r_chebyshev_lobatto, r_chebyshev_lobatto, G, r_chebyshev, r_chebyshev)
     Tcrfwd * Gin * Tcrinv
 end
 
-splderiv(f::Vector, r::Vector) = splderiv(Spline1D(r, f), r)
-splderiv(spl::Spline1D, r::Vector) = derivative(spl, r)
+splderiv(v::Vector, r::Vector, rout = r; nu = 1) = splderiv(Spline1D(r, v), rout; nu = 1)
+splderiv(spl::Spline1D, rout::Vector; nu = 1) = derivative(spl, rout; nu = 1)
 
 function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun)
     ModelS = readdlm(joinpath(@__DIR__, "ModelS.detailed"))
@@ -659,11 +675,17 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     gM = mat(g_cheby)
     grddrM = mat((g_cheby * rddr)::Tmul)
 
-    constants = (; κ, ν, scalings, nfields, Ω0)
-    identities = (; Ir, Iℓ)
-    coordinates = (; r, r_chebyshev)
+    # Chebyshev Lobatto points, used in computing the Green function
+    r_chebyshev_lobatto = [cos(pi*j/nr) for j in nr:-1:0]
+    ddr_lobatto = reverse(chebyderivGaussLobatto(nr) * (2 / Δr))
+    d2dr2_lobatto = ddr_lobatto*ddr_lobatto
+    deltafn_matrix_radial = deltafn_matrix(r_chebyshev_lobatto)
 
     HeinrichsChebyshevMatrix = heinrichs_chebyshev_matrix(nr)
+
+    constants = (; κ, ν, scalings, nfields, Ω0)
+    identities = (; Ir, Iℓ)
+    coordinates = (; r, r_chebyshev, r_chebyshev_lobatto)
 
     transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
 
@@ -671,7 +693,8 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
         ddr_lnρT, ddr_S0_by_cp, g, g_cheby, r_cheby, r2_cheby, κ, twoηρ_by_r)
 
     diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr,
-        ddr, d2dr2, r2d2dr2, ddrDDr, ddr_plus_2byr)
+        ddr, d2dr2, r2d2dr2, ddrDDr, ddr_plus_2byr,
+        ddr_lobatto, d2dr2_lobatto)
 
     diff_operator_matrices = (; onebyr_chebyM, onebyr2_chebyM, DDrM,
         ddrM, d2dr2M, ddrDDrM, rddrM, twoηρ_by_rM, ddr_plus_2byrM,
@@ -686,7 +709,8 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
         radial_params, identities,
         diff_operator_matrices,
         mat,
-        HeinrichsChebyshevMatrix
+        HeinrichsChebyshevMatrix,
+        deltafn_matrix_radial
     )
 end
 precompile(radial_operators, (Int, Int, Float64, Float64))

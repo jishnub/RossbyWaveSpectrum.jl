@@ -1,5 +1,6 @@
 [deps]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+Dierckx = "39dd38d3-220a-591b-8e3c-4c3a8c710a94"
 FastTransforms = "057dd010-8810-581a-b7be-e3fc3b93f78c"
 ForwardDiff = "f6369f11-7733-5829-9624-2563aa707210"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"

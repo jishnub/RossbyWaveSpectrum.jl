@@ -6,6 +6,7 @@ using Aqua
 using SpecialPolynomials
 using ForwardDiff
 using FastTransforms
+using Dierckx
 
 @testset "project quality" begin
     Aqua.test_all(RossbyWaveSpectrum,
@@ -41,6 +42,26 @@ function chebyfwd(f, r_in, r_out, nr, scalefactor = 5)
 end
 
 const P11norm = -2/√3
+
+@testset "green fn W" begin
+    nr, nℓ = 50, 2
+    nparams = nr * nℓ
+    m = 1
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
+    (; Δr, r_mid) = operators.radial_params
+    (; r_chebyshev_lobatto) = operators.coordinates
+    (; Tcrfwd, Tcrinv) = operators.transforms
+    (; ddr, d2dr2, DDr) = operators.diff_operators
+    (; ηρ_cheby) = operators.rad_terms
+    ℓ = 2
+    Gℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
+    @testset "boundaries" begin
+        @test all(x -> isapprox(x/Rsun^2, 0, atol=1e-14), Gℓ[1, :])
+        @test all(x -> isapprox(x/Rsun^2, 0, atol=1e-14), Gℓ[end, :])
+        @test all(x -> isapprox(x/Rsun^2, 0, atol=1e-14), Gℓ[:, 1])
+        @test all(x -> isapprox(x/Rsun^2, 0, atol=1e-14), Gℓ[:, end])
+    end
+end
 
 @testset "uniform rotation" begin
     nr, nℓ = 30, 2
@@ -389,6 +410,18 @@ end
         function WWtermfn(r, n)
 
         end
+    end
+end
+
+@testset "uniform rotation ℓ == m solution" begin
+    nr, nℓ = 30, 15
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
+    @testset for m in [1, 10, 20]
+        λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(nr, nℓ, m; operators, constraints);
+        λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
+            operators, constraints, Δl_cutoff = 7, n_cutoff = 9,
+            eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3);
+        @test findmin(abs.(real(λuf) .- 2/(m+1)))[1] < 1e-4
     end
 end
 
