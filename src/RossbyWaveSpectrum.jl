@@ -534,7 +534,7 @@ function greenfn_radial_lobatto(ℓ, operators)
     return G
 end
 
-function greenfn_cheby_numerical(ℓ, operators)
+function greenfn_cheby(ℓ, operators)
     G = greenfn_radial_lobatto(ℓ, operators)
     (; r_chebyshev, r_chebyshev_lobatto) = operators.coordinates
     (; Tcrinv, Tcrfwd) = operators.transforms
@@ -544,6 +544,8 @@ end
 
 splderiv(v::Vector, r::Vector, rout = r; nu = 1) = splderiv(Spline1D(r, v), rout; nu = 1)
 splderiv(spl::Spline1D, rout::Vector; nu = 1) = derivative(spl, rout; nu = 1)
+
+smoothed_spline(r, v; s) = Spline1D(r, v, s = sum(abs2, v) * s)
 
 function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun)
     ModelS = readdlm(joinpath(@__DIR__, "ModelS.detailed"))
@@ -557,14 +559,14 @@ function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun)
     logT_modelS = log.(T_modelS)
 
     sρ = Spline1D(r_modelS, ρ_modelS)
-    slogρ = Spline1D(r_modelS, logρ_modelS, s = sum(abs2, logρ_modelS) * 1e-5)
+    slogρ = smoothed_spline(r_modelS, logρ_modelS, s = 1e-5)
     ddrlogρ = Dierckx.derivative(slogρ, r_modelS)
-    sηρ = Spline1D(r_modelS, ddrlogρ, s = sum(abs2, ddrlogρ) * 1e-5)
+    sηρ = smoothed_spline(r_modelS, ddrlogρ, s = 1e-5)
 
     sT = Spline1D(r_modelS, T_modelS)
-    slogT = Spline1D(r_modelS, logT_modelS, s = sum(abs2, logT_modelS) * 1e-5)
+    slogT = smoothed_spline(r_modelS, logT_modelS, s = 1e-5)
     ddrlogT = Dierckx.derivative(slogT, r_modelS)
-    sηT = Spline1D(r_modelS, ddrlogT, s = sum(abs2, ddrlogρ) * 1e-5)
+    sηT = smoothed_spline(r_modelS, ddrlogT, s = 1e-5)
 
     g_modelS = @. G * Msun * q_modelS / r_modelS^2
     sg = Spline1D(r_modelS, g_modelS, s = sum(abs2, g_modelS))
@@ -600,14 +602,14 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     pseudospectralop_radial = SpectralOperatorForm(Tcrfwd, Tcrinv)
     r_chebyshev = (r .- r_mid) ./ (Δr / 2)
     Tcrfwdc, Tcrinvc = complex.(Tcrfwd), complex.(Tcrinv)
-    r_cheby = Fun(Chebyshev(), [r_mid, Δr / 2])
+    r_cheby = Fun(ApproxFun.Chebyshev(), [r_mid, Δr / 2])
     r2_cheby = r_cheby * r_cheby
 
     (; sρ, sg, sηρ, sT, sηT) = read_solar_model(; r_in, r_out)
 
     T = sT.(r)
 
-    ddr = Derivative() * (2 / Δr)
+    ddr = ApproxFun.Derivative() * (2 / Δr)
     rddr = (r_cheby * ddr)::Tmul
     d2dr2 = (ddr * ddr)::Tmul
     r2d2dr2 = (r2_cheby * d2dr2)::Tmul
@@ -763,7 +765,6 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     WVℓℓ′ = zeros(nr, nr)
     VWℓℓ′ = zeros(nr, nr)
     GℓC1 = zeros(nr, nr)
-    GℓC1_ddr = similar(GℓC1)
     GℓCℓ′ = zeros(nr, nr)
 
     ℓs = range(m, length = nℓ)
@@ -795,9 +796,8 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     for ℓ in ℓs
         # numerical green function
-        Gℓ = greenfn_cheby_numerical(ℓ, operators)
-        mul!(GℓC1, Gℓ, DDr_minus_2byrM)
-        mul!(GℓC1_ddr, Gℓ, ddr_minus_2byrM)
+        Gℓ = greenfn_cheby(ℓ, operators)
+        mul!(GℓC1, Gℓ, ddr_minus_2byrM)
 
         ℓℓp1 = ℓ * (ℓ + 1)
 
@@ -830,7 +830,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
             @. Cℓ′ = ddrM - ℓ′ℓ′p1 * onebyr_chebyM
             mul!(GℓCℓ′, Gℓ, Cℓ′)
-            @. WVℓℓ′ = -2 / ℓℓp1 * (ℓ′ℓ′p1 * GℓC1_ddr * cosθ[ℓ, ℓ′] + GℓCℓ′ * sinθdθ[ℓ, ℓ′]) / Wscaling
+            @. WVℓℓ′ = -2 / ℓℓp1 * (ℓ′ℓ′p1 * GℓC1 * cosθ[ℓ, ℓ′] + GℓCℓ′ * sinθdθ[ℓ, ℓ′]) / Wscaling
 
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
@@ -896,7 +896,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         WWop = mat((T1 + T3 + T4)::Tplus)
 
-        Gℓ = greenfn_cheby_numerical(ℓ, operators)
+        Gℓ = greenfn_cheby(ℓ, operators)
         WWop2 = Gℓ * WWop
 
         @views @. WW[diaginds_ℓ] -= im * ν * WWop2
@@ -1008,7 +1008,7 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
 
     for ℓ in ℓs
         # numerical green function
-        Gℓ = greenfn_cheby_numerical(ℓ, operators)
+        Gℓ = greenfn_cheby(ℓ, operators)
         ℓℓp1 = ℓ * (ℓ + 1)
         diaginds_ℓ = blockinds((m, nr), ℓ)
         two_over_ℓℓp1 = 2 / ℓℓp1
@@ -1183,7 +1183,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
     for ℓ in ℓs
         # numerical green function
-        Gℓ = greenfn_cheby_numerical(ℓ, operators)
+        Gℓ = greenfn_cheby(ℓ, operators)
         ℓℓp1 = ℓ * (ℓ + 1)
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
         two_over_ℓℓp1 = 2 / ℓℓp1
@@ -1400,7 +1400,7 @@ function solar_differential_rotation_terms!(M, nr, nℓ, m;
     for ℓ in ℓs
         ℓℓp1 = ℓ * (ℓ + 1)
         invℓℓp1_invΩ0 = (1 / ℓℓp1) * (1 / Ω0)
-        Gℓ = greenfn_cheby_numerical2(ℓ, operators)
+        Gℓ = greenfn_cheby2(ℓ, operators)
         Gℓ_invℓℓp1_invΩ0 = Gℓ * invℓℓp1_invΩ0
         Gℓ_invℓℓp1_invΩ0_invWscaling = (1 / Wscaling) * Gℓ_invℓℓp1_invΩ0
         for ℓ′ in ℓs

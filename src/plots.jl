@@ -12,7 +12,7 @@ plotdir = joinpath(dirname(dirname(@__DIR__)), "plots")
 ticker = pyimport("matplotlib.ticker")
 axes_grid1 = pyimport("mpl_toolkits.axes_grid1")
 
-function realview(M::Matrix{Complex{T}}) where {T}
+function realview(M::AbstractMatrix{Complex{T}}) where {T}
     @view reinterpret(reshape, T, M)[1, :, :]
 end
 
