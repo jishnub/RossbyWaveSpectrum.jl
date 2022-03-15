@@ -50,19 +50,28 @@ const P11norm = -2/√3
     ℓ = 2
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
     (; Δr) = operators.radial_params
-    Gℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
+    (; sρ) = operators.rad_terms
+    (; r_lobatto) = operators.coordinates
+    Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
     @testset "boundaries" begin
-        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Gℓ[1, :])
-        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Gℓ[end, :])
-        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Gℓ[:, 1])
-        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Gℓ[:, end])
+        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[1, :])
+        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[end, :])
+        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[:, 1])
+        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[:, end])
+    end
+
+    @testset "symmetry" begin
+        H2 = Hℓ .* sρ.(r_lobatto)'
+        @test H2 ≈ Symmetric(H2) rtol=1e-2
     end
 
     @testset "unstratified" begin
         # in this case there's an analytical solution
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false)
-        Gℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
-        Gℓ_exp = RossbyWaveSpectrum.greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
+        Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
+        Hℓ_exp = RossbyWaveSpectrum.greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
+        @test Hℓ ≈ Hℓ_exp rtol=1e-2
+        @test Hℓ ≈ Symmetric(Hℓ) rtol=1e-2
     end
 end
 

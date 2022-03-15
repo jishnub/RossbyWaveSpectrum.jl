@@ -516,7 +516,7 @@ function greenfn_radial_lobatto(ℓ, operators)
     (; nr, Δr) = operators.radial_params
     (; r_chebyshev_lobatto) = operators.coordinates
 
-    Bℓ = d2dr2_lobatto - Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) .* ddr_lobatto -
+    Bℓ = d2dr2_lobatto - Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto -
                         ℓ * (ℓ + 1) * Diagonal(onebyr2_cheby.(r_chebyshev_lobatto))
     Bℓ .*= Rsun^2 # scale to improve the condition number
     scale = maximum(abs, @view Bℓ[2:end-1, 2:end-1])
@@ -731,7 +731,7 @@ function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified
     transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
 
     rad_terms = (; onebyr, onebyr_cheby, ηρ, ηρ_cheby, ηT_cheby, onebyr2_cheby,
-        ddr_lnρT, ddr_S0_by_cp, g, g_cheby, r_cheby, r2_cheby, κ, twoηρ_by_r)
+        ddr_lnρT, ddr_S0_by_cp, g, g_cheby, r_cheby, r2_cheby, κ, twoηρ_by_r, sρ)
 
     diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr,
         ddr, d2dr2, r2d2dr2, ddrDDr, ddr_plus_2byr,
