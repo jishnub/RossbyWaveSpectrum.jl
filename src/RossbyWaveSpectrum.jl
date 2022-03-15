@@ -489,33 +489,34 @@ function heinrichs_chebyshev_matrix(n)
     return M
 end
 
-function deltafn(x, y)
-    deltafn_scale = 3000
-    √(deltafn_scale/pi)*exp(-deltafn_scale*(x-y)^2)
-end
+deltafn(x, y; scale) = exp(-(x/scale-y/scale)^2/2)
 
-function deltafn_matrix(pts)
+function deltafn_matrix(pts; scale)
     n = length(pts) - 1
-    δ = zeros(n + 1, n + 1)
-    ptso = OffsetArray(pts, OffsetArrays.Origin(0))
-    δo = OffsetArray(δ, OffsetArrays.Origin(0))
-    # ignore boundaries, as these are set to zero
-    for i in 1:n-1, j in 1:n-1
-        xi = ptso[i]
-        yj = ptso[j]
-        δo[i, j] = deltafn(xi, yj)
+    δ = deltafn.(pts, pts'; scale)
+    for col in axes(δ, 2)
+        v = @view δ[:, col]
+        s = Spline1D(pts, v)
+        is = Dierckx.integrate(s, pts[1], pts[end])
+        v ./= is
     end
-    return δ
+    # zero out the first and last rows to enfore boundary conditions
+    δ[1, :] .= 0
+    δ[end, :] .= 0
+    # zero out the first and last columns to enfore symmetry of the Green function
+    δ[:, 1] .= 0
+    δ[:, end] .= 0
+    return Symmetric(δ)
 end
 
 function greenfn_radial_lobatto(ℓ, operators)
     (; diff_operators, rad_terms, transforms) = operators
     (; ddr_lobatto, d2dr2_lobatto) = diff_operators
     (; onebyr2_cheby, ηρ_cheby) = rad_terms
-    (; nr) = operators.radial_params
+    (; nr, Δr) = operators.radial_params
     (; r_chebyshev_lobatto) = operators.coordinates
 
-    Bℓ = d2dr2_lobatto + Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) .* ddr_lobatto -
+    Bℓ = d2dr2_lobatto - Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) .* ddr_lobatto -
                         ℓ * (ℓ + 1) * Diagonal(onebyr2_cheby.(r_chebyshev_lobatto))
     Bℓ .*= Rsun^2 # scale to improve the condition number
     scale = maximum(abs, @view Bℓ[2:end-1, 2:end-1])
@@ -529,13 +530,34 @@ function greenfn_radial_lobatto(ℓ, operators)
 
     δ = operators.deltafn_matrix_radial
 
-    G = Bℓ \ δ
-    G .*= Rsun^2 / scale # scale the solution back
-    return G
+    H = Bℓ \ δ
+    H .*= Rsun^2 / scale * (Δr/2) # scale the solution back, and multiply by the measure Δr/2
+    # the Δr/2 factor is used to convert the subsequent integrals ∫H f dr to ∫(Δr/2)H f dx,
+    # where x = (r - rmid)/(Δr/2)
+    return H
 end
 
-function greenfn_cheby(ℓ, operators)
-    G = greenfn_radial_lobatto(ℓ, operators)
+function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
+    (; r_in, r_out, Δr) = operators.radial_params
+    r_in_frac = r_in/Rsun
+    r_out_frac = r_out/Rsun
+    (; r_lobatto) = operators.coordinates
+    W = (2ℓ+1)*((r_out_frac)^(2ℓ+1) - (r_in_frac)^(2ℓ+1))
+    norm = Rsun/W * (Δr/2)
+    nr_lobatto = length(r_lobatto)
+    H = zeros(nr_lobatto, nr_lobatto)
+
+    for rind in axes(r_lobatto, 1)[2:end-1], sind in axes(r_lobatto, 1)[2]:rind
+        ri = r_lobatto[rind]/Rsun
+        sj = r_lobatto[sind]/Rsun
+        H[rind, sind] = (sj^(ℓ+1) - r_in_frac^(2ℓ+1)/sj^ℓ)*(ri^(ℓ+1) - r_out_frac^(2ℓ+1)/ri^ℓ) * norm
+    end
+
+    Symmetric(H, :L)
+end
+
+function greenfn_cheby(ℓ, operators, greenfn_radial_function = greenfn_radial_lobatto)
+    G = greenfn_radial_function(ℓ, operators)
     (; r_chebyshev, r_chebyshev_lobatto) = operators.coordinates
     (; Tcrinv, Tcrfwd) = operators.transforms
     Gin = interp2d(r_chebyshev_lobatto, r_chebyshev_lobatto, G, r_chebyshev, r_chebyshev)
@@ -547,7 +569,7 @@ splderiv(spl::Spline1D, rout::Vector; nu = 1) = derivative(spl, rout; nu = 1)
 
 smoothed_spline(r, v; s) = Spline1D(r, v, s = sum(abs2, v) * s)
 
-function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun)
+function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only for tests =# = true)
     ModelS = readdlm(joinpath(@__DIR__, "ModelS.detailed"))
     r_modelS = @view ModelS[:, 1]
     r_inds = r_in .<= r_modelS .<= r_out
@@ -555,17 +577,27 @@ function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun)
     q_modelS = exp.(reverse(ModelS[r_inds, 2]))
     T_modelS = reverse(ModelS[r_inds, 3])
     ρ_modelS = reverse(ModelS[r_inds, 5])
+    if !_stratified
+        ρ_modelS = fill(ρ_modelS[1], length(ρ_modelS))
+        T_modelS = fill(T_modelS[1], length(T_modelS))
+    end
     logρ_modelS = log.(ρ_modelS)
     logT_modelS = log.(T_modelS)
 
     sρ = Spline1D(r_modelS, ρ_modelS)
     slogρ = smoothed_spline(r_modelS, logρ_modelS, s = 1e-5)
     ddrlogρ = Dierckx.derivative(slogρ, r_modelS)
+    if !_stratified
+        ddrlogρ .= 0
+    end
     sηρ = smoothed_spline(r_modelS, ddrlogρ, s = 1e-5)
 
     sT = Spline1D(r_modelS, T_modelS)
     slogT = smoothed_spline(r_modelS, logT_modelS, s = 1e-5)
     ddrlogT = Dierckx.derivative(slogT, r_modelS)
+    if !_stratified
+        ddrlogT .= 0
+    end
     sηT = smoothed_spline(r_modelS, ddrlogT, s = 1e-5)
 
     g_modelS = @. G * Msun * q_modelS / r_modelS^2
@@ -589,7 +621,7 @@ const Tmul = TimesOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}
 const Tplus = PlusOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}}}
 const TFunSpline = Fun{Chebyshev{ChebyshevInterval{Float64},Float64},Float64,Vector{Float64}}
 
-function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
+function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true)
 
     nfields = 3 # V, W, S
 
@@ -605,7 +637,7 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     r_cheby = Fun(ApproxFun.Chebyshev(), [r_mid, Δr / 2])
     r2_cheby = r_cheby * r_cheby
 
-    (; sρ, sg, sηρ, sT, sηT) = read_solar_model(; r_in, r_out)
+    (; sρ, sg, sηρ, sT, sηT) = read_solar_model(; r_in, r_out, _stratified)
 
     T = sT.(r)
 
@@ -618,8 +650,14 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
     ρ = sρ.(r)
     ηρ = sηρ.(r)
     ηρ_cheby = ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev()), 1e-3)::TFunSpline
+    if ncoefficients(ηρ_cheby) == 0
+        ηρ_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFunSpline
+    end
     ηT = sηT.(r)
     ηT_cheby = ApproxFun.chop(Fun(sηT ∘ r_cheby, ApproxFun.Chebyshev()), 1e-2)::TFunSpline
+    if ncoefficients(ηT_cheby) == 0
+        ηT_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFunSpline
+    end
 
     DDr = (ddr + ηρ_cheby)::Tplus
     rDDr = (r_cheby * DDr)::Tmul
@@ -679,15 +717,16 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
 
     # Chebyshev Lobatto points, used in computing the Green function
     r_chebyshev_lobatto = [cos(pi*j/nr) for j in nr:-1:0]
+    r_lobatto = @. (Δr/2) * r_chebyshev_lobatto .+ r_mid
     ddr_lobatto = reverse(chebyderivGaussLobatto(nr) * (2 / Δr))
     d2dr2_lobatto = ddr_lobatto*ddr_lobatto
-    deltafn_matrix_radial = deltafn_matrix(r_chebyshev_lobatto)
+    deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
 
     HeinrichsChebyshevMatrix = heinrichs_chebyshev_matrix(nr)
 
     constants = (; κ, ν, scalings, nfields, Ω0)
     identities = (; Ir, Iℓ)
-    coordinates = (; r, r_chebyshev, r_chebyshev_lobatto)
+    coordinates = (; r, r_chebyshev, r_chebyshev_lobatto, r_lobatto)
 
     transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
 
@@ -712,7 +751,8 @@ function radial_operators(nr, nℓ, r_in_frac = 0.7, r_out_frac = 1)
         diff_operator_matrices,
         mat,
         HeinrichsChebyshevMatrix,
-        deltafn_matrix_radial
+        deltafn_matrix_radial,
+        _stratified
     )
 end
 precompile(radial_operators, (Int, Int, Float64, Float64))
@@ -796,7 +836,8 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     for ℓ in ℓs
         # numerical green function
-        Gℓ = greenfn_cheby(ℓ, operators)
+        Gℓ = greenfn_cheby(ℓ, operators,
+            operators._stratified ? greenfn_radial_lobatto : greenfn_radial_lobatto_unstratified_analytical)
         mul!(GℓC1, Gℓ, ddr_minus_2byrM)
 
         ℓℓp1 = ℓ * (ℓ + 1)
@@ -856,8 +897,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
     VV = matrix_block(M, 1, 1, nfields)
     WW = matrix_block(M, 2, 2, nfields)
 
-    ℓmin = m
-    ℓs = range(ℓmin, length = nℓ)
+    ℓs = range(m, length = nℓ)
 
     ddr_minus_2byr = (ddr - 2onebyr_cheby)::Tplus
 
@@ -896,7 +936,9 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         WWop = mat((T1 + T3 + T4)::Tplus)
 
-        Gℓ = greenfn_cheby(ℓ, operators)
+        Gℓ = greenfn_cheby(ℓ, operators,
+            operators._stratified ? greenfn_radial_lobatto : greenfn_radial_lobatto_unstratified_analytical)
+
         WWop2 = Gℓ * WWop
 
         @views @. WW[diaginds_ℓ] -= im * ν * WWop2

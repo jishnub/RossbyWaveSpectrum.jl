@@ -47,19 +47,22 @@ const P11norm = -2/√3
     nr, nℓ = 50, 2
     nparams = nr * nℓ
     m = 1
-    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-    (; Δr, r_mid) = operators.radial_params
-    (; r_chebyshev_lobatto) = operators.coordinates
-    (; Tcrfwd, Tcrinv) = operators.transforms
-    (; ddr, d2dr2, DDr) = operators.diff_operators
-    (; ηρ_cheby) = operators.rad_terms
     ℓ = 2
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
+    (; Δr) = operators.radial_params
     Gℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
     @testset "boundaries" begin
-        @test all(x -> isapprox(x/Rsun^2, 0, atol=1e-14), Gℓ[1, :])
-        @test all(x -> isapprox(x/Rsun^2, 0, atol=1e-14), Gℓ[end, :])
-        @test all(x -> isapprox(x/Rsun^2, 0, atol=1e-14), Gℓ[:, 1])
-        @test all(x -> isapprox(x/Rsun^2, 0, atol=1e-14), Gℓ[:, end])
+        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Gℓ[1, :])
+        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Gℓ[end, :])
+        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Gℓ[:, 1])
+        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Gℓ[:, end])
+    end
+
+    @testset "unstratified" begin
+        # in this case there's an analytical solution
+        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false)
+        Gℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
+        Gℓ_exp = RossbyWaveSpectrum.greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
     end
 end
 
