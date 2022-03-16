@@ -919,6 +919,11 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
     ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_rM = mat(ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_r)
     d2dr2_plus_4ηρ_by_r = (d2dr2 + 4ηρ_by_r)::Tplus
 
+    d2dr2_d2dr2_plus_4ηρ_by_rM = mat(d2dr2 * d2dr2_plus_4ηρ_by_r)
+    one_by_r2_d2dr2_plus_4ηρ_by_rM = mat(onebyr2_cheby * d2dr2_plus_4ηρ_by_r)
+    d2dr2_one_by_r2M = mat(d2dr2 * onebyr2_cheby)
+    onebyr4_chebyM = mat(onebyr2_cheby*onebyr2_cheby)
+
     # caches for the WW term
     T1 = zeros(nr, nr)
     T3 = zeros(nr, nr)
@@ -930,16 +935,16 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
         blockdiaginds_ℓ = blockinds((m, nr), ℓ)
 
         ℓℓp1 = ℓ * (ℓ + 1)
-        neg2by3_ℓℓp1 = -2ℓℓp1 / 3
-        ℓℓp1_by_r2 = ℓℓp1 * onebyr2_cheby
 
         @views @. VV[blockdiaginds_ℓ] -= im * ν * (d2dr2M - ℓℓp1 * onebyr2_chebyM + ηρ_ddr_minus_2byrM)
 
-        T1 .= ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_rM .- ℓℓp1 .* ddr_minus_2byr_ηρ_by_r2M .+
-                mat((d2dr2 - ℓℓp1_by_r2) * (d2dr2_plus_4ηρ_by_r - ℓℓp1_by_r2))
+        @. T1 = ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_rM - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2M +
+                d2dr2_d2dr2_plus_4ηρ_by_rM - ℓℓp1 * (one_by_r2_d2dr2_plus_4ηρ_by_rM + d2dr2_one_by_r2M) +
+                ℓℓp1^2 * onebyr4_chebyM
 
         @. T3 = ddr_ηρ_cheby_ddr_minus_2byr_DDrM + ℓℓp1 * ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byrM
 
+        neg2by3_ℓℓp1 = -2ℓℓp1 / 3
         @. T4 = neg2by3_ℓℓp1 * ηρ²_by_r2M
 
         @. WWop = T1 + T3 + T4
