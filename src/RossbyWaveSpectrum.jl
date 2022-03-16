@@ -7,15 +7,16 @@ using FastTransforms
 using Folds
 using ForwardDiff
 using Infinities
+using JLD2
 using Kronecker
 const kron2 = Kronecker.KroneckerProduct
 using LinearAlgebra
 using LinearAlgebra: BLAS
-using JLD2
 using LegendrePolynomials
 using MKL
 using OffsetArrays
 using SimpleDelimitedFiles: readdlm
+using TimerOutputs
 
 export datadir
 
@@ -764,17 +765,19 @@ function uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
     return M
 end
 
-function uniform_rotation_matrix_terms_outer((ℓ, m), nchebyr,
+function uniform_rotation_matrix_terms_outer!((WWterm, WSterm, SWterm, SSterm),
+    (ℓ, m), nchebyr,
     (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
         onebyr2_cheby_ddr_S0_by_cpM), Ω0)
+
     ℓℓp1 = ℓ*(ℓ+1)
 
-    WWterm = @. 2m / ℓℓp1 * (ddrDDrM - onebyr2_IplusrηρM * ℓℓp1)
-    WSterm = @. (-1 / Ω0) * gM
-    SWterm = @. (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
-    SSterm = @. (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M) / Ω0
+    @. WWterm = 2m / ℓℓp1 * (ddrDDrM - onebyr2_IplusrηρM * ℓℓp1)
+    @. WSterm = (-1 / Ω0) * gM
+    @. SWterm = (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
+    @. SSterm = (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M) / Ω0
 
-    (; WWterm, WSterm, SWterm, SSterm)
+    WWterm, WSterm, SWterm, SSterm
 end
 
 function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
@@ -783,7 +786,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     (; ddr, d2dr2) = operators.diff_operators
     (; onebyr2_cheby, onebyr_cheby, ddr_lnρT, κ,
         ηρ_cheby, r_cheby, ddr_S0_by_cp) = operators.rad_terms
-    (; ddrDDrM, ddrM, DDrM,
+    (; ddrDDrM, ddrM, DDrM, onebyr2_chebyM,
         onebyr_chebyM, grddrM, gM, ddr_minus_2byrM,
         DDr_minus_2byrM) = operators.diff_operator_matrices
     (; mat) = operators
@@ -821,7 +824,12 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp)
     ∇r2_plus_ddr_lnρT_ddr = d2dr2 + 2onebyr_cheby*ddr + ddr_lnρT * ddr
     κ_∇r2_plus_ddr_lnρT_ddrM = chebyshevmatrix(κ * ∇r2_plus_ddr_lnρT_ddr, nr, 3)
-    κ_by_r2M = mat(κ * onebyr2_cheby)
+    κ_by_r2M = κ .* onebyr2_chebyM
+
+    WWterm = zeros(nr, nr)
+    WSterm = zeros(nr, nr)
+    SWterm = zeros(nr, nr)
+    SSterm = zeros(nr, nr)
 
     for ℓ in ℓs
         # numerical green function
@@ -830,25 +838,25 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
         ℓℓp1 = ℓ * (ℓ + 1)
 
-        diaginds_ℓ = blockinds((m, nr), ℓ)
+        blockdiaginds_ℓ = blockinds((m, nr), ℓ)
 
-        (; WWterm, WSterm, SSterm, SWterm) = uniform_rotation_matrix_terms_outer(
+        uniform_rotation_matrix_terms_outer!((WWterm, WSterm, SWterm, SSterm),
                 (ℓ, m), nchebyr,
                 (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
-                    onebyr2_cheby_ddr_S0_by_cpM),
-                Ω0)
+                    onebyr2_cheby_ddr_S0_by_cpM), Ω0)
 
-        VV[diaginds_ℓ] .= 2m/ℓℓp1 * I(nchebyr)
+        VVblockdiag = @view VV[blockdiaginds_ℓ]
+        VVblockdiag_diag = @view VVblockdiag[diagind(VVblockdiag)]
+        VVblockdiag_diag .= 2m/ℓℓp1
 
-        WW[diaginds_ℓ] = Gℓ * WWterm
+        WW[blockdiaginds_ℓ] = Gℓ * WWterm
 
-        if nfields === 3
-            WS[diaginds_ℓ] = Gℓ * (ε / Wscaling) * WSterm
-        end
+        if nfields == 3
+            WSterm .*= (ε / Wscaling)
+            WS[blockdiaginds_ℓ] = Gℓ * WSterm
 
-        if nfields === 3
-            @. SW[diaginds_ℓ] = (Wscaling / ε) * SWterm
-            @. SS[diaginds_ℓ] = -im * SSterm
+            @views @. SW[blockdiaginds_ℓ] = (Wscaling / ε) * SWterm
+            @views @. SS[blockdiaginds_ℓ] = -im * SSterm
         end
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
@@ -861,10 +869,10 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
             mul!(GℓCℓ′, Gℓ, Cℓ′)
             @. WVℓℓ′ = -2 / ℓℓp1 * (ℓ′ℓ′p1 * GℓC1 * cosθ[ℓ, ℓ′] + GℓCℓ′ * sinθdθ[ℓ, ℓ′]) / Wscaling
 
-            inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
+            blockinds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
-            VW[inds_ℓℓ′] = VWℓℓ′
-            WV[inds_ℓℓ′] = WVℓℓ′
+            VW[blockinds_ℓℓ′] = VWℓℓ′
+            WV[blockinds_ℓℓ′] = WVℓℓ′
         end
     end
 
@@ -874,10 +882,10 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 end
 
 function viscosity_terms!(M, nr, nℓ, m; operators)
-    (; rad_terms, diff_operators, radial_params) = operators
-    (; nchebyr) = radial_params
-    (; DDr, ddr, d2dr2) = diff_operators
-    (; onebyr_cheby, onebyr2_cheby, ηρ_cheby, r_cheby) = rad_terms
+    (; nchebyr) = operators.radial_params
+    (; DDr, ddr, d2dr2) = operators.diff_operators
+    (; d2dr2M, onebyr2_chebyM) = operators.diff_operator_matrices
+    (; onebyr_cheby, onebyr2_cheby, ηρ_cheby, r_cheby) = operators.rad_terms
     (; mat) = operators
     (; ν) = operators.constants
 
@@ -889,46 +897,58 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
     ddr_minus_2byr = (ddr - 2onebyr_cheby)::Tplus
 
-    ηρ_ddr_minus_2byr = (ηρ_cheby * ddr_minus_2byr)::Tmul
+    ηρ_ddr_minus_2byrM = mat((ηρ_cheby * ddr_minus_2byr)::Tmul)
 
     ηρ_by_r = onebyr_cheby * ηρ_cheby
     ηρ_by_r2 = onebyr2_cheby * ηρ_cheby
     ηρ²_by_r2 = ηρ_by_r2 * ηρ_cheby
+    ηρ²_by_r2M = mat(ηρ²_by_r2)
     ddr_ηρ_by_r2 = ddr[ηρ_by_r2]::Tmul
     ddr_minus_2byr_DDr = (ddr_minus_2byr * DDr)::Tmul
     ηρ_cheby_ddr_minus_2byr_DDr = (ηρ_cheby * ddr_minus_2byr_DDr)::Tmul
     ηρ_by_r2_ddr_minus_2byr = (ηρ²_by_r2 * ddr_minus_2byr)::Tmul
     ddr_ηρ_cheby_ddr_minus_2byr_DDr = (ddr * ηρ_cheby_ddr_minus_2byr_DDr)::Tmul
+    ddr_ηρ_cheby_ddr_minus_2byr_DDrM = mat(ddr_ηρ_cheby_ddr_minus_2byr_DDr)
     ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr = (ddr_ηρ_by_r2 - 2ηρ_by_r2_ddr_minus_2byr)::Tplus
+    ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byrM = mat(ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr)
     r_cheby_d2dr2_ηρ_by_r = (r_cheby * d2dr2[ηρ_by_r]::Tmul)::Tmul
 
     ddr_minus_2byr_ηρ_by_r2 = ddr_minus_2byr[ηρ_by_r2]::Tmul
+    ddr_minus_2byr_ηρ_by_r2M = mat(ddr_minus_2byr_ηρ_by_r2)
     ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_r = (ddr_minus_2byr * r_cheby_d2dr2_ηρ_by_r)::Tmul
+    ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_rM = mat(ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_r)
     d2dr2_plus_4ηρ_by_r = (d2dr2 + 4ηρ_by_r)::Tplus
 
+    # caches for the WW term
+    T1 = zeros(nr, nr)
+    T3 = zeros(nr, nr)
+    T4 = zeros(nr, nr)
+    WWop = zeros(nr, nr)
+    WWop2 = zeros(nr, nr)
+
     for ℓ in ℓs
-        diaginds_ℓ = blockinds((m, nr), ℓ)
+        blockdiaginds_ℓ = blockinds((m, nr), ℓ)
 
         ℓℓp1 = ℓ * (ℓ + 1)
+        neg2by3_ℓℓp1 = -2ℓℓp1 / 3
         ℓℓp1_by_r2 = ℓℓp1 * onebyr2_cheby
 
-        @views VV[diaginds_ℓ] .-= im * ν * mat(d2dr2 - ℓℓp1_by_r2 + ηρ_ddr_minus_2byr)
+        @views @. VV[blockdiaginds_ℓ] -= im * ν * (d2dr2M - ℓℓp1 * onebyr2_chebyM + ηρ_ddr_minus_2byrM)
 
-        T1 = ((ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_r - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2)::Tplus +
-              ((d2dr2 - ℓℓp1_by_r2)::Tplus * (d2dr2_plus_4ηρ_by_r - ℓℓp1_by_r2)::Tplus)::Tmul)::Tplus
+        T1 .= ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_rM .- ℓℓp1 .* ddr_minus_2byr_ηρ_by_r2M .+
+                mat((d2dr2 - ℓℓp1_by_r2) * (d2dr2_plus_4ηρ_by_r - ℓℓp1_by_r2))
 
-        T3 = (ddr_ηρ_cheby_ddr_minus_2byr_DDr +
-              ℓℓp1 * ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr)::Tplus
+        @. T3 = ddr_ηρ_cheby_ddr_minus_2byr_DDrM + ℓℓp1 * ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byrM
 
-        T4 = -2ℓℓp1 / 3 * ηρ²_by_r2
+        @. T4 = neg2by3_ℓℓp1 * ηρ²_by_r2M
 
-        WWop = mat((T1 + T3 + T4)::Tplus)
+        @. WWop = T1 + T3 + T4
 
         Gℓ = greenfn_cheby(ℓ, operators)
 
-        WWop2 = Gℓ * WWop
+        mul!(WWop2, Gℓ, WWop)
 
-        @views @. WW[diaginds_ℓ] -= im * ν * WWop2
+        @views @. WW[blockdiaginds_ℓ] -= im * ν * WWop2
     end
 
     return M
@@ -1039,16 +1059,16 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
         # numerical green function
         Gℓ = greenfn_cheby(ℓ, operators)
         ℓℓp1 = ℓ * (ℓ + 1)
-        diaginds_ℓ = blockinds((m, nr), ℓ)
+        blockdiaginds_ℓ = blockinds((m, nr), ℓ)
         two_over_ℓℓp1 = 2 / ℓℓp1
 
-        VVd = @view VV[diaginds_ℓ]
+        VVd = @view VV[blockdiaginds_ℓ]
         @views VVd[diagind(VVd)] .+= m * (two_over_ℓℓp1 - 1) * ΔΩ_by_Ω0
 
         WWmat = ΔΩ_by_Ω0 * mat(-twoηρ_by_r + (two_over_ℓℓp1 - 1) *
                                              (ddrDDr - ℓℓp1 * onebyr2_cheby))
 
-        @views WW[diaginds_ℓ] .+= Gℓ * m * WWmat
+        @views WW[blockdiaginds_ℓ] .+= Gℓ * m * WWmat
 
         for ℓ′ in ℓ-1:2:ℓ+1
             ℓ′ in ℓs || continue
@@ -1117,38 +1137,39 @@ function radial_differential_rotation_profile_derivatives(nℓ, m, r;
     (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, drΔΩ_real, d2dr2ΔΩ_real, ddrΔΩ, d2dr2ΔΩ)
 end
 
-function radial_differential_rotation_terms_inner((ℓ, ℓ′),
+function radial_differential_rotation_terms_inner!((VWterm, WVterm), (ℓ, ℓ′),
     (cosθ_ℓℓ′, sinθdθ_ℓℓ′, ∇²_sinθdθ_ℓℓ′),
-    (ΔΩ, ddrΔΩ, Ω0),
-    (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r))
+    (ddrΔΩM, Ω0),
+    (ΔΩ_by_rM, ΔΩ_DDrM, ΔΩ_DDr_min_2byrM, ddrΔΩ_plus_ΔΩddrM, twoΔΩ_by_rM))
 
     ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
     ℓℓp1 = ℓ * (ℓ + 1)
     two_over_ℓℓp1 = 2/ℓℓp1
 
-    VWterm = -two_over_ℓℓp1 *
-            (1 / Ω0) * (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byr - ddrΔΩ) +
-            sinθdθ_ℓℓ′ * ((ΔΩ_DDr - ℓ′ℓ′p1 * ΔΩ_by_r) - ℓ′ℓ′p1 / 2 * ddrΔΩ))
+    @. VWterm = -two_over_ℓℓp1 *
+            (1 / Ω0) * (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byrM - ddrΔΩM) +
+            sinθdθ_ℓℓ′ * ((ΔΩ_DDrM - ℓ′ℓ′p1 * ΔΩ_by_rM) - ℓ′ℓ′p1 / 2 * ddrΔΩM))
 
-    WVterm = -1/ℓℓp1 * (1/Ω0) * (
-                (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * ddrΔΩ_plus_ΔΩddr
-                + ∇²_sinθdθ_ℓℓ′ * twoΔΩ_by_r
+    @. WVterm = -1/ℓℓp1 * (1/Ω0) * (
+                (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * ddrΔΩ_plus_ΔΩddrM
+                + ∇²_sinθdθ_ℓℓ′ * twoΔΩ_by_rM
             )
 
-    (; VWterm, WVterm)
+    VWterm, WVterm
 end
 
-function radial_differential_rotation_terms_outer((ℓ, m), (ΔΩ, ddrΔΩ, d2dr2ΔΩ, Ω0),
-    (ddrΔΩ_DDr_plus_ΔΩ_ddrDDr, ΔΩ_by_r2, WWfixedterms))
+function radial_differential_rotation_terms_outer!((VVterm, WWterm),
+    (ℓ, m), (ΔΩM, Ω0),
+    (ddrΔΩ_DDr_plus_ΔΩ_ddrDDrM, ΔΩ_by_r2M, WWfixedtermsM))
 
     ℓℓp1 = ℓ * (ℓ + 1)
     two_over_ℓℓp1 = 2/ℓℓp1
     two_over_ℓℓp1_min_1 = two_over_ℓℓp1 - 1
 
-    VVterm = m * two_over_ℓℓp1_min_1 * ΔΩ / Ω0
-    WWterm = m * (two_over_ℓℓp1_min_1 * (ddrΔΩ_DDr_plus_ΔΩ_ddrDDr - ℓℓp1 * ΔΩ_by_r2) + WWfixedterms)/ Ω0
+    @. VVterm = m * two_over_ℓℓp1_min_1 * ΔΩM / Ω0
+    @. WWterm = m * (two_over_ℓℓp1_min_1 * (ddrΔΩ_DDr_plus_ΔΩ_ddrDDrM - ℓℓp1 * ΔΩ_by_r2M) + WWfixedtermsM)/ Ω0
 
-    (; VVterm, WWterm)
+    VVterm, WWterm
 end
 
 function radial_differential_rotation_terms!(M, nr, nℓ, m;
@@ -1177,6 +1198,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv
 
     ΔΩM = mat(ΔΩ)
+    ddrΔΩM = mat(ddrΔΩ)
 
     ddrΔΩ_over_g = ddrΔΩ / g_cheby
     ddrΔΩ_over_gM = mat(ddrΔΩ_over_g)
@@ -1210,43 +1232,44 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
     WWfixedterms = (-two_ΔΩbyr_ηρ + d2dr2ΔΩ + ddrΔΩ_ddr_plus_2byr)::Tplus
 
+    inner_matrices = map(mat, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r))
+    outer_matrices = map(mat, (ddrΔΩ_DDr_plus_ΔΩ_ddrDDr, ΔΩ_by_r2, WWfixedterms))
+
+    VWterm, WVterm = zeros(nr, nr), zeros(nr, nr)
+    WWterm, VVterm = zeros(nr, nr), zeros(nr, nr)
+
     for ℓ in ℓs
         # numerical green function
         Gℓ = greenfn_cheby(ℓ, operators)
-        ℓℓp1 = ℓ * (ℓ + 1)
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
-        two_over_ℓℓp1 = 2 / ℓℓp1
 
-        (; VVterm, WWterm) = radial_differential_rotation_terms_outer(
-                                (ℓ, m), (ΔΩ, ddrΔΩ, d2dr2ΔΩ, Ω0),
-                                (ddrΔΩ_DDr_plus_ΔΩ_ddrDDr, ΔΩ_by_r2, WWfixedterms))
+        radial_differential_rotation_terms_outer!((VVterm, WWterm), (ℓ, m), (ΔΩM, Ω0), outer_matrices)
 
-        @views VV[inds_ℓℓ] .+= mat(VVterm)
-        @views WW[inds_ℓℓ] .+= Gℓ * mat(WWterm)
+        @views @. VV[inds_ℓℓ] += VVterm
+        @views WW[inds_ℓℓ] .+= Gℓ * WWterm
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
 
-            (; VWterm, WVterm) = radial_differential_rotation_terms_inner(
+            radial_differential_rotation_terms_inner!((VWterm, WVterm),
                     (ℓ, ℓ′), (cosθo[ℓ, ℓ′], sinθdθo[ℓ, ℓ′], ∇²_sinθdθo[ℓ, ℓ′]),
-                    (ΔΩ, ddrΔΩ, Ω0),
-                    (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r))
+                    (ddrΔΩM, Ω0), inner_matrices)
 
-            @views VW[inds_ℓℓ′] .+= Wscaling * mat(VWterm)
+            @views @. VW[inds_ℓℓ′] += Wscaling * VWterm
 
-            @views WV[inds_ℓℓ′] .+= Gℓ * (1 / Wscaling) * mat(WVterm)
+            WVterm .*= (1 / Wscaling)
+            @views WV[inds_ℓℓ′] .+= Gℓ * WVterm
 
-            if nfields === 3
-                @. SV[inds_ℓℓ′] -= (1 / ε) * cosθo[ℓ, ℓ′] * 2m * ddrΔΩ_over_gM
+            if nfields == 3
+                @views @. SV[inds_ℓℓ′] -= (1 / ε) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM
             end
         end
 
         for ℓ′ in intersect(ℓs, ℓ-2:2:ℓ+2)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
-            if nfields === 3
-                @. SW[inds_ℓℓ′] += (Wscaling / ε) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM
+            if nfields == 3
+                @views @. SW[inds_ℓℓ′] += (Wscaling / ε) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM
             end
         end
     end
@@ -1499,8 +1522,17 @@ function uniform_rotation_spectrum(nr, nℓ, m; operators,
     cache = constrained_matmul_cache(constraints),
     kw...)
 
-    M = uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
-    constrained_eigensystem(M, operators, constraints, cache)
+    rp = operators.radial_params
+    @assert (nr, nℓ) == (rp.nr, rp.nℓ) "Please regenerate operators for nr = $nr amd nℓ = $nℓ"
+
+    to = TimerOutput()
+
+    @timeit to "matrix" M = uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache)
+    if get(kw, :print_timer, false)
+        println(to)
+    end
+    X
 end
 function uniform_rotation_spectrum!(M, nr, nℓ, m; operators,
     constraints = constraintmatrix(operators),
@@ -1535,8 +1567,17 @@ function differential_rotation_spectrum(nr, nℓ, m;
     cache = constrained_matmul_cache(constraints),
     kw...)
 
-    M = differential_rotation_matrix(nr, nℓ, m; operators, rotation_profile, kw...)
-    constrained_eigensystem(M, operators, constraints, cache)
+    rp = operators.radial_params
+    @assert (nr, nℓ) == (rp.nr, rp.nℓ) "Please regenerate operators for nr = $nr amd nℓ = $nℓ"
+
+    to = TimerOutput()
+
+    @timeit to "matrix" M = differential_rotation_matrix(nr, nℓ, m; operators, rotation_profile, kw...)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache)
+    if get(kw, :print_timer, false)
+        println(to)
+    end
+    X
 end
 function differential_rotation_spectrum!(M, nr, nℓ, m;
     rotation_profile,
