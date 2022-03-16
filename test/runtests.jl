@@ -45,8 +45,6 @@ const P11norm = -2/√3
 
 @testset "green fn W" begin
     nr, nℓ = 50, 2
-    nparams = nr * nℓ
-    m = 1
     ℓ = 2
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
     (; Δr) = operators.radial_params
@@ -67,9 +65,27 @@ const P11norm = -2/√3
 
     @testset "unstratified" begin
         # in this case there's an analytical solution
+        function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
+            (; r_in, r_out, Δr) = operators.radial_params
+            r_in_frac = r_in/Rsun
+            r_out_frac = r_out/Rsun
+            (; r_lobatto) = operators.coordinates
+            W = (2ℓ+1)*((r_out_frac)^(2ℓ+1) - (r_in_frac)^(2ℓ+1))
+            norm = Rsun/W * (Δr/2)
+            nr_lobatto = length(r_lobatto)
+            H = zeros(nr_lobatto, nr_lobatto)
+
+            for rind in axes(r_lobatto, 1)[2:end-1], sind in axes(r_lobatto, 1)[2]:rind
+                ri = r_lobatto[rind]/Rsun
+                sj = r_lobatto[sind]/Rsun
+                H[rind, sind] = (sj^(ℓ+1) - r_in_frac^(2ℓ+1)/sj^ℓ)*(ri^(ℓ+1) - r_out_frac^(2ℓ+1)/ri^ℓ) * norm
+            end
+
+            Symmetric(H, :L)
+        end
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false)
         Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
-        Hℓ_exp = RossbyWaveSpectrum.greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
+        Hℓ_exp = greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
         @test Hℓ ≈ Hℓ_exp rtol=1e-2
         @test Hℓ ≈ Symmetric(Hℓ) rtol=1e-2
     end
@@ -425,15 +441,58 @@ end
     end
 end
 
-@testset "uniform rotation ℓ == m solution" begin
+@testset "uniform rotation solution" begin
     nr, nℓ = 30, 15
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
+    (; r_in, r_out, Δr) = operators.radial_params
+    (; BC) = constraints;
     @testset for m in [1, 10, 20]
         λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(nr, nℓ, m; operators, constraints);
         λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
             operators, constraints, Δl_cutoff = 7, n_cutoff = 9,
             eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3);
-        @test findmin(abs.(real(λuf) .- 2/(m+1)))[1] < 1e-4
+        @info "$(length(λuf)) eigenmode$(length(λuf) > 1 ? "s" : "") found for m = $m"
+        @testset "ℓ == m" begin
+            @test findmin(abs.(real(λuf) .- 2/(m+1)))[1] < 1e-4
+        end
+        @testset "boundary condition" begin
+            @testset for n in axes(vuf, 2)
+                vfn = @view vuf[:, n]
+                @testset "V" begin
+                    @testset for ℓind in 1:nℓ
+                        ℓ_skip = (ℓind - 1)*nr
+                        inds_ℓ = ℓ_skip .+ (1:nr)
+                        v = vfn[inds_ℓ]
+                        @test BC[1:2, inds_ℓ] * v ≈ [0, 0] atol=1e-10
+                        pv = SpecialPolynomials.Chebyshev(v)
+                        drpv = 1/(Δr/2) * SpecialPolynomials.derivative(pv)
+                        @testset "inner boundary" begin
+                            @test (drpv(-1) - 2pv(-1)/r_in)*Rsun ≈ 0 atol=1e-10
+                        end
+                        @testset "outer boundary" begin
+                            @test (drpv(1) - 2pv(1)/r_out)*Rsun ≈ 0 atol=1e-10
+                        end
+                    end
+                end
+                @testset "W" begin
+                    @testset for ℓind in 1:nℓ
+                        ℓ_skip = (ℓind - 1)*nr
+                        inds_ℓ = nr*nℓ + ℓ_skip .+ (1:nr)
+                        w = vfn[inds_ℓ]
+                        @test BC[3:4, inds_ℓ] * w ≈ [0, 0] atol=1e-10
+                        pw = SpecialPolynomials.Chebyshev(w)
+                        @testset "inner boundary" begin
+                            @test sum(i -> (-1)^i * w[i], axes(w, 1)) ≈ 0 atol=1e-10
+                            @test pw(-1) ≈ 0 atol=1e-10
+                        end
+                        @testset "outer boundary" begin
+                            @test sum(w) ≈ 0 atol=1e-10
+                            @test pw(1) ≈ 0 atol=1e-10
+                        end
+                    end
+                end
+            end
+        end
     end
 end
 

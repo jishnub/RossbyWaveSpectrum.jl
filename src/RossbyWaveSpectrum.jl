@@ -327,7 +327,7 @@ function constraintmatrix(operators; entropy_outer_boundary = :neumann)
     MSno = OffsetArray(MSn, :, 0:nr-1)
 
     (; nfields) = operators.constants
-    BC = zeros(nfields * 2nℓ, nfields * nparams)
+    BC = zeros(nfields * nconstraints, nfields * nparams)
 
     # constraints on V, Robin
     for n = 0:nr-1
@@ -368,22 +368,20 @@ function constraintmatrix(operators; entropy_outer_boundary = :neumann)
         end
     end
 
-    indstart = 1
-    indend = nr
+    fieldmatrices = [MVn, MWn, MSn][1:nfields]
     for ℓind = 1:nℓ
-        BC[nradconstraints*(ℓind-1).+axes(MVn, 1), indstart:indend] = MVn
-        BC[nradconstraints*(ℓind-1).+axes(MWn, 1).+nconstraints, nparams.+(indstart:indend)] = MWn
-        if nfields == 3
-            BC[nradconstraints*(ℓind-1).+axes(MSn, 1).+2nconstraints, 2nparams.+(indstart:indend)] = MSn
+        indstart = (ℓind - 1)*nr + 1
+        indend = (ℓind - 1)*nr + nr
+        for (fieldno, M) in enumerate(fieldmatrices)
+            rowinds = (fieldno - 1) * nconstraints + nradconstraints*(ℓind-1).+ (1:nradconstraints)
+            colinds = (fieldno - 1) * nparams .+ (indstart:indend)
+            BC[rowinds, colinds] = M
         end
-        indstart += nr
-        indend += nr
     end
 
     ZC = nullspace(BC)
-    ZW = nullspace(MWn)
 
-    (; BC, ZC, ZW, nfields)
+    (; BC, ZC, nfields)
 end
 
 function constrained_matmul_cache(constraints)
@@ -535,25 +533,6 @@ function greenfn_radial_lobatto(ℓ, operators)
     # the Δr/2 factor is used to convert the subsequent integrals ∫H f dr to ∫(Δr/2)H f dx,
     # where x = (r - rmid)/(Δr/2)
     return H
-end
-
-function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
-    (; r_in, r_out, Δr) = operators.radial_params
-    r_in_frac = r_in/Rsun
-    r_out_frac = r_out/Rsun
-    (; r_lobatto) = operators.coordinates
-    W = (2ℓ+1)*((r_out_frac)^(2ℓ+1) - (r_in_frac)^(2ℓ+1))
-    norm = Rsun/W * (Δr/2)
-    nr_lobatto = length(r_lobatto)
-    H = zeros(nr_lobatto, nr_lobatto)
-
-    for rind in axes(r_lobatto, 1)[2:end-1], sind in axes(r_lobatto, 1)[2]:rind
-        ri = r_lobatto[rind]/Rsun
-        sj = r_lobatto[sind]/Rsun
-        H[rind, sind] = (sj^(ℓ+1) - r_in_frac^(2ℓ+1)/sj^ℓ)*(ri^(ℓ+1) - r_out_frac^(2ℓ+1)/ri^ℓ) * norm
-    end
-
-    Symmetric(H, :L)
 end
 
 function greenfn_cheby(ℓ, operators, greenfn_radial_function = greenfn_radial_lobatto)
@@ -836,8 +815,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     for ℓ in ℓs
         # numerical green function
-        Gℓ = greenfn_cheby(ℓ, operators,
-            operators._stratified ? greenfn_radial_lobatto : greenfn_radial_lobatto_unstratified_analytical)
+        Gℓ = greenfn_cheby(ℓ, operators)
         mul!(GℓC1, Gℓ, ddr_minus_2byrM)
 
         ℓℓp1 = ℓ * (ℓ + 1)
@@ -936,8 +914,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         WWop = mat((T1 + T3 + T4)::Tplus)
 
-        Gℓ = greenfn_cheby(ℓ, operators,
-            operators._stratified ? greenfn_radial_lobatto : greenfn_radial_lobatto_unstratified_analytical)
+        Gℓ = greenfn_cheby(ℓ, operators)
 
         WWop2 = Gℓ * WWop
 
