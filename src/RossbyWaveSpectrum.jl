@@ -487,6 +487,16 @@ function heinrichs_chebyshev_matrix(n)
     return M
 end
 
+function chebyshevneumann_chebyshev_matrix(n)
+    M = zeros(n-2, n)
+    Mo = OffsetArray(M, OffsetArrays.Origin(0))
+    for n in axes(Mo, 1)
+        Mo[n, n] = 1
+        Mo[n, n+2] = -(n/(n+2))^2
+    end
+    permutedims(M)
+end
+
 deltafn(x, y; scale) = exp(-(x/scale-y/scale)^2/2)
 
 function deltafn_matrix(pts; scale)
