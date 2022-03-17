@@ -1,7 +1,7 @@
 @time using RossbyWaveSpectrum
 
 nr = 50;
-nℓ = 20;
+nℓ = 25;
 mrange = 1:20;
 
 # test
