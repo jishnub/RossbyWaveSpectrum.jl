@@ -1509,16 +1509,17 @@ end
 _maybetrimM(M, nfields, nparams) = nfields == 3 ? M : M[1:(nfields*nparams), 1:(nfields*nparams)]
 
 function constrained_eigensystem(M, operators, constraints = constraintmatrix(operators),
-    cache = constrained_matmul_cache(constraints))
+    cache = constrained_matmul_cache(constraints), timer = TimerOutput())
 
     (; nparams) = operators.radial_params
     (; ZC, nfields) = constraints
     M = _maybetrimM(M, nfields, nparams)
-    (; M_constrained, MZCcache) = cache #= not thread safe =#
-    mul!(M_constrained, permutedims(ZC), mul!(MZCcache, M, ZC))
+    (; M_constrained, MZCcache) = cache
+    #= not thread safe =#
+    @timeit timer "basis" mul!(M_constrained, permutedims(ZC), mul!(MZCcache, M, ZC))
     # M_constrained = permutedims(ZC) * M * ZC # thread-safe but allocating
-    λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(M_constrained)
-    v = ZC * w
+    @timeit timer "eigen" λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(M_constrained)
+    @timeit timer "projectback" v = ZC * w
     λ, v, M
 end
 
@@ -1533,7 +1534,7 @@ function uniform_rotation_spectrum(nr, nℓ, m; operators,
     to = TimerOutput()
 
     @timeit to "matrix" M = uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -1544,8 +1545,17 @@ function uniform_rotation_spectrum!(M, nr, nℓ, m; operators,
     cache = constrained_matmul_cache(constraints),
     kw...)
 
-    uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
-    constrained_eigensystem(M, operators, constraints, cache)
+    rp = operators.radial_params
+    @assert (nr, nℓ) == (rp.nr, rp.nℓ) "Please regenerate operators for nr = $nr amd nℓ = $nℓ"
+
+    to = TimerOutput()
+
+    @timeit to "matrix" uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache)
+    if get(kw, :print_timer, false)
+        println(to)
+    end
+    X
 end
 
 function real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop)
@@ -1578,7 +1588,7 @@ function differential_rotation_spectrum(nr, nℓ, m;
     to = TimerOutput()
 
     @timeit to "matrix" M = differential_rotation_matrix(nr, nℓ, m; operators, rotation_profile, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -1591,8 +1601,17 @@ function differential_rotation_spectrum!(M, nr, nℓ, m;
     cache = constrained_matmul_cache(constraints),
     kw...)
 
-    differential_rotation_matrix!(M, nr, nℓ, m; operators, rotation_profile, kw...)
-    constrained_eigensystem(M, operators, constraints, cache)
+    rp = operators.radial_params
+    @assert (nr, nℓ) == (rp.nr, rp.nℓ) "Please regenerate operators for nr = $nr amd nℓ = $nℓ"
+
+    to = TimerOutput()
+
+    @timeit to "matrix" differential_rotation_matrix!(M, nr, nℓ, m; operators, rotation_profile, kw...)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to)
+    if get(kw, :print_timer, false)
+        println(to)
+    end
+    X
 end
 
 rossby_ridge(m, ℓ = m; ΔΩ_by_Ω = 0) = 2m / (ℓ * (ℓ + 1)) * (1 + ΔΩ_by_Ω) - m * ΔΩ_by_Ω
