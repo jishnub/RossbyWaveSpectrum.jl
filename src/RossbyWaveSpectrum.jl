@@ -612,6 +612,9 @@ const Tplus = PlusOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}
 const TFunSpline = Fun{Chebyshev{ChebyshevInterval{Float64},Float64},Float64,Vector{Float64}}
 
 function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true)
+    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified)
+end
+function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified)
 
     nfields = 3 # V, W, S
 
@@ -745,7 +748,6 @@ function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified
         _stratified
     )
 end
-precompile(radial_operators, (Int, Int, Float64, Float64))
 
 function blockinds((m, nr), ℓ, ℓ′ = ℓ)
     @assert ℓ >= m "ℓ must be >= m"
@@ -2041,6 +2043,7 @@ function eigenfunction_n_theta!(VWSinv, F, v, m, operators;
     invshtransform2!(VWSinv, VW, m; nℓ, Plcosθ)
 end
 
-
+# precompile
+precompile(_radial_operators, (Int, Int, Float64, Float64, Bool))
 
 end # module
