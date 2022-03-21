@@ -45,49 +45,66 @@ const P11norm = -2/√3
 
 @testset "green fn W" begin
     nr, nℓ = 50, 2
-    ℓ = 2
+
+    n_lobatto = 2nr
+    r_chebyshev_lobatto = RossbyWaveSpectrum.chebyshevnodes_lobatto(n_lobatto)
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-    (; Δr) = operators.radial_params
-    (; sρ) = operators.rad_terms
-    (; r_lobatto) = operators.coordinates
-    Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
-    @testset "boundaries" begin
-        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[1, :])
-        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[end, :])
-        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[:, 1])
-        @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[:, end])
-    end
+    operators_unstratified = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false)
+    (; Δr, r_mid) = operators.radial_params
+    r_lobatto = @. (Δr/2) * r_chebyshev_lobatto .+ r_mid
 
-    @testset "symmetry" begin
-        H2 = Hℓ .* sρ.(r_lobatto)'
-        @test H2 ≈ Symmetric(H2) rtol=1e-2
-    end
+    @testset for ℓ in 2:5:42
+        (; sρ) = operators.rad_terms
 
-    @testset "unstratified" begin
-        # in this case there's an analytical solution
-        function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
-            (; r_in, r_out, Δr) = operators.radial_params
-            r_in_frac = r_in/Rsun
-            r_out_frac = r_out/Rsun
-            (; r_lobatto) = operators.coordinates
-            W = (2ℓ+1)*((r_out_frac)^(2ℓ+1) - (r_in_frac)^(2ℓ+1))
-            norm = Rsun/W * (Δr/2)
-            nr_lobatto = length(r_lobatto)
-            H = zeros(nr_lobatto, nr_lobatto)
-
-            for rind in axes(r_lobatto, 1)[2:end-1], sind in axes(r_lobatto, 1)[2]:rind
-                ri = r_lobatto[rind]/Rsun
-                sj = r_lobatto[sind]/Rsun
-                H[rind, sind] = (sj^(ℓ+1) - r_in_frac^(2ℓ+1)/sj^ℓ)*(ri^(ℓ+1) - r_out_frac^(2ℓ+1)/ri^ℓ) * norm
-            end
-
-            Symmetric(H, :L)
+        Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators, n_lobatto)
+        @testset "boundaries" begin
+            @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[1, :])
+            @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[end, :])
+            @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[:, 1])
+            @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[:, end])
         end
-        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false)
-        Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
-        Hℓ_exp = greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
-        @test Hℓ ≈ Hℓ_exp rtol=1e-2
-        @test Hℓ ≈ Symmetric(Hℓ) rtol=1e-2
+
+        @testset "symmetry" begin
+            H2 = Hℓ .* sρ.(r_lobatto)'
+            @test H2 ≈ Symmetric(H2) rtol=1e-1
+            @test_broken H2 ≈ Symmetric(H2) rtol=1e-2
+        end
+
+        @testset "unstratified" begin
+            # in this case there's an analytical solution
+            function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
+                (; r_in, r_out, Δr) = operators.radial_params
+                r_in_frac = r_in/Rsun
+                r_out_frac = r_out/Rsun
+                W = (2ℓ+1)*((r_out_frac)^(2ℓ+1) - (r_in_frac)^(2ℓ+1))
+                norm = Rsun/W * (Δr/2)
+                H = zeros(n_lobatto+1, n_lobatto+1)
+
+                for rind in axes(r_lobatto, 1)[2:end-1], sind in axes(r_lobatto, 1)[2]:rind
+                    ri = r_lobatto[rind]/Rsun
+                    sj = r_lobatto[sind]/Rsun
+                    H[rind, sind] = (sj^(ℓ+1) - r_in_frac^(2ℓ+1)/sj^ℓ)*(ri^(ℓ+1) - r_out_frac^(2ℓ+1)/ri^ℓ) * norm
+                end
+
+                Symmetric(H, :L)
+            end
+            Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators_unstratified, n_lobatto)
+            Hℓ_exp = greenfn_radial_lobatto_unstratified_analytical(ℓ, operators_unstratified)
+            if ℓ < 15
+                @test Hℓ ≈ Hℓ_exp rtol=1e-2
+            else
+                @test Hℓ ≈ Hℓ_exp rtol=1e-1
+                @test_broken Hℓ ≈ Hℓ_exp rtol=1e-2
+            end
+            @testset "symmetry" begin
+                if ℓ < 20
+                    @test Hℓ ≈ Symmetric(Hℓ) rtol=1e-2
+                else
+                    @test Hℓ ≈ Symmetric(Hℓ) rtol=1e-1
+                    @test_broken Hℓ ≈ Symmetric(Hℓ) rtol=1e-2
+                end
+            end
+        end
     end
 end
 

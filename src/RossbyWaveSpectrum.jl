@@ -92,6 +92,8 @@ datadir(f) = joinpath(DATADIR[], f)
 γ⁺ℓm(ℓ, m) = ℓ * α⁺ℓm(ℓ, m)
 γ⁻ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ, m) - β⁻ℓm(ℓ, m)
 
+chebyshevnodes_lobatto(n) = [cos(pi*j/n) for j in n:-1:0]
+
 function chebyshevnodes(n, a = -1, b = 1)
     nodes = cos.(reverse(pi * ((1:n) .- 0.5) ./ n))
     nodes_scaled = nodes * (b - a) / 2 .+ (b + a) / 2
@@ -353,20 +355,12 @@ function constraintmatrix(operators; entropy_outer_boundary = :neumann)
     end
 
     # constraints on S
+    # zero Neumann
     for n = 0:nr-1
         # inner boundary
-        # zero Dirichlet
-        MSno[1, n] = (-1)^n
+        MSno[1, n] = (-1)^n*n^2
         # outer boundary
-        if entropy_outer_boundary == :dirichlet
-            # zero Dirichlet
-            MSno[2, n] = 1
-        elseif entropy_outer_boundary == :neumann
-            # zero Neumann
-            MSno[2, n] = n^2
-        else
-            error("Invalid boundary condition on entropy")
-        end
+        MSno[2, n] = n^2
     end
 
     fieldmatrices = [MVn, MWn, MSn][1:nfields]
@@ -515,18 +509,22 @@ function deltafn_matrix(pts; scale)
     # zero out the first and last columns to enfore symmetry of the Green function
     δ[:, 1] .= 0
     δ[:, end] .= 0
-    return Symmetric(δ)
+    return δ
 end
 
-function greenfn_radial_lobatto(ℓ, operators)
-    (; diff_operators, rad_terms, transforms) = operators
-    (; ddr_lobatto, d2dr2_lobatto) = diff_operators
+function Bℓ(ℓ, operators, n_lobatto)
+    (; rad_terms) = operators
     (; onebyr2_cheby, ηρ_cheby) = rad_terms
-    (; nr, Δr) = operators.radial_params
-    (; r_chebyshev_lobatto) = operators.coordinates
+    (; Δr,r_mid) = operators.radial_params
 
-    Bℓ = d2dr2_lobatto - Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto -
-                        ℓ * (ℓ + 1) * Diagonal(onebyr2_cheby.(r_chebyshev_lobatto))
+    # Chebyshev Lobatto points, used in computing the Green function
+    r_chebyshev_lobatto = chebyshevnodes_lobatto(n_lobatto)
+    r_lobatto = @. (Δr/2) * r_chebyshev_lobatto .+ r_mid
+    ddr_lobatto = reverse(chebyderivGaussLobatto(n_lobatto) * (2 / Δr))
+    d2dr2_lobatto = ddr_lobatto*ddr_lobatto
+
+    Bℓ = d2dr2_lobatto .- Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto .-
+                        ℓ * (ℓ + 1) .* Diagonal(onebyr2_cheby.(r_chebyshev_lobatto))
     Bℓ .*= Rsun^2 # scale to improve the condition number
     scale = maximum(abs, @view Bℓ[2:end-1, 2:end-1])
     Bℓ ./= scale
@@ -534,12 +532,19 @@ function greenfn_radial_lobatto(ℓ, operators)
     # boundaries
     Bℓ[1, :] .= 0
     Bℓ[1, 1] = 1
-    Bℓ[nr+1, :] .= 0
-    Bℓ[nr+1, nr+1] = 1
+    Bℓ[end, :] .= 0
+    Bℓ[end, end] = 1
 
-    δ = operators.deltafn_matrix_radial
+    return Bℓ, scale, r_lobatto
+end
 
-    H = Bℓ \ δ
+function greenfn_radial_lobatto(ℓ, operators, n_lobatto)
+    (;  Δr) = operators.radial_params
+    B, scale, r_lobatto = Bℓ(ℓ, operators, n_lobatto)
+
+    deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
+
+    H = B \ deltafn_matrix_radial
     H .*= Rsun^2 / scale * (Δr/2) # scale the solution back, and multiply by the measure Δr/2
     # the Δr/2 factor is used to convert the subsequent integrals ∫H f dr to ∫(Δr/2)H f dx,
     # where x = (r - rmid)/(Δr/2)
@@ -547,8 +552,11 @@ function greenfn_radial_lobatto(ℓ, operators)
 end
 
 function greenfn_cheby(ℓ, operators, greenfn_radial_function = greenfn_radial_lobatto)
-    G = greenfn_radial_function(ℓ, operators)
-    (; r_chebyshev, r_chebyshev_lobatto) = operators.coordinates
+    (; nr) = operators.radial_params
+    n_lobatto = 2nr
+    G = greenfn_radial_function(ℓ, operators, n_lobatto)
+    r_chebyshev_lobatto = chebyshevnodes_lobatto(n_lobatto)
+    (; r_chebyshev) = operators.coordinates
     (; Tcrinv, Tcrfwd) = operators.transforms
     Gin = interp2d(r_chebyshev_lobatto, r_chebyshev_lobatto, G, r_chebyshev, r_chebyshev)
     Tcrfwd * Gin * Tcrinv
@@ -823,9 +831,11 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby)
 
+    η_by_rM = mat(ηρ_cheby * onebyr_cheby)
+
     onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp)
     ∇r2_plus_ddr_lnρT_ddr = d2dr2 + 2onebyr_cheby*ddr + ddr_lnρT * ddr
-    κ_∇r2_plus_ddr_lnρT_ddrM = chebyshevmatrix(κ * ∇r2_plus_ddr_lnρT_ddr, nr, 3)
+    κ_∇r2_plus_ddr_lnρT_ddrM = κ * mat(∇r2_plus_ddr_lnρT_ddr)
     κ_by_r2M = κ .* onebyr2_chebyM
 
     WWterm = zeros(nr, nr)
@@ -851,6 +861,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         VVblockdiag_diag = @view VVblockdiag[diagind(VVblockdiag)]
         VVblockdiag_diag .= 2m/ℓℓp1
 
+        # WW[blockdiaginds_ℓ] = 2m/ℓℓp1 * I - 2m * Gℓ * η_by_rM
         WW[blockdiaginds_ℓ] = Gℓ * WWterm
 
         if nfields == 3
@@ -878,7 +889,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         end
     end
 
-    viscosity_terms!(M, nr, nℓ, m; operators)
+    # viscosity_terms!(M, nr, nℓ, m; operators)
 
     return M
 end
