@@ -33,6 +33,8 @@ function __init__()
     DATADIR[] = get(ENV, "DATADIR", joinpath(SCRATCH[], "RossbyWaves"))
 end
 
+indexedfromzero(A) = OffsetArray(A, OffsetArrays.Origin(0))
+
 struct VWArrays{TV,TW}
     V::TV
     W::TW
@@ -111,6 +113,23 @@ function chebyshev_forward_inverse(n, boundaries...)
     r, Tcfwd, Tcinv
 end
 
+function chebyshev_lobatto_forward_inverse(n)
+    Tcinv = zeros(n+1, n+1)
+    Tcfwd = zeros(n+1, n+1)
+    Tcinvo = indexedfromzero(Tcinv)
+    Tcfwdo = indexedfromzero(Tcfwd)
+    for k in axes(Tcinvo, 2), j in axes(Tcinvo, 1)
+        Tcinvo[j, k] = cos(pi*j*k/n)
+    end
+    for j in axes(Tcfwdo, 2), k in axes(Tcfwdo, 1)
+        cj = j == 0 || j == n ? 2 : 1
+        ck = k == 0 || k == n ? 2 : 1
+        Tcfwdo[k, j] = 2/(n*cj*ck) * cos(pi*j*k/n)
+    end
+    # reverse the matrices, as we order the chebyshev nodes in increasing order
+    return reverse(Tcfwd, dims=2), reverse(Tcinv, dims=1)
+end
+
 chebyshevtransform(A::AbstractVector) = chebyshevtransform!(similar(A), A)
 function chebyshevtransform!(B::AbstractVector, A::AbstractVector, PC = plan_chebyshevtransform!(B))
     B .= @view A[end:-1:begin]
@@ -168,7 +187,7 @@ end
 # differentiation operator using N+1 points, with 2 extremal points
 function chebyderivGaussLobatto(n)
     D = zeros(n+1, n+1)
-    Do = OffsetArray(D, OffsetArrays.Origin(0))
+    Do = indexedfromzero(D)
     Do[0,0] = (2n^2 + 1)/6
     Do[n,n] = -Do[0,0]
     for j in 0:n, k in 0:n
@@ -204,7 +223,7 @@ function legendretransform2(A::AbstractMatrix)
 end
 
 function normalizelegendre!(v)
-    vo = OffsetArray(v, OffsetArrays.Origin(0))
+    vo = indexedfromzero(v)
     for l in eachindex(vo)
         vo[l] *= √(2 / (2l + 1))
     end
@@ -442,7 +461,7 @@ end
 
 function invsintheta_dtheta_operator(nℓ)
     M = zeros(nℓ, nℓ)
-    Mo = OffsetArray(M, OffsetArrays.Origin(0))
+    Mo = indexedfromzero(M)
     for n in 0:nℓ-1, k in n-1:-2:0
         Mo[n, k] = -√((2n + 1) * (2k + 1))
     end
@@ -452,7 +471,7 @@ end
 # defined for normalized Legendre polynomials
 function cottheta_dtheta_operator(nℓ)
     M = zeros(nℓ, nℓ)
-    Mo = OffsetArray(M, OffsetArrays.Origin(0))
+    Mo = indexedfromzero(M)
     for n in 0:nℓ-1
         Mo[n, n] = -n
         for k in n-2:-2:0
@@ -467,7 +486,7 @@ end
 αheinrichs(n) = n < 0 ? 0 : n == 0 ? 2 : 1
 function heinrichs_chebyshev_matrix(n)
     M = zeros(n, n-2)
-    Mo = OffsetArray(M, OffsetArrays.Origin(0))
+    Mo = indexedfromzero(M)
     for n in axes(Mo,1), m in intersect(n-2:2:n+2, axes(Mo,2))
         T = 0.0
         if m == n-2
@@ -484,7 +503,7 @@ end
 
 function chebyshevneumann_chebyshev_matrix(n)
     M = zeros(n-2, n)
-    Mo = OffsetArray(M, OffsetArrays.Origin(0))
+    Mo = indexedfromzero(M)
     for n in axes(Mo, 1)
         Mo[n, n] = 1
         Mo[n, n+2] = -(n/(n+2))^2
@@ -558,8 +577,8 @@ function greenfn_cheby(ℓ, operators, greenfn_radial_function = greenfn_radial_
     r_chebyshev_lobatto = chebyshevnodes_lobatto(n_lobatto)
     (; r_chebyshev) = operators.coordinates
     (; Tcrinv, Tcrfwd) = operators.transforms
-    Gin = interp2d(r_chebyshev_lobatto, r_chebyshev_lobatto, G, r_chebyshev, r_chebyshev)
-    Tcrfwd * Gin * Tcrinv
+    Tcf, Tci = chebyshev_lobatto_forward_inverse(n_lobatto)
+    (Tcf * G * Tci)[1:nr, 1:nr]
 end
 
 splderiv(v::Vector, r::Vector, rout = r; nu = 1) = splderiv(Spline1D(r, v), rout; nu = 1)
@@ -716,18 +735,11 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified)
     gM = mat(g_cheby)
     grddrM = mat((g_cheby * rddr)::Tmul)
 
-    # Chebyshev Lobatto points, used in computing the Green function
-    r_chebyshev_lobatto = [cos(pi*j/nr) for j in nr:-1:0]
-    r_lobatto = @. (Δr/2) * r_chebyshev_lobatto .+ r_mid
-    ddr_lobatto = reverse(chebyderivGaussLobatto(nr) * (2 / Δr))
-    d2dr2_lobatto = ddr_lobatto*ddr_lobatto
-    deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
-
     HeinrichsChebyshevMatrix = heinrichs_chebyshev_matrix(nr)
 
     constants = (; κ, ν, scalings, nfields, Ω0)
     identities = (; Ir, Iℓ)
-    coordinates = (; r, r_chebyshev, r_chebyshev_lobatto, r_lobatto)
+    coordinates = (; r, r_chebyshev)
 
     transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
 
@@ -735,8 +747,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified)
         ddr_lnρT, ddr_S0_by_cp, g, g_cheby, r_cheby, r2_cheby, κ, twoηρ_by_r, sρ)
 
     diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr,
-        ddr, d2dr2, r2d2dr2, ddrDDr, ddr_plus_2byr,
-        ddr_lobatto, d2dr2_lobatto)
+        ddr, d2dr2, r2d2dr2, ddrDDr, ddr_plus_2byr)
 
     diff_operator_matrices = (; onebyr_chebyM, onebyr2_chebyM, DDrM,
         ddrM, d2dr2M, ddrDDrM, rddrM, twoηρ_by_rM, ddr_plus_2byrM,
@@ -752,7 +763,6 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified)
         diff_operator_matrices,
         mat,
         HeinrichsChebyshevMatrix,
-        deltafn_matrix_radial,
         _stratified
     )
 end
