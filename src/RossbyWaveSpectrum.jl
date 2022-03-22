@@ -554,12 +554,12 @@ function Bℓ(ℓ, operators, n_lobatto)
     Bℓ[end, :] .= 0
     Bℓ[end, end] = 1
 
-    return Bℓ, scale, r_lobatto
+    return Bℓ, scale, (r_chebyshev_lobatto, r_lobatto), ddr_lobatto
 end
 
 function greenfn_radial_lobatto(ℓ, operators, n_lobatto)
     (;  Δr) = operators.radial_params
-    B, scale, r_lobatto = Bℓ(ℓ, operators, n_lobatto)
+    B, scale, (r_chebyshev_lobatto, r_lobatto), ddr_lobatto = Bℓ(ℓ, operators, n_lobatto)
 
     deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
 
@@ -567,18 +567,16 @@ function greenfn_radial_lobatto(ℓ, operators, n_lobatto)
     H .*= Rsun^2 / scale * (Δr/2) # scale the solution back, and multiply by the measure Δr/2
     # the Δr/2 factor is used to convert the subsequent integrals ∫H f dr to ∫(Δr/2)H f dx,
     # where x = (r - rmid)/(Δr/2)
-    return H
+    return H, (r_chebyshev_lobatto, r_lobatto)
 end
 
 function greenfn_cheby(ℓ, operators, greenfn_radial_function = greenfn_radial_lobatto)
     (; nr) = operators.radial_params
     n_lobatto = 2nr
-    G = greenfn_radial_function(ℓ, operators, n_lobatto)
-    r_chebyshev_lobatto = chebyshevnodes_lobatto(n_lobatto)
-    (; r_chebyshev) = operators.coordinates
-    (; Tcrinv, Tcrfwd) = operators.transforms
+    H, (r_chebyshev_lobatto, r_lobatto) = greenfn_radial_function(ℓ, operators, n_lobatto)
+    H .*= sqrt.(1 .- r_chebyshev_lobatto.^2)'
     Tcf, Tci = chebyshev_lobatto_forward_inverse(n_lobatto)
-    (Tcf * G * Tci)[1:nr, 1:nr]
+    (Tcf * H * Tci)[1:nr, 1:nr] * pi/2nr
 end
 
 splderiv(v::Vector, r::Vector, rout = r; nu = 1) = splderiv(Spline1D(r, v), rout; nu = 1)
@@ -871,8 +869,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         VVblockdiag_diag = @view VVblockdiag[diagind(VVblockdiag)]
         VVblockdiag_diag .= 2m/ℓℓp1
 
-        # WW[blockdiaginds_ℓ] = 2m/ℓℓp1 * I - 2m * Gℓ * η_by_rM
-        WW[blockdiaginds_ℓ] = Gℓ * WWterm
+        WW[blockdiaginds_ℓ] = 2m/ℓℓp1 * I - 2m * Gℓ * η_by_rM
 
         if nfields == 3
             WSterm .*= (ε / Wscaling)
@@ -899,7 +896,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         end
     end
 
-    # viscosity_terms!(M, nr, nℓ, m; operators)
+    viscosity_terms!(M, nr, nℓ, m; operators)
 
     return M
 end
@@ -1673,10 +1670,10 @@ function eigensystem_satisfy_filter(λ, v, M, MVcache, rtol = 1e-1)
     isapprox2(MVcache, v; rtol)
 end
 
-function filterfields(coll, v, nparams; filterfieldpowercutoff = 1e-4)
+function filterfields(coll, v, nparams, nfields; filterfieldpowercutoff = 1e-4)
     Vpow = sum(abs2, @view v[1:nparams])
     Wpow = sum(abs2, @view v[nparams .+ (1:nparams)])
-    Spow = sum(abs2, @view v[2nparams .+ (1:nparams)])
+    Spow = nfields == 3 ? sum(abs2, @view(v[2nparams .+ (1:nparams)])) : 0.0
 
     filterfields = typeof(coll.V)[]
 
@@ -1701,7 +1698,8 @@ function sphericalharmonic_filter!(VWSinvsh, F, v, operators,
     flag = true
 
     (; nparams) = operators.radial_params
-    fields = filterfields(VWSinvsh, v, nparams; filterfieldpowercutoff)
+    (; nfields) = operators.constants
+    fields = filterfields(VWSinvsh, v, nparams, nfields; filterfieldpowercutoff)
 
     for X in fields
         PV_frac = sum(abs2, @view X[:, 1:l_cutoff_ind]) / sum(abs2, X)
@@ -1730,7 +1728,8 @@ function chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff = 7, n_power_cut
     flag = true
 
     (; nparams) = operators.radial_params
-    fields = filterfields(VWSinv, v, nparams; filterfieldpowercutoff)
+    (; nfields) = operators.constants
+    fields = filterfields(VWSinv, v, nparams, nfields; filterfieldpowercutoff)
 
     for X in fields
         Xrange = view(X, :, rangescan)
@@ -1753,7 +1752,8 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     eqfilter = true
 
     (; nparams) = operators.radial_params
-    fields = filterfields(VWSinv, v, nparams; filterfieldpowercutoff)
+    (; nfields) = operators.constants
+    fields = filterfields(VWSinv, v, nparams, nfields; filterfieldpowercutoff)
 
     for X in fields
         peak_latprofile = @view X[end, :]
@@ -1847,7 +1847,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     atol_constraint = 1e-5,
     Δl_cutoff = 7,
     Δl_power_cutoff = 0.9,
-    eigen_rtol = 5e-2,
+    eigen_rtol = 0.3,
     n_cutoff = 7,
     n_power_cutoff = 0.9,
     eig_imag_unstable_cutoff = -1e-3,
@@ -1967,10 +1967,11 @@ end
 function eigenfunction_cheby_ℓm_spectrum!(F, v, operators)
     (; radial_params) = operators
     (; nparams, nr, nℓ) = radial_params
+    (; nfields) = operators.constants
 
     F.V .= @view v[1:nparams]
     F.W .= @view v[nparams.+(1:nparams)]
-    F.S .= @view v[2nparams.+(1:nparams)]
+    F.S .= nfields == 3 ? @view(v[2nparams.+(1:nparams)]) : 0.0
 
     V = reshape(F.V, nr, nℓ)
     W = reshape(F.W, nr, nℓ)

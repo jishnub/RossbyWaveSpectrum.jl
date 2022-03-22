@@ -7,6 +7,7 @@ using SpecialPolynomials
 using ForwardDiff
 using FastTransforms
 using Dierckx
+using QuadGK
 
 @testset "project quality" begin
     Aqua.test_all(RossbyWaveSpectrum,
@@ -43,6 +44,18 @@ end
 
 const P11norm = -2/√3
 
+@testset "chebyshev" begin
+    n = 10
+    Tcf, Tci = RossbyWaveSpectrum.chebyshev_lobatto_forward_inverse(n)
+    @test Tcf * Tci ≈ Tci * Tcf ≈ I
+    r_chebyshev = RossbyWaveSpectrum.chebyshevnodes_lobatto(n)
+    @test Tcf * r_chebyshev ≈ [0; 1; zeros(length(r_chebyshev)-2)]
+
+    r_chebyshev, Tcf, Tci = RossbyWaveSpectrum.chebyshev_forward_inverse(n)
+    @test Tcf * Tci ≈ Tci * Tcf ≈ I
+    @test Tcf * r_chebyshev ≈ [0; 1; zeros(length(r_chebyshev)-2)]
+end
+
 @testset "green fn W" begin
     nr, nℓ = 50, 2
 
@@ -52,11 +65,12 @@ const P11norm = -2/√3
     operators_unstratified = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false)
     (; Δr, r_mid) = operators.radial_params
     r_lobatto = @. (Δr/2) * r_chebyshev_lobatto .+ r_mid
+    (; ηρ_cheby, r_cheby, onebyr_cheby) = operators.rad_terms
 
     @testset for ℓ in 2:5:42
         (; sρ) = operators.rad_terms
 
-        Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators, n_lobatto)
+        Hℓ, = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators, n_lobatto)
         @testset "boundaries" begin
             @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[1, :])
             @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[end, :])
@@ -88,7 +102,7 @@ const P11norm = -2/√3
 
                 Symmetric(H, :L)
             end
-            Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators_unstratified, n_lobatto)
+            Hℓ, = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators_unstratified, n_lobatto)
             Hℓ_exp = greenfn_radial_lobatto_unstratified_analytical(ℓ, operators_unstratified)
             if ℓ < 15
                 @test Hℓ ≈ Hℓ_exp rtol=1e-2
@@ -104,6 +118,43 @@ const P11norm = -2/√3
                     @test_broken Hℓ ≈ Symmetric(Hℓ) rtol=1e-2
                 end
             end
+        end
+    end
+
+    @testset "integrals" begin
+        (; r_chebyshev) = operators.coordinates
+        (; Tcrfwd) = operators.transforms
+        ℓ = 2
+        H, = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators, n_lobatto)
+        Tcf, Tci = RossbyWaveSpectrum.chebyshev_lobatto_forward_inverse(n_lobatto)
+        Hc = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
+
+        @testset for n = 0:5:size(Hc, 2)-1
+            f = chebyshevT(n)
+
+            intres1 = [begin
+                Hs = Spline1D(r_chebyshev_lobatto, H[r_ind, :])
+                pi/nr * sum(x -> √(1-x^2) * Hs(x) * f(x), r_chebyshev)
+            end
+            for r_ind in axes(H, 1)]
+            intres1 = (Tcf * intres1)[1:nr]
+
+            intres2 = [begin
+                Hs = Spline1D(r_chebyshev_lobatto, H[r_ind, :])
+                quadgk(x -> Hs(x) * f(x), -1, 1)[1]
+            end
+            for r_ind in axes(H, 1)]
+            intres2 = (Tcf * intres2)[1:nr]
+
+            if n <= 40
+                @test intres1 ≈ intres2 rtol=1e-2
+            else
+                @test_broken Hf ≈ intres2 rtol=1e-2
+                @test intres1 ≈ intres2 rtol=3e-2
+            end
+
+            Hf = Hc[:, n+1]
+            @test Hf ≈ intres2 rtol=1e-2
         end
     end
 end
