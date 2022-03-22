@@ -570,13 +570,13 @@ function greenfn_radial_lobatto(ℓ, operators, n_lobatto)
     return H, (r_chebyshev_lobatto, r_lobatto)
 end
 
-function greenfn_cheby(ℓ, operators, greenfn_radial_function = greenfn_radial_lobatto)
+function greenfn_cheby(ℓ, operators)
     (; nr) = operators.radial_params
     n_lobatto = 2nr
-    H, (r_chebyshev_lobatto, r_lobatto) = greenfn_radial_function(ℓ, operators, n_lobatto)
+    H, (r_chebyshev_lobatto, r_lobatto) = greenfn_radial_lobatto(ℓ, operators, n_lobatto)
     H .*= sqrt.(1 .- r_chebyshev_lobatto.^2)'
     Tcf, Tci = chebyshev_lobatto_forward_inverse(n_lobatto)
-    (Tcf * H * Tci)[1:nr, 1:nr] * pi/2nr
+    (Tcf[1:nr, :] * H * Tci[:, 1:nr]) * pi/n_lobatto
 end
 
 splderiv(v::Vector, r::Vector, rout = r; nu = 1) = splderiv(Spline1D(r, v), rout; nu = 1)
@@ -636,13 +636,10 @@ const Tmul = TimesOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}
 const Tplus = PlusOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}}}
 const TFunSpline = Fun{Chebyshev{ChebyshevInterval{Float64},Float64},Float64,Vector{Float64}}
 
-function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true)
-    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified)
+function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true, nfields = 3)
+    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields)
 end
-function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified)
-
-    nfields = 3 # V, W, S
-
+function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields)
     r_in = r_in_frac * Rsun
     r_out = r_out_frac * Rsun
     radial_params = parameters(nr, nℓ; r_in, r_out)
@@ -2066,6 +2063,6 @@ function eigenfunction_n_theta!(VWSinv, F, v, m, operators;
 end
 
 # precompile
-precompile(_radial_operators, (Int, Int, Float64, Float64, Bool))
+precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int))
 
 end # module
