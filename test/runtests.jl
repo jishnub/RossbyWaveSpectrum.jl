@@ -59,18 +59,17 @@ end
 @testset "green fn W" begin
     nr, nℓ = 50, 2
 
-    n_lobatto = 2nr
-    r_chebyshev_lobatto = RossbyWaveSpectrum.chebyshevnodes_lobatto(n_lobatto)
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
     operators_unstratified = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false)
+    (; r_chebyshev_lobatto, r_lobatto) = operators.coordinates
+    (; n_lobatto) = operators.transforms
     (; Δr, r_mid) = operators.radial_params
-    r_lobatto = @. (Δr/2) * r_chebyshev_lobatto .+ r_mid
-    (; ηρ_cheby, r_cheby, onebyr_cheby) = operators.rad_terms
+    (; ddr_lobatto) = operators.diff_operator_matrices
 
     @testset for ℓ in 2:5:42
         (; sρ) = operators.rad_terms
 
-        Hℓ, = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators, n_lobatto)
+        Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
         @testset "boundaries" begin
             @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[1, :])
             @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[end, :])
@@ -102,7 +101,7 @@ end
 
                 Symmetric(H, :L)
             end
-            Hℓ, = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators_unstratified, n_lobatto)
+            Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators_unstratified)
             Hℓ_exp = greenfn_radial_lobatto_unstratified_analytical(ℓ, operators_unstratified)
             if ℓ < 15
                 @test Hℓ ≈ Hℓ_exp rtol=1e-2
@@ -123,38 +122,46 @@ end
 
     @testset "integrals" begin
         (; r_chebyshev) = operators.coordinates
-        (; Tcrfwd) = operators.transforms
-        ℓ = 2
-        H, = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators, n_lobatto)
-        Tcf, Tci = RossbyWaveSpectrum.chebyshev_lobatto_forward_inverse(n_lobatto)
-        Hc = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
+        (; TfGL_nr, TiGL_nr) = operators.transforms
+        @testset for ℓ in 2:5:22
+            H = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
 
-        @testset for n = 0:5:size(Hc, 2)-1
-            f = chebyshevT(n)
+            Hc = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
 
-            intres1 = [begin
-                Hs = Spline1D(r_chebyshev_lobatto, H[r_ind, :])
-                pi/nr * sum(x -> √(1-x^2) * Hs(x) * f(x), r_chebyshev)
+            ddrH = permutedims(ddr_lobatto * permutedims(H))
+            ddrH .*= sqrt.(1 .- r_chebyshev_lobatto.^2)'
+            ddrHc = (TfGL_nr * ddrH * TiGL_nr)  * pi/n_lobatto
+            (; ddrM) = operators.diff_operator_matrices
+
+            @test -ddrHc ≈ Hc * ddrM rtol=3e-2
+
+            @testset for n = 0:5:size(Hc, 2)-1
+                f = chebyshevT(n)
+
+                intres1 = [begin
+                    Hs = Spline1D(r_chebyshev_lobatto, H[r_ind, :])
+                    pi/nr * sum(x -> √(1-x^2) * Hs(x) * f(x), r_chebyshev)
+                end
+                for r_ind in axes(H, 1)]
+                intres1 = TfGL_nr * intres1
+
+                intres2 = [begin
+                    Hs = Spline1D(r_chebyshev_lobatto, H[r_ind, :])
+                    quadgk(x -> Hs(x) * f(x), -1, 1)[1]
+                end
+                for r_ind in axes(H, 1)]
+                intres2 = TfGL_nr * intres2
+
+                if n <= 40
+                    @test intres1 ≈ intres2 rtol=1e-2
+                else
+                    @test_broken Hf ≈ intres2 rtol=1e-2
+                    @test intres1 ≈ intres2 rtol=3e-2
+                end
+
+                Hf = Hc[:, n+1]
+                @test Hf ≈ intres2 rtol=1e-2
             end
-            for r_ind in axes(H, 1)]
-            intres1 = (Tcf * intres1)[1:nr]
-
-            intres2 = [begin
-                Hs = Spline1D(r_chebyshev_lobatto, H[r_ind, :])
-                quadgk(x -> Hs(x) * f(x), -1, 1)[1]
-            end
-            for r_ind in axes(H, 1)]
-            intres2 = (Tcf * intres2)[1:nr]
-
-            if n <= 40
-                @test intres1 ≈ intres2 rtol=1e-2
-            else
-                @test_broken Hf ≈ intres2 rtol=1e-2
-                @test intres1 ≈ intres2 rtol=3e-2
-            end
-
-            Hf = Hc[:, n+1]
-            @test Hf ≈ intres2 rtol=1e-2
         end
     end
 end

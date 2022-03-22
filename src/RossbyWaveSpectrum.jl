@@ -531,19 +531,14 @@ function deltafn_matrix(pts; scale)
     return δ
 end
 
-function Bℓ(ℓ, operators, n_lobatto)
-    (; rad_terms) = operators
-    (; onebyr2_cheby, ηρ_cheby) = rad_terms
-    (; Δr,r_mid) = operators.radial_params
+function Bℓ(ℓ, operators)
+    (; onebyr2_cheby) = operators.rad_terms
 
     # Chebyshev Lobatto points, used in computing the Green function
-    r_chebyshev_lobatto = chebyshevnodes_lobatto(n_lobatto)
-    r_lobatto = @. (Δr/2) * r_chebyshev_lobatto .+ r_mid
-    ddr_lobatto = reverse(chebyderivGaussLobatto(n_lobatto) * (2 / Δr))
-    d2dr2_lobatto = ddr_lobatto*ddr_lobatto
+    (; r_chebyshev_lobatto) = operators.coordinates
+    (; d2dr2_min_ηddr_lobatto) = operators.diff_operator_matrices
 
-    Bℓ = d2dr2_lobatto .- Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto .-
-                        ℓ * (ℓ + 1) .* Diagonal(onebyr2_cheby.(r_chebyshev_lobatto))
+    Bℓ = d2dr2_min_ηddr_lobatto - ℓ * (ℓ + 1) * Diagonal(onebyr2_cheby.(r_chebyshev_lobatto))
     Bℓ .*= Rsun^2 # scale to improve the condition number
     scale = maximum(abs, @view Bℓ[2:end-1, 2:end-1])
     Bℓ ./= scale
@@ -554,12 +549,13 @@ function Bℓ(ℓ, operators, n_lobatto)
     Bℓ[end, :] .= 0
     Bℓ[end, end] = 1
 
-    return Bℓ, scale, (r_chebyshev_lobatto, r_lobatto), ddr_lobatto
+    return Bℓ, scale
 end
 
-function greenfn_radial_lobatto(ℓ, operators, n_lobatto)
+function greenfn_radial_lobatto(ℓ, operators)
     (;  Δr) = operators.radial_params
-    B, scale, (r_chebyshev_lobatto, r_lobatto), ddr_lobatto = Bℓ(ℓ, operators, n_lobatto)
+    (; r_lobatto) = operators.coordinates
+    B, scale = Bℓ(ℓ, operators)
 
     deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
 
@@ -567,16 +563,18 @@ function greenfn_radial_lobatto(ℓ, operators, n_lobatto)
     H .*= Rsun^2 / scale * (Δr/2) # scale the solution back, and multiply by the measure Δr/2
     # the Δr/2 factor is used to convert the subsequent integrals ∫H f dr to ∫(Δr/2)H f dx,
     # where x = (r - rmid)/(Δr/2)
-    return H, (r_chebyshev_lobatto, r_lobatto)
+    return H
 end
 
 function greenfn_cheby(ℓ, operators)
     (; nr) = operators.radial_params
-    n_lobatto = 2nr
-    H, (r_chebyshev_lobatto, r_lobatto) = greenfn_radial_lobatto(ℓ, operators, n_lobatto)
+    (; r_chebyshev_lobatto) = operators.coordinates
+    (; TfGL_nr, TiGL_nr, n_lobatto) = operators.transforms
+    H = greenfn_radial_lobatto(ℓ, operators)
     H .*= sqrt.(1 .- r_chebyshev_lobatto.^2)'
-    Tcf, Tci = chebyshev_lobatto_forward_inverse(n_lobatto)
-    (Tcf[1:nr, :] * H * Tci[:, 1:nr]) * pi/n_lobatto
+    Hc = TfGL_nr * H * TiGL_nr
+    Hc .*= pi/n_lobatto
+    return Hc
 end
 
 splderiv(v::Vector, r::Vector, rout = r; nu = 1) = splderiv(Spline1D(r, v), rout; nu = 1)
@@ -732,11 +730,22 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
 
     HeinrichsChebyshevMatrix = heinrichs_chebyshev_matrix(nr)
 
+    # gauss lobatto points
+    n_lobatto = 2nr
+    Tcf, Tci = chebyshev_lobatto_forward_inverse(n_lobatto)
+    TfGL_nr = Tcf[1:nr, :]
+    TiGL_nr = Tci[:, 1:nr]
+    r_chebyshev_lobatto = chebyshevnodes_lobatto(n_lobatto)
+    r_lobatto = @. (Δr/2) * r_chebyshev_lobatto .+ r_mid
+    ddr_lobatto = reverse(chebyderivGaussLobatto(n_lobatto) * (2 / Δr))
+    d2dr2_lobatto = ddr_lobatto*ddr_lobatto
+    d2dr2_min_ηddr_lobatto = d2dr2_lobatto .- Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto
+
     constants = (; κ, ν, scalings, nfields, Ω0)
     identities = (; Ir, Iℓ)
-    coordinates = (; r, r_chebyshev)
+    coordinates = (; r, r_chebyshev, r_chebyshev_lobatto, r_lobatto)
 
-    transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
+    transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial, TfGL_nr, TiGL_nr, n_lobatto)
 
     rad_terms = (; onebyr, onebyr_cheby, ηρ, ηρ_cheby, ηT_cheby, onebyr2_cheby,
         ddr_lnρT, ddr_S0_by_cp, g, g_cheby, r_cheby, r2_cheby, κ, twoηρ_by_r, sρ)
@@ -747,7 +756,9 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     diff_operator_matrices = (; onebyr_chebyM, onebyr2_chebyM, DDrM,
         ddrM, d2dr2M, ddrDDrM, rddrM, twoηρ_by_rM, ddr_plus_2byrM,
         ddr_minus_2byrM, DDr_minus_2byrM,
-        grddrM, gM
+        grddrM, gM,
+        ddr_lobatto,
+        d2dr2_min_ηddr_lobatto
     )
 
     (;
