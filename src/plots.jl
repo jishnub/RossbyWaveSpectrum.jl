@@ -356,10 +356,10 @@ function eigenfunctions_rossbyridge_all(λs, vs, m, operators; kw...)
     end
 end
 
-function plot_matrix(M)
+function plot_matrix(M, nfields = 3)
     f, axlist = subplots(3, 3)
     for colind in 1:3, rowind in 1:3
-        Mv = abs.(RossbyWaveSpectrum.matrix_block(M, rowind, colind))
+        Mv = abs.(RossbyWaveSpectrum.matrix_block(M, rowind, colind, nfields))
         vmax = max(maximum(Mv), 1e-200)
         ax = axlist[rowind, colind]
         p = ax.imshow(Mv, vmax = vmax, vmin = -vmax, cmap = "RdBu_r")
@@ -370,9 +370,9 @@ function plot_matrix(M)
     f.tight_layout()
 end
 
-function plot_matrix_block(M, rowind, colind)
+function plot_matrix_block(M, rowind, colind, nfields = 3)
     f, axlist = subplots(1, 2)
-    M = RossbyWaveSpectrum.matrix_block(M, rowind, colind)
+    M = RossbyWaveSpectrum.matrix_block(M, rowind, colind, nfields)
     A = realview(M)
     Amax = maximum(abs, A)
     p1 = axlist[1].pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
@@ -384,9 +384,9 @@ function plot_matrix_block(M, rowind, colind)
     f.tight_layout()
 end
 
-function plot_matrix_block(M, rowind, colind, nr, ℓind, ℓ′ind)
+function plot_matrix_block(M, rowind, colind, nr, ℓind, ℓ′ind, nfields = 3)
     f, axlist = subplots(1, 2)
-    M = RossbyWaveSpectrum.matrix_block(M, rowind, colind)
+    M = RossbyWaveSpectrum.matrix_block(M, rowind, colind, nfields)
     ℓinds = (ℓind - 1) * nr .+ (1:nr)
     ℓ′inds = (ℓ′ind - 1) * nr .+ (1:nr)
     A = realview(M)[ℓinds, ℓ′inds]
