@@ -126,14 +126,14 @@ end
         @testset for ℓ in 2:5:22
             H = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
 
-            Hc = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
+            Hc, ddr′Hc = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
 
-            ddrH = permutedims(ddr_lobatto * permutedims(H))
-            ddrH .*= sqrt.(1 .- r_chebyshev_lobatto.^2)'
-            ddrHc = (TfGL_nr * ddrH * TiGL_nr)  * pi/n_lobatto
+            # ddrH = permutedims(ddr_lobatto * permutedims(H))
+            # ddrH .*= sqrt.(1 .- r_chebyshev_lobatto.^2)'
+            # ddrHc = (TfGL_nr * ddrH * TiGL_nr)  * pi/n_lobatto
             (; ddrM) = operators.diff_operator_matrices
 
-            @test -ddrHc ≈ Hc * ddrM rtol=3e-2
+            @test -ddr′Hc ≈ Hc * ddrM rtol=3e-2
 
             @testset for n = 0:5:size(Hc, 2)-1
                 f = chebyshevT(n)

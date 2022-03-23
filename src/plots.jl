@@ -175,9 +175,9 @@ function differential_rotation_spectrum(lam_rad, lam_solar, mr = axes(lam_rad, 1
 end
 
 function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators;
-    field = :V, theory = false, f = figure(), kw...)
+    field = :V, theory = false, f = figure(), component = real, kw...)
     V = getproperty(VWSinv, field)::Matrix{ComplexF64}
-    Vr = realview(V)
+    Vr = copy(component(V))
     scale = get(kw, :scale) do
         eignorm(Vr)
     end
@@ -265,21 +265,23 @@ function eigenfunctions_all(v::AbstractVector, m, operators; theory = false, kw.
     eigenfunctions_all(VWSinv, θ, m, operators; theory, kw...)
 end
 function eigenfunctions_all(VWSinv::NamedTuple, θ, m, operators; theory = false, kw...)
-    f = plt.figure(constrained_layout = true, figsize = (12, 4))
-    subfigs = f.subfigures(1, 3, wspace = 0.15, width_ratios = [1, 1, 1])
+    f = plt.figure(constrained_layout = true, figsize = (12, 8))
+    subfigs = f.subfigures(2, 3, wspace = 0.15, width_ratios = [1, 1, 1])
     kw2 = Dict{Symbol, Any}(kw);
     kw2[:constrained_layout] = true
     kw2[:suptitle] = false
     kw2[:longxlabel] = false
     scale = eignorm(realview(VWSinv.V))
     kw2[:scale] = scale
-    for (ind, field) in enumerate((:V, :W, :S))
+    itr = Iterators.product((real, imag), (:V, :W, :S))
+    for (ind, (component, field)) in zip(CartesianIndices(axes(itr)), itr)
         eigenfunction(VWSinv, θ, m, operators;
             field, theory, f = subfigs[ind],
             constrained_layout = true,
             setylabel = ind == 1 ? true : false,
+            component,
             kw2...)
-        subfigs[ind].suptitle(string(field), x = 0.8)
+        subfigs[ind].suptitle(string(component)*"("*string(field)*")", x = 0.8)
     end
 end
 
