@@ -1899,7 +1899,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     )
 
     (; BC) = constraints
-    (; nℓ) = operators.radial_params
+    (; nℓ, nparams) = operators.radial_params
     (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache
 
     additional_params = (; eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
@@ -1912,7 +1912,13 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
 
     inds_bool = filterfn.(λ, eachcol(v), m, (M,), (operators,), (additional_params,))
     filtinds = axes(λ, 1)[inds_bool]
-    λ[filtinds], v[:, filtinds]
+    λ, v = λ[filtinds], v[:, filtinds]
+
+    # re-apply scalings
+    v[nparams .+ (1:nparams), :] .*= -im * operators.constants.scalings.Wscaling
+    v[2nparams .+ (1:nparams), :] .*= operators.constants.scalings.ε
+
+    λ, v
 end
 
 macro maybe_reduce_blas_threads(ex)
