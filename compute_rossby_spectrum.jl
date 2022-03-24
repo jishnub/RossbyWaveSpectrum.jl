@@ -21,15 +21,15 @@ n_cutoff = 10
 n_power_cutoff = 0.9
 
 # used for filtering, zero for uniform rotation
-# ΔΩ_by_Ω_low = 0
-# ΔΩ_by_Ω_high = 0
 ΔΩ_by_Ω_low = -0.05
 ΔΩ_by_Ω_high = 0.05
+# ΔΩ_by_Ω_low = 0
+# ΔΩ_by_Ω_high = 0
 
 r_in_frac = 0.7
 r_out_frac = 1
 
-operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac, r_out_frac)
+operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac)
 
 # f = RossbyWaveSpectrum.uniform_rotation_spectrum!
 f = (x...; kw...) -> RossbyWaveSpectrum.differential_rotation_spectrum!(x...;

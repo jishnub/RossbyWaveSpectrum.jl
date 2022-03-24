@@ -545,19 +545,20 @@ end
                     end
                 end
                 @testset "W" begin
+                    (; Wscaling) = operators.constants.scalings
                     @testset for ℓind in 1:nℓ
                         ℓ_skip = (ℓind - 1)*nr
                         inds_ℓ = nr*nℓ + ℓ_skip .+ (1:nr)
                         w = vfn[inds_ℓ]
-                        @test BC[3:4, inds_ℓ] * w ≈ [0, 0] atol=1e-10
+                        @test BC[3:4, inds_ℓ] * w ≈ [0, 0] atol=1e-10*Wscaling
                         pw = SpecialPolynomials.Chebyshev(w)
                         @testset "inner boundary" begin
-                            @test sum(i -> (-1)^i * w[i], axes(w, 1)) ≈ 0 atol=1e-10
-                            @test pw(-1) ≈ 0 atol=1e-10
+                            @test sum(i -> (-1)^i * w[i], axes(w, 1)) ≈ 0 atol=1e-10*Wscaling
+                            @test pw(-1) ≈ 0 atol=1e-10*Wscaling
                         end
                         @testset "outer boundary" begin
-                            @test sum(w) ≈ 0 atol=1e-10
-                            @test pw(1) ≈ 0 atol=1e-10
+                            @test sum(w) ≈ 0 atol=1e-10*Wscaling
+                            @test pw(1) ≈ 0 atol=1e-10*Wscaling
                         end
                     end
                 end

@@ -31,6 +31,9 @@ const Rsun = 6.959894677e+10
 function __init__()
     SCRATCH[] = get(ENV, "SCRATCH", homedir())
     DATADIR[] = get(ENV, "DATADIR", joinpath(SCRATCH[], "RossbyWaves"))
+    if !ispath(RossbyWaveSpectrum.DATADIR[])
+        mkdir(RossbyWaveSpectrum.DATADIR[])
+    end
 end
 
 indexedfromzero(A) = OffsetArray(A, OffsetArrays.Origin(0))
