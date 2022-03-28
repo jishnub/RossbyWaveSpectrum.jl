@@ -542,7 +542,7 @@ function Bℓ(ℓ, operators)
     (; d2dr2_min_ηddr_lobatto) = operators.diff_operator_matrices
 
     Bℓ = d2dr2_min_ηddr_lobatto - ℓ * (ℓ + 1) * Diagonal(onebyr2_cheby.(r_chebyshev_lobatto))
-    Bℓ .*= Rsun^2 # scale to improve the condition number
+    Bℓ .*= Rsun^2
     scale = maximum(abs, @view Bℓ[2:end-1, 2:end-1])
     Bℓ ./= scale
 
@@ -563,7 +563,7 @@ function greenfn_radial_lobatto(ℓ, operators)
     deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
 
     H = B \ deltafn_matrix_radial
-    H .*= Rsun^2 / scale * (Δr/2) # scale the solution back, and multiply by the measure Δr/2
+    H .*= (Δr/2) / scale
     # the Δr/2 factor is used to convert the subsequent integrals ∫H f dr to ∫(Δr/2)H f dx,
     # where x = (r - rmid)/(Δr/2)
     return H
@@ -698,7 +698,10 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     g = sg.(r)
     g_cheby = Fun(sg ∘ r_cheby, Chebyshev())::TFunSpline
 
+    Ω0 = 2pi * 453e-9
+
     κ = 3e10
+    κ /= Ω0*Rsun^2
     ddr_lnρT = ηρ_cheby + ηT_cheby
 
     γ = 1.64
@@ -709,15 +712,9 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     Ir = I(nchebyr)
     Iℓ = I(nℓ)
 
-    # scaling for S and W
-    ε = 1e-20
-    Wscaling = Rsun * 1e-2
-    scalings = (; ε, Wscaling)
-
     # viscosity
-    Ω0 = 2pi * 453e-9
-    ν = 1e10
-    ν = ν / Ω0
+    ν = 1e13
+    ν /= Ω0*Rsun^2
 
     mat = x -> chebyshevmatrix(x, nr)
 
@@ -750,7 +747,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     d2dr2_lobatto = ddr_lobatto*ddr_lobatto
     d2dr2_min_ηddr_lobatto = d2dr2_lobatto .- Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto
 
-    constants = (; κ, ν, scalings, nfields, Ω0)
+    constants = (; κ, ν, nfields, Ω0)
     identities = (; Ir, Iℓ)
     coordinates = (; r, r_chebyshev, r_chebyshev_lobatto, r_lobatto)
 
@@ -800,19 +797,18 @@ function uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
     return M
 end
 
-function uniform_rotation_matrix_terms_outer!((WWterm, WSterm, SWterm, SSterm),
+function uniform_rotation_matrix_terms_outer!((WSterm, SWterm, SSterm),
     (ℓ, m), nchebyr,
     (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
         onebyr2_cheby_ddr_S0_by_cpM), Ω0)
 
     ℓℓp1 = ℓ*(ℓ+1)
 
-    @. WWterm = 2m / ℓℓp1 * (ddrDDrM - onebyr2_IplusrηρM * ℓℓp1)
-    @. WSterm = (-1 / Ω0) * gM
-    @. SWterm = (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
-    @. SSterm = (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M) / Ω0
+    @. WSterm = -gM / (Ω0^2 * Rsun)
+    @. SWterm = ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM * Rsun^3
+    @. SSterm = (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M) * Rsun^2
 
-    WWterm, WSterm, SWterm, SSterm
+    WSterm, SWterm, SSterm
 end
 
 function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
@@ -852,8 +848,6 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     cosθ = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs)
     sinθdθ = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
 
-    (; ε, Wscaling) = operators.constants.scalings
-
     onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby)
 
     η_by_rM = mat(ηρ_cheby * onebyr_cheby)
@@ -877,7 +871,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
         blockdiaginds_ℓ = blockinds((m, nr), ℓ)
 
-        uniform_rotation_matrix_terms_outer!((WWterm, WSterm, SWterm, SSterm),
+        uniform_rotation_matrix_terms_outer!((WSterm, SWterm, SSterm),
                 (ℓ, m), nchebyr,
                 (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
                     onebyr2_cheby_ddr_S0_by_cpM), Ω0)
@@ -886,25 +880,24 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         VVblockdiag_diag = @view VVblockdiag[diagind(VVblockdiag)]
         VVblockdiag_diag .= 2m/ℓℓp1
 
-        WW[blockdiaginds_ℓ] = 2m/ℓℓp1 * I - 2m * Hℓ * η_by_rM
+        WW[blockdiaginds_ℓ] = 2m/ℓℓp1 * I - 2m * Hℓ * η_by_rM*Rsun^2
 
         if nfields == 3
-            WSterm .*= (ε / Wscaling)
             WS[blockdiaginds_ℓ] = Hℓ * WSterm
 
-            @views @. SW[blockdiaginds_ℓ] = (Wscaling / ε) * SWterm
+            @views @. SW[blockdiaginds_ℓ] = SWterm
             @views @. SS[blockdiaginds_ℓ] = -im * SSterm
         end
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
 
-            @. VWℓℓ′ = Wscaling * (-2) / ℓℓp1 * (ℓ′ℓ′p1 * DDr_minus_2byrM * cosθ[ℓ, ℓ′] +
-                    (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθ[ℓ, ℓ′])
+            @. VWℓℓ′ = (-2/ℓℓp1) * (ℓ′ℓ′p1 * DDr_minus_2byrM * cosθ[ℓ, ℓ′] +
+                    (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθ[ℓ, ℓ′]) * Rsun
 
             @. Cℓ′ = ddrM - ℓ′ℓ′p1 * onebyr_chebyM
             mul!(HℓCℓ′, Hℓ, Cℓ′)
-            @. WVℓℓ′ = -2 / ℓℓp1 * (ℓ′ℓ′p1 * HℓC1 * cosθ[ℓ, ℓ′] + HℓCℓ′ * sinθdθ[ℓ, ℓ′]) / Wscaling
+            @. WVℓℓ′ = (-2/ℓℓp1) * (ℓ′ℓ′p1 * HℓC1 * cosθ[ℓ, ℓ′] + HℓCℓ′ * sinθdθ[ℓ, ℓ′]) * Rsun
 
             blockinds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
@@ -979,7 +972,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         ℓℓp1 = ℓ * (ℓ + 1)
 
-        @views @. VV[blockdiaginds_ℓ] -= im * ν * (d2dr2M - ℓℓp1 * onebyr2_chebyM + ηρ_ddr_minus_2byrM)
+        @views @. VV[blockdiaginds_ℓ] -= im * ν * (d2dr2M - ℓℓp1 * onebyr2_chebyM + ηρ_ddr_minus_2byrM) * Rsun^2
 
         Hℓ, ddr′Hℓ = greenfn_cheby(ℓ, operators)
 
@@ -987,7 +980,8 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         @. T2 = d3dr3_plus_4ηρ²_by_r - ℓℓp1 * invr²DDrM
         mul!(T22, ddr′Hℓ, T2, -1, 0)
-        @. T22 += -ℓℓp1*onebyr2_chebyM + 4ηρ_by_rM
+        T22 *= Rsun^4
+        @. T22 += (-ℓℓp1*onebyr2_chebyM + 4ηρ_by_rM)/Rsun^2
 
         @. T3 = ddr_ηρ_cheby_ddr_minus_2byr_DDrM + ℓℓp1 * ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byrM
 
@@ -997,6 +991,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
         @. WWop = T1 + T3 + T4
 
         mul!(WWop2, Hℓ, WWop)
+        WWop2 .*= Rsun^4
         WWop2 .+= T22
 
         @views @. WW[blockdiaginds_ℓ] -= im * ν * WWop2
@@ -1918,8 +1913,9 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     λ, v = λ[filtinds], v[:, filtinds]
 
     # re-apply scalings
-    v[nparams .+ (1:nparams), :] .*= -im * operators.constants.scalings.Wscaling
-    v[2nparams .+ (1:nparams), :] .*= operators.constants.scalings.ε
+    v[1:nparams, :] .*= Rsun
+    v[nparams .+ (1:nparams), :] .*= -im * Rsun^2
+    v[2nparams .+ (1:nparams), :] ./= operators.constants.Ω0 * Rsun
 
     λ, v
 end
