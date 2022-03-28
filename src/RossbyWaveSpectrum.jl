@@ -713,7 +713,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     Iℓ = I(nℓ)
 
     # viscosity
-    ν = 1e13
+    ν = 1e11
     ν /= Ω0*Rsun^2
 
     mat = x -> chebyshevmatrix(x, nr)
