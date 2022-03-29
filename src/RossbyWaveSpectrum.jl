@@ -558,9 +558,9 @@ end
 function greenfn_radial_lobatto(ℓ, operators)
     (;  Δr) = operators.radial_params
     (; r_lobatto) = operators.coordinates
-    B, scale = Bℓ(ℓ, operators)
+    (; deltafn_matrix_radial) = operators
 
-    deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
+    B, scale = Bℓ(ℓ, operators)
 
     H = B \ deltafn_matrix_radial
     H .*= Rsun^2 / scale * (Δr/2) # scale the solution back, and multiply by the measure Δr/2
@@ -750,6 +750,8 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     d2dr2_lobatto = ddr_lobatto*ddr_lobatto
     d2dr2_min_ηddr_lobatto = d2dr2_lobatto .- Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto
 
+    deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
+
     constants = (; κ, ν, scalings, nfields, Ω0)
     identities = (; Ir, Iℓ)
     coordinates = (; r, r_chebyshev, r_chebyshev_lobatto, r_lobatto)
@@ -778,7 +780,8 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
         diff_operator_matrices,
         mat,
         HeinrichsChebyshevMatrix,
-        _stratified
+        _stratified,
+        deltafn_matrix_radial
     )
 end
 
@@ -954,13 +957,15 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
     ddr_minus_2byr_ηρ_by_r2 = ddr_minus_2byr[ηρ_by_r2]::Tmul
     ddr_minus_2byr_ηρ_by_r2M = mat(ddr_minus_2byr_ηρ_by_r2)
     ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_r = (ddr_minus_2byr * r_cheby_d2dr2_ηρ_by_r)::Tmul
-    ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_rM = mat(ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_r)
-    d2dr2_plus_4ηρ_by_r = (d2dr2 + 4ηρ_by_r)::Tplus
+    ddr_minus_2byr_r_d2dr2_ηρ_by_rM = mat(ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_r)
+    d2dr2_plus_4ηρ_by_r = 4ηρ_by_r #+ d2dr2
 
     d2dr2_d2dr2_plus_4ηρ_by_rM = mat(d2dr2 * d2dr2_plus_4ηρ_by_r)
     one_by_r2_d2dr2_plus_4ηρ_by_rM = mat(onebyr2_cheby * d2dr2_plus_4ηρ_by_r)
-    d2dr2_one_by_r2M = mat(d2dr2 * onebyr2_cheby)
+    d2dr2_one_by_r2M = mat(d2dr2[onebyr2_cheby])
     onebyr4_chebyM = mat(onebyr2_cheby*onebyr2_cheby)
+
+    one_by_r2_d2dr2_plus_4ηρ_by_r__plus_d2dr2_one_by_r2M = one_by_r2_d2dr2_plus_4ηρ_by_rM + d2dr2_one_by_r2M
 
     d3dr3_plus_4ηρ²_by_r = mat(ddr * d2dr2 + 4ηρ_cheby*ηρ_cheby*onebyr_cheby)
     invr²DDrM = mat(onebyr2_cheby * DDr)
@@ -983,11 +988,9 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         Hℓ, ddr′Hℓ = greenfn_cheby(ℓ, operators)
 
-        @. T1 = ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_rM - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2M
-
-        @. T2 = d3dr3_plus_4ηρ²_by_r - ℓℓp1 * invr²DDrM
-        mul!(T22, ddr′Hℓ, T2, -1, 0)
-        @. T22 += -ℓℓp1*onebyr2_chebyM + 4ηρ_by_rM
+        @. T1 = ddr_minus_2byr_r_d2dr2_ηρ_by_rM - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2M +
+                d2dr2_d2dr2_plus_4ηρ_by_rM - ℓℓp1 * one_by_r2_d2dr2_plus_4ηρ_by_r__plus_d2dr2_one_by_r2M +
+                ℓℓp1^2 * onebyr4_chebyM
 
         @. T3 = ddr_ηρ_cheby_ddr_minus_2byr_DDrM + ℓℓp1 * ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byrM
 
@@ -997,7 +1000,6 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
         @. WWop = T1 + T3 + T4
 
         mul!(WWop2, Hℓ, WWop)
-        WWop2 .+= T22
 
         @views @. WW[blockdiaginds_ℓ] -= im * ν * WWop2
     end
