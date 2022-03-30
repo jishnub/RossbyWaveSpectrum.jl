@@ -860,7 +860,6 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     κ_∇r2_plus_ddr_lnρT_ddrM = κ * mat(∇r2_plus_ddr_lnρT_ddr)
     κ_by_r2M = κ .* onebyr2_chebyM
 
-    WWterm = zeros(nr, nr)
     WSterm = zeros(nr, nr)
     SWterm = zeros(nr, nr)
     SSterm = zeros(nr, nr)
