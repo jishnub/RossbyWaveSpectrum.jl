@@ -803,19 +803,18 @@ function uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
     return M
 end
 
-function uniform_rotation_matrix_terms_outer!((WWterm, WSterm, SWterm, SSterm),
+function uniform_rotation_matrix_terms_outer!((WSterm, SWterm, SSterm),
     (ℓ, m), nchebyr,
     (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
         onebyr2_cheby_ddr_S0_by_cpM), Ω0)
 
     ℓℓp1 = ℓ*(ℓ+1)
 
-    @. WWterm = 2m / ℓℓp1 * (ddrDDrM - onebyr2_IplusrηρM * ℓℓp1)
     @. WSterm = (-1 / Ω0) * gM
     @. SWterm = (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
     @. SSterm = (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M) / Ω0
 
-    WWterm, WSterm, SWterm, SSterm
+    WSterm, SWterm, SSterm
 end
 
 function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
@@ -866,7 +865,6 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     κ_∇r2_plus_ddr_lnρT_ddrM = κ * mat(∇r2_plus_ddr_lnρT_ddr)
     κ_by_r2M = κ .* onebyr2_chebyM
 
-    WWterm = zeros(nr, nr)
     WSterm = zeros(nr, nr)
     SWterm = zeros(nr, nr)
     SSterm = zeros(nr, nr)
@@ -880,7 +878,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
         blockdiaginds_ℓ = blockinds((m, nr), ℓ)
 
-        uniform_rotation_matrix_terms_outer!((WWterm, WSterm, SWterm, SSterm),
+        uniform_rotation_matrix_terms_outer!((WSterm, SWterm, SSterm),
                 (ℓ, m), nchebyr,
                 (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
                     onebyr2_cheby_ddr_S0_by_cpM), Ω0)
