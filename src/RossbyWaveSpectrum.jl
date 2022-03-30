@@ -709,13 +709,14 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     Ir = I(nchebyr)
     Iℓ = I(nℓ)
 
+    Ω0 = 2pi * 453e-9
+
     # scaling for S and W
-    ε = 1e-20
-    Wscaling = Rsun * 1e-2
-    scalings = (; ε, Wscaling)
+    Sscaling = Ω0*Rsun^2
+    Wscaling = 1/Rsun
+    scalings = (; Sscaling, Wscaling)
 
     # viscosity
-    Ω0 = 2pi * 453e-9
     ν = 1e10
     ν = ν / Ω0
 
@@ -810,7 +811,7 @@ function uniform_rotation_matrix_terms_outer!((WSterm, SWterm, SSterm),
 
     ℓℓp1 = ℓ*(ℓ+1)
 
-    @. WSterm = (-1 / Ω0) * gM
+    @. WSterm = -gM / Ω0
     @. SWterm = (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
     @. SSterm = (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M) / Ω0
 
@@ -854,7 +855,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     cosθ = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs)
     sinθdθ = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
 
-    (; ε, Wscaling) = operators.constants.scalings
+    (; Sscaling, Wscaling) = operators.constants.scalings
 
     onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby)
 
@@ -890,22 +891,22 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         WW[blockdiaginds_ℓ] = 2m/ℓℓp1 * I - 2m * Hℓ * η_by_rM
 
         if nfields == 3
-            WSterm .*= (ε / Wscaling)
+            WSterm .*= Wscaling/Sscaling
             WS[blockdiaginds_ℓ] = Hℓ * WSterm
 
-            @views @. SW[blockdiaginds_ℓ] = (Wscaling / ε) * SWterm
+            @views @. SW[blockdiaginds_ℓ] = Sscaling/Wscaling * SWterm
             @views @. SS[blockdiaginds_ℓ] = -im * SSterm
         end
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
 
-            @. VWℓℓ′ = Wscaling * (-2) / ℓℓp1 * (ℓ′ℓ′p1 * DDr_minus_2byrM * cosθ[ℓ, ℓ′] +
-                    (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθ[ℓ, ℓ′])
+            @. VWℓℓ′ = (-2) / ℓℓp1 * (ℓ′ℓ′p1 * DDr_minus_2byrM * cosθ[ℓ, ℓ′] +
+                    (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθ[ℓ, ℓ′]) / Wscaling
 
             @. Cℓ′ = ddrM - ℓ′ℓ′p1 * onebyr_chebyM
             mul!(HℓCℓ′, Hℓ, Cℓ′)
-            @. WVℓℓ′ = -2 / ℓℓp1 * (ℓ′ℓ′p1 * HℓC1 * cosθ[ℓ, ℓ′] + HℓCℓ′ * sinθdθ[ℓ, ℓ′]) / Wscaling
+            @. WVℓℓ′ = -2 / ℓℓp1 * (ℓ′ℓ′p1 * HℓC1 * cosθ[ℓ, ℓ′] + HℓCℓ′ * sinθdθ[ℓ, ℓ′]) * Wscaling
 
             blockinds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
@@ -1126,14 +1127,14 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
-            @views VW[inds_ℓℓ′] .-= Wscaling * two_over_ℓℓp1 *
+            @views VW[inds_ℓℓ′] .-= two_over_ℓℓp1 *
                                     ΔΩ_by_Ω0 * mat(
                                         ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * (DDr - 2 * onebyr_cheby) +
                                         (DDr - ℓ′ℓ′p1 * onebyr_cheby) * sinθdθo[ℓ, ℓ′]
-                                    )
+                                    ) / Wscaling
 
             @views WV[inds_ℓℓ′] .-= Hℓ *
-                                    (1 / Wscaling) * ΔΩ_by_Ω0 / ℓℓp1 *
+                                    Wscaling * ΔΩ_by_Ω0 / ℓℓp1 *
                                     mat((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * ddr
                                         +
                                         ddr_plus_2byr * laplacian_sinθdθo[ℓ, ℓ′])
@@ -1274,7 +1275,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs)
     ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs)
 
-    (; ε, Wscaling) = operators.constants.scalings
+    (; Sscaling, Wscaling) = operators.constants.scalings
 
     DDr_min_2byr = (DDr - 2onebyr_cheby)::Tplus
     ΔΩ_DDr_min_2byr = (ΔΩ * DDr_min_2byr)::Tmul
@@ -1306,13 +1307,13 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
                     (ℓ, ℓ′), (cosθo[ℓ, ℓ′], sinθdθo[ℓ, ℓ′], ∇²_sinθdθo[ℓ, ℓ′]),
                     (ddrΔΩM, Ω0), inner_matrices)
 
-            @views @. VW[inds_ℓℓ′] += Wscaling * VWterm
+            @views @. VW[inds_ℓℓ′] += VWterm / Wscaling
 
-            WVterm .*= (1 / Wscaling)
+            WVterm .*= Wscaling
             @views WV[inds_ℓℓ′] .+= Hℓ * WVterm
 
             if nfields == 3
-                @views @. SV[inds_ℓℓ′] -= (1 / ε) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM
+                @views @. SV[inds_ℓℓ′] -= Sscaling * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM
             end
         end
 
@@ -1320,7 +1321,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
             if nfields == 3
-                @views @. SW[inds_ℓℓ′] += (Wscaling / ε) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM
+                @views @. SW[inds_ℓℓ′] += (Sscaling/Wscaling) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM
             end
         end
     end
@@ -1462,7 +1463,7 @@ function solar_differential_rotation_terms!(M, nr, nℓ, m;
     r³sinθ_curlωfϕ = VWArrays(Matrix(kron2(sinθdθ, r2d2dr2) + kron2(sinθdθ * ∇², Ir)),
         Matrix(kron2(-m * Iℓ, r2d2dr2 * DDr) - kron2(m * ∇², DDr_minus_2byr)))
 
-    (; ε, Wscaling) = operators.constants.scalings
+    (; Sscaling, Wscaling) = operators.constants.scalings
 
     V_rhs = +ₛ((ωΩr * kron(-Iℓ, DDr_minus_2byr) + ωΩθ_by_rsinθ * kron2(sinθdθ, -Ir) + drωΩr) * ir²ufr,
         invsinθdθ_ωΩr * irsinθufθ,
@@ -1505,16 +1506,16 @@ function solar_differential_rotation_terms!(M, nr, nℓ, m;
         invℓℓp1_invΩ0 = (1 / ℓℓp1) * (1 / Ω0)
         Gℓ = greenfn_cheby2(ℓ, operators)
         Gℓ_invℓℓp1_invΩ0 = Gℓ * invℓℓp1_invΩ0
-        Gℓ_invℓℓp1_invΩ0_invWscaling = (1 / Wscaling) * Gℓ_invℓℓp1_invΩ0
+        Gℓ_invℓℓp1_invΩ0_Wscaling = Wscaling * Gℓ_invℓℓp1_invΩ0
         for ℓ′ in ℓs
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
             @views @. VV[inds_ℓℓ′] += invℓℓp1_invΩ0 * V_rhs.V[inds_ℓℓ′]
-            @views @. VW[inds_ℓℓ′] += Wscaling * invℓℓp1_invΩ0 * V_rhs.W[inds_ℓℓ′]
-            @views WV[inds_ℓℓ′] .+= Gℓ_invℓℓp1_invΩ0_invWscaling * negr²Ω0W_rhs.V[inds_ℓℓ′]
+            @views @. VW[inds_ℓℓ′] += invℓℓp1_invΩ0 * V_rhs.W[inds_ℓℓ′] / Wscaling
+            @views WV[inds_ℓℓ′] .+= Gℓ_invℓℓp1_invΩ0_Wscaling * negr²Ω0W_rhs.V[inds_ℓℓ′]
             @views WW[inds_ℓℓ′] .+= Gℓ_invℓℓp1_invΩ0 * negr²Ω0W_rhs.W[inds_ℓℓ′]
 
-            @views @. SV[inds_ℓℓ′] += (1 / ε) * S_rhs.V[inds_ℓℓ′]
-            @views @. SW[inds_ℓℓ′] .+= (Wscaling / ε) * S_rhs.W[inds_ℓℓ′]
+            @views @. SV[inds_ℓℓ′] += Sscaling * S_rhs.V[inds_ℓℓ′]
+            @views @. SW[inds_ℓℓ′] .+= (Sscaling/Wscaling) * S_rhs.W[inds_ℓℓ′]
         end
     end
 
@@ -1918,8 +1919,8 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     λ, v = λ[filtinds], v[:, filtinds]
 
     # re-apply scalings
-    v[nparams .+ (1:nparams), :] .*= -im * operators.constants.scalings.Wscaling
-    v[2nparams .+ (1:nparams), :] .*= operators.constants.scalings.ε
+    v[nparams .+ (1:nparams), :] ./= -im * operators.constants.scalings.Wscaling
+    v[2nparams .+ (1:nparams), :] ./= operators.constants.scalings.Sscaling
 
     λ, v
 end

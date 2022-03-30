@@ -227,8 +227,8 @@ end
 
     ℓ′ = 1
     # for these terms ℓ = ℓ′ (= 1 in this case)
-    WWterm, WSterm, SWterm, SSterm = (zeros(nr, nr) for i in 1:4)
-    RossbyWaveSpectrum.uniform_rotation_matrix_terms_outer!((WWterm, WSterm, SWterm, SSterm),
+    WSterm, SWterm, SSterm = (zeros(nr, nr) for i in 1:3)
+    RossbyWaveSpectrum.uniform_rotation_matrix_terms_outer!((WSterm, SWterm, SSterm),
                         (ℓ′, m), nchebyr,
                         (ddrDDrM, onebyr2_IplusrηρM, gM,
                             κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M, onebyr2_cheby_ddr_S0_by_cpM), Ω0)
@@ -307,7 +307,7 @@ end
             function VWterm_fn(r, n)
                 r̄_r = r̄(r)
                 Tn = chebyshevT(n, r̄_r)
-                -2√(1/15) * (Drρ_fn(r, n) - 2/r * Tn) * Wscaling
+                -2√(1/15) * (Drρ_fn(r, n) - 2/r * Tn) / Wscaling
             end
 
             VW = RossbyWaveSpectrum.matrix_block(M, 1, 2, nfields)
@@ -371,16 +371,6 @@ end
                     onebyr2_Iplusrηρ_Tn_analytical = chebyfwdnr(r -> onebyr2_Iplusrηρ_Tn_fn(r, n))
                     @test onebyr2_IplusrηρM[:, n+1] ≈ onebyr2_Iplusrηρ_Tn_analytical rtol=1e-4
                 end
-            end
-
-            function WWterm_fn(r, n)
-                ℓℓp1 = 2
-                ddrDrρTn_fn(r, n) - ℓℓp1 * onebyr2_Iplusrηρ_Tn_fn(r, n)
-            end
-            @testset for n in 1:nr-1
-                WW_op_times_W = @view WWterm[:, n+1]
-                WW_times_W_explicit = chebyfwdnr(r -> WWterm_fn(r, n))
-                @test WW_op_times_W ≈ WW_times_W_explicit rtol = 1e-4
             end
         end
 
@@ -567,15 +557,15 @@ end
                         ℓ_skip = (ℓind - 1)*nr
                         inds_ℓ = nr*nℓ + ℓ_skip .+ (1:nr)
                         w = vfn[inds_ℓ]
-                        @test BC[3:4, inds_ℓ] * w ≈ [0, 0] atol=1e-10*Wscaling
+                        @test BC[3:4, inds_ℓ] * w ≈ [0, 0] atol=1e-10/Wscaling
                         pw = SpecialPolynomials.Chebyshev(w)
                         @testset "inner boundary" begin
-                            @test sum(i -> (-1)^i * w[i], axes(w, 1)) ≈ 0 atol=1e-10*Wscaling
-                            @test pw(-1) ≈ 0 atol=1e-10*Wscaling
+                            @test sum(i -> (-1)^i * w[i], axes(w, 1)) ≈ 0 atol=1e-10/Wscaling
+                            @test pw(-1) ≈ 0 atol=1e-10/Wscaling
                         end
                         @testset "outer boundary" begin
-                            @test sum(w) ≈ 0 atol=1e-10*Wscaling
-                            @test pw(1) ≈ 0 atol=1e-10*Wscaling
+                            @test sum(w) ≈ 0 atol=1e-10/Wscaling
+                            @test pw(1) ≈ 0 atol=1e-10/Wscaling
                         end
                     end
                 end
