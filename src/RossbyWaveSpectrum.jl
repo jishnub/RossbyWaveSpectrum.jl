@@ -698,7 +698,10 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     g = sg.(r)
     g_cheby = Fun(sg ∘ r_cheby, Chebyshev())::TFunSpline
 
+    Ω0 = 2pi * 453e-9
+
     κ = 3e10
+    κ /= Ω0
     ddr_lnρT = ηρ_cheby + ηT_cheby
 
     γ = 1.64
@@ -709,8 +712,6 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     Ir = I(nchebyr)
     Iℓ = I(nℓ)
 
-    Ω0 = 2pi * 453e-9
-
     # scaling for S and W
     Sscaling = Ω0*Rsun^2
     Wscaling = 1/Rsun
@@ -718,7 +719,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
 
     # viscosity
     ν = 1e10
-    ν = ν / Ω0
+    ν /= Ω0
 
     mat = x -> chebyshevmatrix(x, nr)
 
@@ -813,7 +814,7 @@ function uniform_rotation_matrix_terms_outer!((WSterm, SWterm, SSterm),
 
     @. WSterm = -gM / Ω0
     @. SWterm = (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
-    @. SSterm = (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M) / Ω0
+    @. SSterm = (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M)
 
     WSterm, SWterm, SSterm
 end

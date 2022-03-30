@@ -450,7 +450,7 @@ end
                 ηTr = ηT_cheby(r̄_r)
                 f = a^2 * n * ((n-1)*r̄_r*Unm1 - n*Unm2)/(r̄_r^2 - 1) +
                     2/r^2 * (a*n*r*Unm1 - Tn) + a*n*Unm1*(ηρr + ηTr)
-                κ/Ω0 * f
+                κ * f
             end
             @testset for n in 1:nr-1
                 SStermM_op = @view SSterm[:, n+1]
