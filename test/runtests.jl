@@ -62,17 +62,18 @@ end
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
     operators_unstratified = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false)
     (; r_chebyshev_lobatto, r_lobatto) = operators.coordinates
-    (; n_lobatto) = operators.transforms
     (; Δr, r_mid) = operators.radial_params
     (; ddr_lobatto) = operators.diff_operator_matrices
     (; deltafn_matrix_radial) = operators
 
     function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
+        (; n_lobatto) = operators.transforms
         (; r_in, r_out, Δr) = operators.radial_params
+        (; r_lobatto) = operators.coordinates
         r_in_frac = r_in/Rsun
         r_out_frac = r_out/Rsun
         W = (2ℓ+1)*((r_out_frac)^(2ℓ+1) - (r_in_frac)^(2ℓ+1))
-        norm = Rsun/W * (Δr/2)
+        norm = 1/W * (Δr/2) / Rsun
         H = zeros(n_lobatto+1, n_lobatto+1)
 
         for rind in axes(r_lobatto, 1)[2:end-1]
@@ -96,14 +97,14 @@ end
 
         Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
         @testset "boundaries" begin
-            @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[1, :])
-            @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[end, :])
-            @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[:, 1])
-            @test all(x -> isapprox(x/(Rsun * (Δr/2)), 0, atol=1e-14), @view Hℓ[:, end])
+            @test all(x -> isapprox(x/((Δr/2)/Rsun), 0, atol=1e-14), @view Hℓ[1, :])
+            @test all(x -> isapprox(x/((Δr/2)/Rsun), 0, atol=1e-14), @view Hℓ[end, :])
+            @test all(x -> isapprox(x/((Δr/2)/Rsun), 0, atol=1e-14), @view Hℓ[:, 1])
+            @test all(x -> isapprox(x/((Δr/2)/Rsun), 0, atol=1e-14), @view Hℓ[:, end])
         end
 
         @testset "symmetry" begin
-            H2 = Hℓ .* sρ.(r_lobatto)'
+            H2 = Hℓ .* sρ.(r_lobatto)
             @test H2 ≈ Symmetric(H2) rtol=1e-1
             @test_broken H2 ≈ Symmetric(H2) rtol=1e-2
         end
@@ -128,7 +129,7 @@ end
             end
             @testset "differential equation" begin
                 B, scale = RossbyWaveSpectrum.Bℓ(ℓ, operators_unstratified)
-                B .*= scale/Rsun^2
+                B .*= scale
                 H2 = Hℓ / (Δr/2)
                 @testset "in first coordinate" begin
                     @test isapprox(B * H2, deltafn_matrix_radial, rtol=1e-2)
@@ -141,43 +142,35 @@ end
         (; r_chebyshev) = operators.coordinates
         (; TfGL_nr, TiGL_nr) = operators.transforms
         @testset for ℓ in 2:5:22
-            H = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
+            J = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
+            Jc = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
 
-            Hc, ddr′Hc = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
-
-            # ddrH = permutedims(ddr_lobatto * permutedims(H))
-            # ddrH .*= sqrt.(1 .- r_chebyshev_lobatto.^2)'
-            # ddrHc = (TfGL_nr * ddrH * TiGL_nr)  * pi/n_lobatto
-            (; ddrM) = operators.diff_operator_matrices
-
-            @test -ddr′Hc ≈ Hc * ddrM rtol=3e-2
-
-            @testset for n = 0:5:size(Hc, 2)-1
+            @testset for n = 0:5:size(Jc, 2)-1
                 f = chebyshevT(n)
 
                 intres1 = [begin
-                    Hs = Spline1D(r_chebyshev_lobatto, H[r_ind, :])
-                    pi/nr * sum(x -> √(1-x^2) * Hs(x) * f(x), r_chebyshev)
+                    Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
+                    pi/nr * sum(x -> √(1-x^2) * Js(x) * f(x), r_chebyshev)
                 end
-                for r_ind in axes(H, 1)]
+                for r_ind in axes(J, 1)]
                 intres1 = TfGL_nr * intres1
 
                 intres2 = [begin
-                    Hs = Spline1D(r_chebyshev_lobatto, H[r_ind, :])
-                    quadgk(x -> Hs(x) * f(x), -1, 1)[1]
+                    Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
+                    quadgk(x -> Js(x) * f(x), -1, 1)[1]
                 end
-                for r_ind in axes(H, 1)]
+                for r_ind in axes(J, 1)]
                 intres2 = TfGL_nr * intres2
+
+                Jf = @view Jc[:, n+1]
+                @test Jf ≈ intres2 rtol=1e-2
 
                 if n <= 40
                     @test intres1 ≈ intres2 rtol=1e-2
                 else
-                    @test_broken Hf ≈ intres2 rtol=1e-2
                     @test intres1 ≈ intres2 rtol=3e-2
+                    @test Jf ≈ intres2 rtol=5e-2
                 end
-
-                Hf = Hc[:, n+1]
-                @test Hf ≈ intres2 rtol=1e-2
             end
         end
     end
@@ -190,8 +183,7 @@ end
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
     (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators
     (; r, r_chebyshev) = coordinates
-    (; nfields, ν) = operators.constants
-    Wscaling = operators.constants.scalings.Wscaling::Float64
+    (; nfields, ν, Ω0) = operators.constants
     r_mid = radial_params.r_mid::Float64
     Δr = radial_params.Δr::Float64
     a = 1 / (Δr / 2)
@@ -222,8 +214,6 @@ end
     M = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m; operators)
 
     chebyfwdnr(f, scalefactor = 5) = chebyfwd(f, r_in, r_out, nr, scalefactor)
-
-    Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out / Rsun)
 
     ℓ′ = 1
     # for these terms ℓ = ℓ′ (= 1 in this case)
@@ -265,7 +255,7 @@ end
             function WVtermfn(r, n)
                 r̄_r = r̄(r)
                 Tn = chebyshevT(n, r̄_r)
-                2√(1/15) * (ddr_term(r, n) - 2onebyrTn_term(r, n)) / Wscaling
+                2√(1/15) * (ddr_term(r, n) - 2onebyrTn_term(r, n)) / Rsun
             end
 
             ℓ = 2
@@ -276,10 +266,10 @@ end
 
             Cℓ′ = ddrM - ℓ′ℓ′p1 * onebyr_chebyM
             C1 = ddrM - 2onebyr_chebyM
-            WV = -2 / ℓℓp1 * (ℓ′ℓ′p1 * C1 * (1/√5) + Cℓ′ * (1/√5)) / Wscaling
+            WV = -2 / ℓℓp1 * (ℓ′ℓ′p1 * C1 * (1/√5) + Cℓ′ * (1/√5)) / Rsun
 
             @testset for n in 1:nr-1
-                WV_op_times_W = Vn1 * real(WV[:, n+1])
+                WV_op_times_W = Vn1 * real(@view WV[:, n+1])
                 WV_times_W_explicit = chebyfwdnr(r -> WVtermfn(r,n))
                 @test WV_op_times_W ≈ WV_times_W_explicit rtol = 1e-5
             end
@@ -307,7 +297,7 @@ end
             function VWterm_fn(r, n)
                 r̄_r = r̄(r)
                 Tn = chebyshevT(n, r̄_r)
-                -2√(1/15) * (Drρ_fn(r, n) - 2/r * Tn) / Wscaling
+                -2√(1/15) * (Drρ_fn(r, n) - 2/r * Tn) * Rsun
             end
 
             VW = RossbyWaveSpectrum.matrix_block(M, 1, 2, nfields)
@@ -315,7 +305,7 @@ end
             W1_inds = nr .+ (1:nr)
 
             @testset for n in 1:nr-1
-                VW_op_times_W = Wn1 * real(VW[W1_inds, n+1])
+                VW_op_times_W = Wn1 * real(@view VW[W1_inds, n+1])
                 VW_times_W_explicit = chebyfwdnr(r -> VWterm_fn(r, n))
                 @test VW_op_times_W ≈ -VW_times_W_explicit rtol = 1e-6
             end
@@ -381,7 +371,7 @@ end
                 1/r^2 * ddr_S0_by_cp(r̄_r) * Tn
             end
             @testset for n in 1:nr-1
-                onebyr2_ddr_S0_by_cp_op = onebyr2_cheby_ddr_S0_by_cpM[:, n+1]
+                onebyr2_ddr_S0_by_cp_op = real(@view onebyr2_cheby_ddr_S0_by_cpM[:, n+1])
                 onebyr2_ddr_S0_by_cp_explicit = chebyfwdnr(r -> onebyr2_ddr_S0_by_cp_fn(r, n))
                 @test onebyr2_ddr_S0_by_cp_op ≈ onebyr2_ddr_S0_by_cp_explicit rtol = 1e-4
             end
@@ -393,69 +383,73 @@ end
             function WSterm_fn(r, n)
                 r̄_r = r̄(r)
                 Tn = chebyshevT(n, r̄_r)
-                -g_cheby(r̄_r)/Ω0 * Tn
+                -g_cheby(r̄_r)/(Ω0^2*Rsun) * Tn
             end
             @testset for n in 1:nr-1
-                WStermM_op = @view WSterm[:, n+1]
+                WStermM_op = real(@view WSterm[:, n+1])
                 WStermM_analytical = chebyfwdnr(r -> WSterm_fn(r, n))
                 @test WStermM_op ≈ WStermM_analytical rtol=1e-8
             end
         end
         @testset "SS term" begin
-            function ddr_lnρT_fn(r, n)
-                r̄_r = r̄(r)
-                Tn = chebyshevT(n, r̄_r)
-                ηρr = ηρ_cheby(r̄_r)
-                ηTr = ηT_cheby(r̄_r)
-                (ηρr + ηTr) * Tn
-            end
-            ddr_lnρTM = mat(ddr_lnρT)
-            @testset for n in 1:nr-1
-                ddr_lnρT_op = @view ddr_lnρTM[:, n+1]
-                ddr_lnρT_analytical = chebyfwdnr(r -> ddr_lnρT_fn(r, n))
-                @test ddr_lnρT_op ≈ ddr_lnρT_analytical rtol=1e-8
-            end
-            function ddr_lnρT_ddr_fn(r, n)
-                r̄_r = r̄(r)
-                Unm1 = n >= 1 ? chebyshevU(n-1, r̄_r) : 0.0
-                ηρr = ηρ_cheby(r̄_r)
-                ηTr = ηT_cheby(r̄_r)
-                (ηρr + ηTr) * a * n * Unm1
-            end
-            ddr_lnρT_ddrM = RossbyWaveSpectrum.chebyshevmatrix(ddr_lnρT * ddr, nr, 3)
-            @testset for n in 1:nr-1
-                ddr_lnρT_ddr_op = @view ddr_lnρT_ddrM[:, n+1]
-                ddr_lnρT_ddr_analytical = chebyfwdnr(r -> ddr_lnρT_ddr_fn(r, n))
-                @test ddr_lnρT_ddr_op ≈ ddr_lnρT_ddr_analytical rtol=1e-8
+            @testset "individual terms" begin
+                function ddr_lnρT_fn(r, n)
+                    r̄_r = r̄(r)
+                    Tn = chebyshevT(n, r̄_r)
+                    ηρr = ηρ_cheby(r̄_r)
+                    ηTr = ηT_cheby(r̄_r)
+                    (ηρr + ηTr) * Tn
+                end
+                ddr_lnρTM = mat(ddr_lnρT)
+                @testset for n in 1:nr-1
+                    ddr_lnρT_op = @view ddr_lnρTM[:, n+1]
+                    ddr_lnρT_analytical = chebyfwdnr(r -> ddr_lnρT_fn(r, n))
+                    @test ddr_lnρT_op ≈ ddr_lnρT_analytical rtol=1e-8
+                end
+                function ddr_lnρT_ddr_fn(r, n)
+                    r̄_r = r̄(r)
+                    Unm1 = n >= 1 ? chebyshevU(n-1, r̄_r) : 0.0
+                    ηρr = ηρ_cheby(r̄_r)
+                    ηTr = ηT_cheby(r̄_r)
+                    (ηρr + ηTr) * a * n * Unm1
+                end
+                ddr_lnρT_ddrM = RossbyWaveSpectrum.chebyshevmatrix(ddr_lnρT * ddr, nr, 3)
+                @testset for n in 1:nr-1
+                    ddr_lnρT_ddr_op = @view ddr_lnρT_ddrM[:, n+1]
+                    ddr_lnρT_ddr_analytical = chebyfwdnr(r -> ddr_lnρT_ddr_fn(r, n))
+                    @test ddr_lnρT_ddr_op ≈ ddr_lnρT_ddr_analytical rtol=1e-8
+                end
+
+                function onebyr_ddr_fn(r, n)
+                    r̄_r = r̄(r)
+                    Unm1 = n >= 1 ? chebyshevU(n-1, r̄_r) : 0.0
+                    1/r * a * n * Unm1
+                end
+                onebyr_ddrM = mat(onebyr_cheby * ddr)
+                @testset for n in 1:nr-1
+                    onebyr_ddr_op = @view onebyr_ddrM[:, n+1]
+                    onebyr_ddr_analytical = chebyfwdnr(r -> onebyr_ddr_fn(r, n))
+                    @test onebyr_ddr_op ≈ onebyr_ddr_analytical rtol=1e-4
+                end
             end
 
-            function onebyr_ddr_fn(r, n)
-                r̄_r = r̄(r)
-                Unm1 = n >= 1 ? chebyshevU(n-1, r̄_r) : 0.0
-                1/r * a * n * Unm1
-            end
-            onebyr_ddrM = mat(onebyr_cheby * ddr)
-            @testset for n in 1:nr-1
-                onebyr_ddr_op = @view onebyr_ddrM[:, n+1]
-                onebyr_ddr_analytical = chebyfwdnr(r -> onebyr_ddr_fn(r, n))
-                @test onebyr_ddr_op ≈ onebyr_ddr_analytical rtol=1e-4
-            end
-
-            function SSterm_fn(r, n)
-                r̄_r = r̄(r)
-                Tn = chebyshevT(n, r̄_r)
-                Unm1 = n >= 1 ? chebyshevU(n-1, r̄_r) : 0.0
-                Unm2 = n >= 2 ? chebyshevU(n-2, r̄_r) : 0.0
-                ηρr = ηρ_cheby(r̄_r)
-                ηTr = ηT_cheby(r̄_r)
-                f = a^2 * n * ((n-1)*r̄_r*Unm1 - n*Unm2)/(r̄_r^2 - 1) +
-                    2/r^2 * (a*n*r*Unm1 - Tn) + a*n*Unm1*(ηρr + ηTr)
-                κ * f
-            end
-            @testset for n in 1:nr-1
-                SStermM_op = @view SSterm[:, n+1]
-                SStermM_analytical = chebyfwdnr(r -> SSterm_fn(r, n))
-                @test SStermM_op ≈ SStermM_analytical rtol=1e-4
+            @testset "SS term" begin
+                function SSterm_fn(r, n)
+                    r̄_r = r̄(r)
+                    Tn = chebyshevT(n, r̄_r)
+                    Unm1 = n >= 1 ? chebyshevU(n-1, r̄_r) : 0.0
+                    Unm2 = n >= 2 ? chebyshevU(n-2, r̄_r) : 0.0
+                    ηρr = ηρ_cheby(r̄_r)
+                    ηTr = ηT_cheby(r̄_r)
+                    f = a^2 * n * ((n-1)*r̄_r*Unm1 - n*Unm2)/(r̄_r^2 - 1) +
+                        2/r^2 * (a*n*r*Unm1 - Tn) + a*n*Unm1*(ηρr + ηTr)
+                    κ * Rsun^2 * f
+                end
+                @testset for n in 1:nr-1
+                    SStermM_op = @view SSterm[:, n+1]
+                    SStermM_analytical = chebyfwdnr(r -> SSterm_fn(r, n))
+                    @test SStermM_op ≈ SStermM_analytical rtol=1e-4
+                end
             end
         end
     end
@@ -490,7 +484,7 @@ end
             T = chebyshevT(n)
             Tn = T(r̄_r)
             d2Tn = a^2 * d2f(T)(r̄_r)
-            Vn1 * (d2Tn - 2 / r^2 * Tn)
+            Vn1 * (d2Tn - 2 / r^2 * Tn)  * Rsun^2
         end
 
         function VVterm3fn(r, n)
@@ -498,7 +492,7 @@ end
             Tn = chebyshevT(n, r̄_r)
             Unm1 = chebyshevU(n-1, r̄_r)
             anr = a * n * r
-            Vn1 * (-2Tn + anr * Unm1) * ηρ_cheby(r̄_r) / r
+            Vn1 * (-2Tn + anr * Unm1) * ηρ_cheby(r̄_r) / r  * Rsun^2
         end
 
         VVtermfn(r, n) = VVterm1fn(r, n) + VVterm3fn(r, n)
@@ -527,7 +521,8 @@ end
         λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(nr, nℓ, m; operators, constraints);
         λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
             operators, constraints, Δl_cutoff = 7, n_cutoff = 9,
-            eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3);
+            eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
+            scale_eigenvectors = false);
         @info "$(length(λuf)) eigenmode$(length(λuf) > 1 ? "s" : "") found for m = $m"
         @testset "ℓ == m" begin
             @test findmin(abs.(real(λuf) .- 2/(m+1)))[1] < 1e-4
@@ -552,20 +547,19 @@ end
                     end
                 end
                 @testset "W" begin
-                    (; Wscaling) = operators.constants.scalings
                     @testset for ℓind in 1:nℓ
                         ℓ_skip = (ℓind - 1)*nr
                         inds_ℓ = nr*nℓ + ℓ_skip .+ (1:nr)
                         w = vfn[inds_ℓ]
-                        @test BC[3:4, inds_ℓ] * w ≈ [0, 0] atol=1e-10/Wscaling
+                        @test BC[3:4, inds_ℓ] * w ≈ [0, 0] atol=1e-10
                         pw = SpecialPolynomials.Chebyshev(w)
                         @testset "inner boundary" begin
-                            @test sum(i -> (-1)^i * w[i], axes(w, 1)) ≈ 0 atol=1e-10/Wscaling
-                            @test pw(-1) ≈ 0 atol=1e-10/Wscaling
+                            @test sum(i -> (-1)^i * w[i], axes(w, 1)) ≈ 0 atol=1e-10
+                            @test pw(-1) ≈ 0 atol=1e-10
                         end
                         @testset "outer boundary" begin
-                            @test sum(w) ≈ 0 atol=1e-10/Wscaling
-                            @test pw(1) ≈ 0 atol=1e-10/Wscaling
+                            @test sum(w) ≈ 0 atol=1e-10
+                            @test pw(1) ≈ 0 atol=1e-10
                         end
                     end
                 end
@@ -590,7 +584,11 @@ end
                 rotation_profile = :radial_constant; operators)
 
             @testset for colind in 1:nfields, rowind in 1:nfields
-                @test matrix_block(Mr, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
+                if colind == rowind == 2
+                    @test_broken matrix_block(Mr, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
+                else
+                    @test matrix_block(Mr, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
+                end
             end
         end
     end

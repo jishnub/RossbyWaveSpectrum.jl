@@ -539,10 +539,10 @@ function Bℓ(ℓ, operators)
 
     # Chebyshev Lobatto points, used in computing the Green function
     (; r_chebyshev_lobatto) = operators.coordinates
-    (; d2dr2_min_ηddr_lobatto) = operators.diff_operator_matrices
+    (; ddrDDr_lobatto) = operators.diff_operator_matrices
 
-    Bℓ = d2dr2_min_ηddr_lobatto - ℓ * (ℓ + 1) * Diagonal(onebyr2_cheby.(r_chebyshev_lobatto))
-    Bℓ .*= Rsun^2 # scale to improve the condition number
+    Bℓ = ddrDDr_lobatto - ℓ * (ℓ + 1) * Diagonal(onebyr2_cheby.(r_chebyshev_lobatto))
+    Bℓ .*= Rsun^2
     scale = maximum(abs, @view Bℓ[2:end-1, 2:end-1])
     Bℓ ./= scale
 
@@ -563,7 +563,7 @@ function greenfn_radial_lobatto(ℓ, operators)
     B, scale = Bℓ(ℓ, operators)
 
     H = B \ deltafn_matrix_radial
-    H .*= Rsun^2 / scale * (Δr/2) # scale the solution back, and multiply by the measure Δr/2
+    H .*= (Δr/2) / scale
     # the Δr/2 factor is used to convert the subsequent integrals ∫H f dr to ∫(Δr/2)H f dx,
     # where x = (r - rmid)/(Δr/2)
     return H
@@ -575,15 +575,11 @@ function greenfn_cheby(ℓ, operators)
     (; TfGL_nr, TiGL_nr, n_lobatto) = operators.transforms
     (; ddr_lobatto) = operators.diff_operator_matrices
     H = greenfn_radial_lobatto(ℓ, operators)
-    ddr′H = permutedims(ddr_lobatto*permutedims(H))
     norm = sqrt.(1 .- r_chebyshev_lobatto.^2)'
     H .*= norm
-    ddr′H .*= norm
     Hc = TfGL_nr * H * TiGL_nr
-    ddr′Hc = TfGL_nr * ddr′H * TiGL_nr
     Hc .*= pi/n_lobatto
-    ddr′Hc .*= pi/n_lobatto
-    return Hc, ddr′Hc
+    return Hc
 end
 
 splderiv(v::Vector, r::Vector, rout = r; nu = 1) = splderiv(Spline1D(r, v), rout; nu = 1)
@@ -698,10 +694,10 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     g = sg.(r)
     g_cheby = Fun(sg ∘ r_cheby, Chebyshev())::TFunSpline
 
-    Ω0 = 2pi * 453e-9
+    Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out_frac)
 
     κ = 3e10
-    κ /= Ω0
+    κ /= Ω0*Rsun^2
     ddr_lnρT = ηρ_cheby + ηT_cheby
 
     γ = 1.64
@@ -712,14 +708,9 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     Ir = I(nchebyr)
     Iℓ = I(nℓ)
 
-    # scaling for S and W
-    Sscaling = Ω0*Rsun^2
-    Wscaling = 1/Rsun
-    scalings = (; Sscaling, Wscaling)
-
     # viscosity
     ν = 1e10
-    ν /= Ω0
+    ν /= Ω0*Rsun^2
 
     mat = x -> chebyshevmatrix(x, nr)
 
@@ -750,11 +741,13 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     r_lobatto = @. (Δr/2) * r_chebyshev_lobatto .+ r_mid
     ddr_lobatto = reverse(chebyderivGaussLobatto(n_lobatto) * (2 / Δr))
     d2dr2_lobatto = ddr_lobatto*ddr_lobatto
-    d2dr2_min_ηddr_lobatto = d2dr2_lobatto .- Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto
+    # d2dr2_min_ηddr_lobatto = d2dr2_lobatto .- Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto
+    ddrDDr_lobatto = d2dr2_lobatto + Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto +
+                        Diagonal((ddr * ηρ_cheby).(r_chebyshev_lobatto))
 
     deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
 
-    constants = (; κ, ν, scalings, nfields, Ω0)
+    constants = (; κ, ν, nfields, Ω0)
     identities = (; Ir, Iℓ)
     coordinates = (; r, r_chebyshev, r_chebyshev_lobatto, r_lobatto)
 
@@ -771,7 +764,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
         ddr_minus_2byrM, DDr_minus_2byrM,
         grddrM, gM,
         ddr_lobatto,
-        d2dr2_min_ηddr_lobatto
+        ddrDDr_lobatto
     )
 
     (;
@@ -812,15 +805,15 @@ function uniform_rotation_matrix_terms_outer!((WSterm, SWterm, SSterm),
 
     ℓℓp1 = ℓ*(ℓ+1)
 
-    @. WSterm = -gM / Ω0
-    @. SWterm = (1 / Ω0) * ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM
-    @. SSterm = (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M)
+    @. WSterm = -gM / (Ω0^2 * Rsun)
+    @. SWterm = ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM * Rsun^3
+    @. SSterm = (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M) * Rsun^2
 
     WSterm, SWterm, SSterm
 end
 
 function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
-    (; nfields) = operators.constants
+    (; nfields, Ω0) = operators.constants
     (; nchebyr, r_out) = operators.radial_params
     (; ddr, d2dr2) = operators.diff_operators
     (; onebyr2_cheby, onebyr_cheby, ddr_lnρT, κ,
@@ -829,8 +822,6 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         onebyr_chebyM, grddrM, gM, ddr_minus_2byrM,
         DDr_minus_2byrM) = operators.diff_operator_matrices
     (; mat) = operators
-
-    Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
 
     Cℓ′ = zeros(nr, nr)
     WVℓℓ′ = zeros(nr, nr)
@@ -856,8 +847,6 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     cosθ = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs)
     sinθdθ = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
 
-    (; Sscaling, Wscaling) = operators.constants.scalings
-
     onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby)
 
     η_by_rM = mat(ηρ_cheby * onebyr_cheby)
@@ -873,7 +862,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     for ℓ in ℓs
         # numerical green function
-        Hℓ, _ = greenfn_cheby(ℓ, operators)
+        Hℓ = greenfn_cheby(ℓ, operators)
         mul!(HℓC1, Hℓ, ddr_minus_2byrM)
 
         ℓℓp1 = ℓ * (ℓ + 1)
@@ -889,25 +878,24 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         VVblockdiag_diag = @view VVblockdiag[diagind(VVblockdiag)]
         VVblockdiag_diag .= 2m/ℓℓp1
 
-        WW[blockdiaginds_ℓ] = 2m/ℓℓp1 * I - 2m * Hℓ * η_by_rM
+        WW[blockdiaginds_ℓ] = 2m/ℓℓp1 * I - 2m * Hℓ * η_by_rM*Rsun^2
 
         if nfields == 3
-            WSterm .*= Wscaling/Sscaling
             WS[blockdiaginds_ℓ] = Hℓ * WSterm
 
-            @views @. SW[blockdiaginds_ℓ] = Sscaling/Wscaling * SWterm
+            @views @. SW[blockdiaginds_ℓ] = SWterm
             @views @. SS[blockdiaginds_ℓ] = -im * SSterm
         end
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
 
-            @. VWℓℓ′ = (-2) / ℓℓp1 * (ℓ′ℓ′p1 * DDr_minus_2byrM * cosθ[ℓ, ℓ′] +
-                    (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθ[ℓ, ℓ′]) / Wscaling
+            @. VWℓℓ′ = (-2/ℓℓp1) * (ℓ′ℓ′p1 * DDr_minus_2byrM * cosθ[ℓ, ℓ′] +
+                    (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθ[ℓ, ℓ′]) * Rsun
 
             @. Cℓ′ = ddrM - ℓ′ℓ′p1 * onebyr_chebyM
             mul!(HℓCℓ′, Hℓ, Cℓ′)
-            @. WVℓℓ′ = -2 / ℓℓp1 * (ℓ′ℓ′p1 * HℓC1 * cosθ[ℓ, ℓ′] + HℓCℓ′ * sinθdθ[ℓ, ℓ′]) * Wscaling
+            @. WVℓℓ′ = (-2/ℓℓp1) * (ℓ′ℓ′p1 * HℓC1 * cosθ[ℓ, ℓ′] + HℓCℓ′ * sinθdθ[ℓ, ℓ′]) * Rsun
 
             blockinds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
@@ -984,9 +972,9 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         ℓℓp1 = ℓ * (ℓ + 1)
 
-        @views @. VV[blockdiaginds_ℓ] -= im * ν * (d2dr2M - ℓℓp1 * onebyr2_chebyM + ηρ_ddr_minus_2byrM)
+        @views @. VV[blockdiaginds_ℓ] -= im * ν * (d2dr2M - ℓℓp1 * onebyr2_chebyM + ηρ_ddr_minus_2byrM) * Rsun^2
 
-        Hℓ, ddr′Hℓ = greenfn_cheby(ℓ, operators)
+        Hℓ = greenfn_cheby(ℓ, operators)
 
         @. T1 = ddr_minus_2byr_r_d2dr2_ηρ_by_rM - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2M +
                 d2dr2_d2dr2_plus_4ηρ_by_rM - ℓℓp1 * one_by_r2_d2dr2_plus_4ηρ_by_r__plus_d2dr2_one_by_r2M +
@@ -1001,7 +989,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         mul!(WWop2, Hℓ, WWop)
 
-        @views @. WW[blockdiaginds_ℓ] -= im * ν * WWop2
+        @views @. WW[blockdiaginds_ℓ] -= im * ν * WWop2 * Rsun^4
     end
 
     return M
@@ -1106,11 +1094,16 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
     sinθdθo = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
     laplacian_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * parent(sinθdθo), ℓs, ℓs)
 
-    (; Wscaling) = operators.constants.scalings
+    DDrM = mat(DDr)
+    onebyr_chebyM = mat(onebyr_cheby)
+    DDr_min_2byrM = @. DDrM - 2 * onebyr_chebyM
+
+    ddrM = mat(ddr)
+    ddr_plus_2byrM = @. ddrM + 2 * onebyr_chebyM
 
     for ℓ in ℓs
         # numerical green function
-        Hℓ, _ = greenfn_cheby(ℓ, operators)
+        Hℓ = greenfn_cheby(ℓ, operators)
         ℓℓp1 = ℓ * (ℓ + 1)
         blockdiaginds_ℓ = blockinds((m, nr), ℓ)
         two_over_ℓℓp1 = 2 / ℓℓp1
@@ -1118,10 +1111,9 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
         VVd = @view VV[blockdiaginds_ℓ]
         @views VVd[diagind(VVd)] .+= m * (two_over_ℓℓp1 - 1) * ΔΩ_by_Ω0
 
-        WWmat = ΔΩ_by_Ω0 * mat(-twoηρ_by_r + (two_over_ℓℓp1 - 1) *
-                                             (ddrDDr - ℓℓp1 * onebyr2_cheby))
+        WWmat =  ΔΩ_by_Ω0 * Hℓ * mat(-twoηρ_by_r * Rsun^2) + ΔΩ_by_Ω0 * (two_over_ℓℓp1 - 1) * I
 
-        @views WW[blockdiaginds_ℓ] .+= Hℓ * m * WWmat
+        @views WW[blockdiaginds_ℓ] .+= m * WWmat
 
         for ℓ′ in ℓ-1:2:ℓ+1
             ℓ′ in ℓs || continue
@@ -1129,16 +1121,16 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
             @views VW[inds_ℓℓ′] .-= two_over_ℓℓp1 *
-                                    ΔΩ_by_Ω0 * mat(
-                                        ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * (DDr - 2 * onebyr_cheby) +
-                                        (DDr - ℓ′ℓ′p1 * onebyr_cheby) * sinθdθo[ℓ, ℓ′]
-                                    ) / Wscaling
+                                    ΔΩ_by_Ω0 * (
+                                        ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * DDr_min_2byrM +
+                                        (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθo[ℓ, ℓ′]
+                                    ) * Rsun
 
             @views WV[inds_ℓℓ′] .-= Hℓ *
-                                    Wscaling * ΔΩ_by_Ω0 / ℓℓp1 *
-                                    mat((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * ddr
+                                    @. Rsun * ΔΩ_by_Ω0 / ℓℓp1 *
+                                    ((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * ddrM
                                         +
-                                        ddr_plus_2byr * laplacian_sinθdθo[ℓ, ℓ′])
+                                        ddr_plus_2byrM * laplacian_sinθdθo[ℓ, ℓ′])
         end
     end
     return M
@@ -1276,8 +1268,6 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs)
     ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs)
 
-    (; Sscaling, Wscaling) = operators.constants.scalings
-
     DDr_min_2byr = (DDr - 2onebyr_cheby)::Tplus
     ΔΩ_DDr_min_2byr = (ΔΩ * DDr_min_2byr)::Tmul
     ΔΩ_DDr = (ΔΩ * DDr)::Tmul
@@ -1293,7 +1283,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
     for ℓ in ℓs
         # numerical green function
-        Hℓ, _ = greenfn_cheby(ℓ, operators)
+        Hℓ = greenfn_cheby(ℓ, operators)
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
 
         radial_differential_rotation_terms_outer!((VVterm, WWterm), (ℓ, m), (ΔΩM, Ω0), outer_matrices)
@@ -1308,13 +1298,13 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
                     (ℓ, ℓ′), (cosθo[ℓ, ℓ′], sinθdθo[ℓ, ℓ′], ∇²_sinθdθo[ℓ, ℓ′]),
                     (ddrΔΩM, Ω0), inner_matrices)
 
-            @views @. VW[inds_ℓℓ′] += VWterm / Wscaling
+            @views @. VW[inds_ℓℓ′] += Rsun * VWterm
 
-            WVterm .*= Wscaling
+            WVterm .*= Rsun
             @views WV[inds_ℓℓ′] .+= Hℓ * WVterm
 
             if nfields == 3
-                @views @. SV[inds_ℓℓ′] -= Sscaling * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM
+                @views @. SV[inds_ℓℓ′] -= (Ω0 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM
             end
         end
 
@@ -1322,7 +1312,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
             if nfields == 3
-                @views @. SW[inds_ℓℓ′] += (Sscaling/Wscaling) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM
+                @views @. SW[inds_ℓℓ′] += (Ω0 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM
             end
         end
     end
@@ -1505,7 +1495,7 @@ function solar_differential_rotation_terms!(M, nr, nℓ, m;
     for ℓ in ℓs
         ℓℓp1 = ℓ * (ℓ + 1)
         invℓℓp1_invΩ0 = (1 / ℓℓp1) * (1 / Ω0)
-        Gℓ = greenfn_cheby2(ℓ, operators)
+        Gℓ = greenfn_cheby(ℓ, operators)
         Gℓ_invℓℓp1_invΩ0 = Gℓ * invℓℓp1_invΩ0
         Gℓ_invℓℓp1_invΩ0_Wscaling = Wscaling * Gℓ_invℓℓp1_invΩ0
         for ℓ′ in ℓs
@@ -1920,8 +1910,11 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     λ, v = λ[filtinds], v[:, filtinds]
 
     # re-apply scalings
-    v[nparams .+ (1:nparams), :] ./= -im * operators.constants.scalings.Wscaling
-    v[2nparams .+ (1:nparams), :] ./= operators.constants.scalings.Sscaling
+    if get(kw, :scale_eigenvectors, true)
+        v[1:nparams, :] .*= Rsun
+        v[nparams .+ (1:nparams), :] .*= -im * Rsun^2
+        v[2nparams .+ (1:nparams), :] ./= operators.constants.Ω0 * Rsun
+    end
 
     λ, v
 end
