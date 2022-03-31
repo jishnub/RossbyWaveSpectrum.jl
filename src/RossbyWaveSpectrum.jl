@@ -862,7 +862,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     for ℓ in ℓs
         # numerical green function
-        Hℓ, _ = greenfn_cheby(ℓ, operators)
+        Hℓ = greenfn_cheby(ℓ, operators)
         mul!(HℓC1, Hℓ, ddr_minus_2byrM)
 
         ℓℓp1 = ℓ * (ℓ + 1)
@@ -974,7 +974,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         @views @. VV[blockdiaginds_ℓ] -= im * ν * (d2dr2M - ℓℓp1 * onebyr2_chebyM + ηρ_ddr_minus_2byrM) * Rsun^2
 
-        Hℓ, ddr′Hℓ = greenfn_cheby(ℓ, operators)
+        Hℓ = greenfn_cheby(ℓ, operators)
 
         @. T1 = ddr_minus_2byr_r_d2dr2_ηρ_by_rM - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2M +
                 d2dr2_d2dr2_plus_4ηρ_by_rM - ℓℓp1 * one_by_r2_d2dr2_plus_4ηρ_by_r__plus_d2dr2_one_by_r2M +
@@ -1094,9 +1094,16 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
     sinθdθo = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
     laplacian_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * parent(sinθdθo), ℓs, ℓs)
 
+    DDrM = mat(DDr)
+    onebyr_chebyM = mat(onebyr_cheby)
+    DDr_min_2byrM = @. DDrM - 2 * onebyr_chebyM
+
+    ddrM = mat(ddr)
+    ddr_plus_2byrM = @. ddrM + 2 * onebyr_chebyM
+
     for ℓ in ℓs
         # numerical green function
-        Hℓ, _ = greenfn_cheby(ℓ, operators)
+        Hℓ = greenfn_cheby(ℓ, operators)
         ℓℓp1 = ℓ * (ℓ + 1)
         blockdiaginds_ℓ = blockinds((m, nr), ℓ)
         two_over_ℓℓp1 = 2 / ℓℓp1
@@ -1104,10 +1111,9 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
         VVd = @view VV[blockdiaginds_ℓ]
         @views VVd[diagind(VVd)] .+= m * (two_over_ℓℓp1 - 1) * ΔΩ_by_Ω0
 
-        WWmat = ΔΩ_by_Ω0 * mat(-twoηρ_by_r + (two_over_ℓℓp1 - 1) *
-                                             (ddrDDr - ℓℓp1 * onebyr2_cheby))
+        WWmat =  ΔΩ_by_Ω0 * Hℓ * mat(-twoηρ_by_r * Rsun^2) + ΔΩ_by_Ω0 * (two_over_ℓℓp1 - 1) * I
 
-        @views WW[blockdiaginds_ℓ] .+= Hℓ * m * WWmat
+        @views WW[blockdiaginds_ℓ] .+= m * WWmat
 
         for ℓ′ in ℓ-1:2:ℓ+1
             ℓ′ in ℓs || continue
@@ -1115,16 +1121,16 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
             @views VW[inds_ℓℓ′] .-= two_over_ℓℓp1 *
-                                    ΔΩ_by_Ω0 * mat(
-                                        ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * (DDr - 2 * onebyr_cheby) +
-                                        (DDr - ℓ′ℓ′p1 * onebyr_cheby) * sinθdθo[ℓ, ℓ′]
+                                    ΔΩ_by_Ω0 * (
+                                        ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * DDr_min_2byrM +
+                                        (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθo[ℓ, ℓ′]
                                     ) * Rsun
 
             @views WV[inds_ℓℓ′] .-= Hℓ *
-                                    Rsun * ΔΩ_by_Ω0 / ℓℓp1 *
-                                    mat((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * ddr
+                                    @. Rsun * ΔΩ_by_Ω0 / ℓℓp1 *
+                                    ((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * ddrM
                                         +
-                                        ddr_plus_2byr * laplacian_sinθdθo[ℓ, ℓ′])
+                                        ddr_plus_2byrM * laplacian_sinθdθo[ℓ, ℓ′])
         end
     end
     return M
@@ -1277,7 +1283,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
     for ℓ in ℓs
         # numerical green function
-        Hℓ, _ = greenfn_cheby(ℓ, operators)
+        Hℓ = greenfn_cheby(ℓ, operators)
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
 
         radial_differential_rotation_terms_outer!((VVterm, WWterm), (ℓ, m), (ΔΩM, Ω0), outer_matrices)
@@ -1489,7 +1495,7 @@ function solar_differential_rotation_terms!(M, nr, nℓ, m;
     for ℓ in ℓs
         ℓℓp1 = ℓ * (ℓ + 1)
         invℓℓp1_invΩ0 = (1 / ℓℓp1) * (1 / Ω0)
-        Gℓ = greenfn_cheby2(ℓ, operators)
+        Gℓ = greenfn_cheby(ℓ, operators)
         Gℓ_invℓℓp1_invΩ0 = Gℓ * invℓℓp1_invΩ0
         Gℓ_invℓℓp1_invΩ0_invWscaling = (1 / Wscaling) * Gℓ_invℓℓp1_invΩ0
         for ℓ′ in ℓs
