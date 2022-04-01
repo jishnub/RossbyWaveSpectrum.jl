@@ -3,7 +3,7 @@ using Test
 using LinearAlgebra
 using OffsetArrays
 using Aqua
-using SpecialPolynomials
+import SpecialPolynomials
 using ForwardDiff
 using FastTransforms
 using Dierckx
@@ -30,7 +30,7 @@ d2f(f, r) = df(df(f))(r)
 const ChebyshevT = SpecialPolynomials.Chebyshev
 chebyshevT(n) = ChebyshevT([zeros(n); 1])
 chebyshevT(n, x) = chebyshevT(n)(x)
-chebyshevU(n) = ChebyshevU([zeros(n); 1])
+chebyshevU(n) = SpecialPolynomials.ChebyshevU([zeros(n); 1])
 chebyshevU(n, x) = chebyshevU(n)(x)
 
 function chebyfwd(f, r_in, r_out, nr, scalefactor = 5)
@@ -143,7 +143,7 @@ end
         (; TfGL_nr, TiGL_nr) = operators.transforms
         @testset for ℓ in 2:5:22
             J = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
-            Jc = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
+            Jc, _ = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
 
             @testset for n = 0:5:size(Jc, 2)-1
                 f = chebyshevT(n)
@@ -584,11 +584,7 @@ end
                 rotation_profile = :radial_constant; operators)
 
             @testset for colind in 1:nfields, rowind in 1:nfields
-                if colind == rowind == 2
-                    @test_broken matrix_block(Mr, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
-                else
-                    @test matrix_block(Mr, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
-                end
+                @test matrix_block(Mr, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
             end
         end
     end
@@ -621,6 +617,10 @@ end
         sinθdθ21 = 1/√5
         ∇²_sinθdθ21 = -ℓℓp1 * sinθdθ21
 
+        # used to check the VV term
+        M = zeros(3nr*nℓ, 3nr*nℓ)
+        RossbyWaveSpectrum._differential_rotation_matrix!(M, nr, nℓ, m, :constant; operators)
+
         @testset for rotation_profile in [:constant, :linear, :solar_equator]
 
             (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) =
@@ -647,12 +647,6 @@ end
             two_ΔΩbyr_ηρ = twoΔΩ_by_r * ηρ_cheby
             ddrΔΩ_ddr_plus_2byr = ddrΔΩ * (ddr + 2onebyr_cheby)
             WWfixedterms = -two_ΔΩbyr_ηρ + d2dr2ΔΩ + ddrΔΩ_ddr_plus_2byr
-
-            # for these terms ℓ = ℓ′ (=1 in this case)
-            VVterm, WWterm = zeros(nr, nr), zeros(nr, nr)
-            RossbyWaveSpectrum.radial_differential_rotation_terms_outer!((VVterm, WWterm),
-                                    (ℓ′, m), (mat(ΔΩ), Ω0),
-                                    map(mat, (ddrΔΩ_DDr_plus_ΔΩ_ddrDDr, ΔΩ_by_r2, WWfixedterms)))
 
             @testset "V terms" begin
                 Vn1 = P11norm
@@ -690,7 +684,7 @@ end
                         r̄_r = r̄(r)
                         Tn = chebyshevT(n, r̄_r)
                         Unm1 = chebyshevU(n-1, r̄_r)
-                        2/√15 * (ΔΩ(r̄_r) * (a * n * Unm1 - 2/r * Tn)  + ddrΔΩ(r̄_r) * Tn) / Ω0
+                        2/√15 * (ΔΩ(r̄_r) * (a * n * Unm1 - 2/r * Tn)  + ddrΔΩ(r̄_r) * Tn)
                     end
                     @testset for n in 1:nr-1
                         WV_op = Vn1 * @view WVterm[:, n + 1]
@@ -699,8 +693,9 @@ end
                     end
                 end
                 @testset "VV term" begin
+                    VV11term = @view M[1:nr, 1:nr]
                     @testset for n in 1:nr-1
-                        VV_op = @view VVterm[:, n + 1]
+                        VV_op = @view VV11term[:, n + 1]
                         @test all(iszero, VV_op)
                     end
                 end
@@ -746,27 +741,12 @@ end
                         @test ΔΩDDr_min_2byr_min_ddrΔΩ_op ≈ ΔΩDDr_min_2byr_min_ddrΔΩ_explicit rtol = 1e-4
                     end
 
-                    VWterms(r, n) = -2/√15 * ΔΩDDr_min_2byr_min_ddrΔΩ_term(r, n) / Ω0
+                    VWterms(r, n) = -2/√15 * ΔΩDDr_min_2byr_min_ddrΔΩ_term(r, n)
 
                     @testset for n in 1:nr-1
                         VW_op = Wn1 * @view VWterm[:, n + 1]
                         VW_explicit = chebyfwdnr(r -> VWterms(r, n))
                         @test VW_op ≈ -VW_explicit rtol = 1e-4
-                    end
-                end
-                @testset "WW term" begin
-                    function WWterms(r, n)
-                        r̄_r = r̄(r)
-                        Tn = chebyshevT(n, r̄_r)
-                        Unm1 = chebyshevU(n-1, r̄_r)
-                        ηr = ηρ_cheby(r̄_r)
-                        -2/√3 * (ddrΔΩ(r̄_r) * (a * n * Unm1 + 2/r * Tn)  +
-                                (d2dr2ΔΩ(r̄_r) - 2ΔΩ(r̄_r)/r * ηr) * Tn) / Ω0
-                    end
-                    @testset for n in 1:nr-1
-                        WW_op = Wn1 * @view WWterm[:, n + 1]
-                        WW_explicit = chebyfwdnr(r -> WWterms(r, n))
-                        @test WW_op ≈ WW_explicit rtol = 1e-4
                     end
                 end
             end
