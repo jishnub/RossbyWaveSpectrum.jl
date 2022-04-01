@@ -571,7 +571,7 @@ end
 
 function greenfn_cheby(ℓ, operators)
     (; nr) = operators.radial_params
-    (; r_chebyshev_lobatto) = operators.coordinates
+    (; r_chebyshev_lobatto, r_lobatto) = operators.coordinates
     (; TfGL_nr, TiGL_nr, n_lobatto) = operators.transforms
     (; ddr_lobatto) = operators.diff_operator_matrices
     (; ηρ_cheby) = operators.rad_terms
@@ -579,12 +579,18 @@ function greenfn_cheby(ℓ, operators)
     ddr′Hrr′ = permutedims(ddr_lobatto * permutedims(H))
     ηρr′Hrr′ = H .* ηρ_cheby.(r_chebyshev_lobatto)'
     twoddr′_plus_3ηρr′_Hrr′ = ddr′Hrr′ + ηρr′Hrr′
+
     norm = sqrt.(1 .- r_chebyshev_lobatto.^2)' * pi/n_lobatto
     H .*= norm
     twoddr′_plus_3ηρr′_Hrr′ .*= norm
+
+    H_times_2byr_min_ηρ = H .* (2 ./ r_lobatto .- ηρ_cheby.(r_chebyshev_lobatto))'
+
     Hc = TfGL_nr * H * TiGL_nr
     twoddr′_plus_3ηρr′_Hrr′c = TfGL_nr * twoddr′_plus_3ηρr′_Hrr′ * TiGL_nr
-    return Hc, twoddr′_plus_3ηρr′_Hrr′c
+    H_times_2byr_min_ηρc = TfGL_nr * H_times_2byr_min_ηρ * TiGL_nr
+
+    return Hc, twoddr′_plus_3ηρr′_Hrr′c, H_times_2byr_min_ηρc
 end
 
 splderiv(v::Vector, r::Vector, rout = r; nu = 1) = splderiv(Spline1D(r, v), rout; nu = 1)
@@ -1276,7 +1282,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
     for ℓ in ℓs
         # numerical green function
-        Hℓ, twoddr′_plus_3ηρr′_Hrr′ = greenfn_cheby(ℓ, operators)
+        Hℓ, twoddr′_plus_3ηρr′_Hrr′, H_times_2byr_min_ηρ = greenfn_cheby(ℓ, operators)
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
 
         ℓℓp1 = ℓ * (ℓ + 1)
@@ -1286,7 +1292,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
         @. VV[inds_ℓℓ] += m * two_over_ℓℓp1_min_1 * ΔΩM
 
         WWmat = two_over_ℓℓp1_min_1 * ΔΩM - Rsun^2 * Hℓ * ΔΩM * twoηρ_by_rM +
-            Rsun^2 * (Hℓ * twobyr_min_ηρM - twoddr′_plus_3ηρr′_Hrr′) * ddrΔΩM +
+            Rsun^2 * (H_times_2byr_min_ηρ - twoddr′_plus_3ηρr′_Hrr′) * ddrΔΩM +
             two_over_ℓℓp1 * Rsun^2 * (Hℓ * ddrΔΩDDr_plus_d2dr2ΔΩM + twoddr′_plus_3ηρr′_Hrr′ * ddrΔΩM)
 
         @views WW[inds_ℓℓ] .+= m * WWmat
