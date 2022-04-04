@@ -65,7 +65,8 @@ end
     (; Δr, r_mid) = operators.radial_params
     (; ddr_lobatto) = operators.diff_operator_matrices
     (; deltafn_matrix_radial) = operators
-    (; ηρ_cheby, r_cheby) = operators.rad_terms
+    (; ηρ_cheby, r_cheby, ηρ_by_r, ηρ²_by_r²) = operators.rad_terms
+    (; TfGL_nr, TiGL_nr) = operators.transforms
 
     function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
         (; n_lobatto) = operators.transforms
@@ -140,8 +141,6 @@ end
     end
 
     @testset "integrals" begin
-        (; r_chebyshev) = operators.coordinates
-        (; TfGL_nr, TiGL_nr) = operators.transforms
 
         @testset for ℓ in 2:5:22
             J = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
@@ -149,7 +148,7 @@ end
             Jc = T.Hℓ
             J_ηρ_by_r_c = T.Hℓ_ηρ_by_r
             J_by_r_c = T.Hℓ_by_r
-            J_ddr′ = T.Hℓ_ddr
+            J_ηρ²_by_r′² = T.Hℓ_ηρ²_by_r′²
 
             @testset "greenfn" begin
                 @testset for n = 0:5:nr-1
@@ -198,7 +197,6 @@ end
             end
 
             @testset "greenfn times ηρbyr" begin
-                ηρ_by_r(x) = ηρ_cheby(x)/r_cheby(x)
                 @testset for n = 0:5:nr-1
                     f = chebyshevT(n)
 
@@ -214,19 +212,23 @@ end
                 end
             end
 
-            @testset "greenfn times ddr" begin
-                @testset for n = 1:5:nr-1
-                    f = x -> n * chebyshevU(n-1, x)* (2/Δr)
+            @testset "greenfn times ηρ²byr²" begin
+                @testset for n = 0:5:nr-1
+                    f = chebyshevT(n)
 
                     intres = [begin
                             Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
-                            quadgk(x -> Js(x) * f(x), -1, 1)[1]
+                            quadgk(x -> Js(x) * ηρ²_by_r²(x) * f(x), -1, 1)[1]
                         end
                         for r_ind in axes(J, 1)]
                     intresc = TfGL_nr * intres
 
-                    J_ddr′_c_n = @view J_ddr′[:, n+1]
-                    @test_broken J_ddr′_c_n ≈ intresc rtol=1e-2
+                    J_ηρ²_by_r′²_n = @view J_ηρ²_by_r′²[:, n+1]
+                    if n <= 40
+                        @test J_ηρ²_by_r′²_n ≈ intresc rtol=1e-2
+                    else
+                        @test J_ηρ²_by_r′²_n ≈ intresc rtol=5e-2
+                    end
                 end
             end
         end
