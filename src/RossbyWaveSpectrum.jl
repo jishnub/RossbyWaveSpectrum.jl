@@ -579,18 +579,28 @@ function greenfn_cheby(ℓ, operators)
     ddr′Hrr′ = permutedims(ddr_lobatto * permutedims(H))
     ηρr′Hrr′ = H .* ηρ_cheby.(r_chebyshev_lobatto)'
     twoddr′_plus_3ηρr′_Hrr′ = ddr′Hrr′ + ηρr′Hrr′
+    η_by_r = ηρ_cheby.(r_chebyshev_lobatto) ./ r_lobatto
+    Hη_by_r′ = H .* η_by_r'
+    H_by_r′ = H ./ r_lobatto'
+    Hrr′ddr′ = H * ddr_lobatto
 
     norm = sqrt.(1 .- r_chebyshev_lobatto.^2)' * pi/n_lobatto
     H .*= norm
     twoddr′_plus_3ηρr′_Hrr′ .*= norm
+    Hη_by_r′ .*= norm
+    H_by_r′ .*= norm
+    Hrr′ddr′ .*= norm
 
     H_times_2byr_min_ηρ = H .* (2 ./ r_lobatto .- ηρ_cheby.(r_chebyshev_lobatto))'
 
-    Hc = TfGL_nr * H * TiGL_nr
-    twoddr′_plus_3ηρr′_Hrr′c = TfGL_nr * twoddr′_plus_3ηρr′_Hrr′ * TiGL_nr
-    H_times_2byr_min_ηρc = TfGL_nr * H_times_2byr_min_ηρ * TiGL_nr
+    Hℓ = TfGL_nr * H * TiGL_nr
+    twoddr′_plus_3ηρr′_Hℓ = TfGL_nr * twoddr′_plus_3ηρr′_Hrr′ * TiGL_nr
+    Hℓ_times_2byr_min_ηρ = TfGL_nr * H_times_2byr_min_ηρ * TiGL_nr
+    Hℓ_ηρ_by_r = TfGL_nr * Hη_by_r′ * TiGL_nr
+    Hℓ_ddr = TfGL_nr * Hrr′ddr′ * TiGL_nr
+    Hℓ_by_r = TfGL_nr * H_by_r′ * TiGL_nr
 
-    return Hc, twoddr′_plus_3ηρr′_Hrr′c, H_times_2byr_min_ηρc
+    return (; Hℓ, twoddr′_plus_3ηρr′_Hℓ, Hℓ_times_2byr_min_ηρ, Hℓ_ηρ_by_r, Hℓ_ddr, Hℓ_by_r)
 end
 
 splderiv(v::Vector, r::Vector, rout = r; nu = 1) = splderiv(Spline1D(r, v), rout; nu = 1)
@@ -873,7 +883,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     for ℓ in ℓs
         # numerical green function
-        Hℓ, _ = greenfn_cheby(ℓ, operators)
+        (; Hℓ, Hℓ_ηρ_by_r, Hℓ_ddr, Hℓ_by_r) = greenfn_cheby(ℓ, operators)
         mul!(HℓC1, Hℓ, ddr_minus_2byrM)
 
         ℓℓp1 = ℓ * (ℓ + 1)
@@ -889,7 +899,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         VVblockdiag_diag = @view VVblockdiag[diagind(VVblockdiag)]
         VVblockdiag_diag .= 2m/ℓℓp1
 
-        WW[blockdiaginds_ℓ] = 2m/ℓℓp1 * I - 2m * Hℓ * η_by_rM*Rsun^2
+        WW[blockdiaginds_ℓ] = 2m/ℓℓp1 * I - Rsun^2 * 2m * Hℓ_ηρ_by_r
 
         if nfields == 3
             WS[blockdiaginds_ℓ] = Hℓ * WSterm

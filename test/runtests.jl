@@ -28,9 +28,9 @@ d2f(f, r) = df(df(f))(r)
 
 # define an alias to avoid clashes in the REPL with Chebyshev from ApproxFun
 const ChebyshevT = SpecialPolynomials.Chebyshev
-chebyshevT(n) = ChebyshevT([zeros(n); 1])
+chebyshevT(n) = n < 0 ? ChebyshevT([0.0]) : ChebyshevT([zeros(n); 1])
 chebyshevT(n, x) = chebyshevT(n)(x)
-chebyshevU(n) = SpecialPolynomials.ChebyshevU([zeros(n); 1])
+chebyshevU(n) = n < 0 ? SpecialPolynomials.ChebyshevU([0.0]) : SpecialPolynomials.ChebyshevU([zeros(n); 1])
 chebyshevU(n, x) = chebyshevU(n)(x)
 
 function chebyfwd(f, r_in, r_out, nr, scalefactor = 5)
@@ -61,10 +61,11 @@ end
 
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
     operators_unstratified = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false)
-    (; r_chebyshev_lobatto, r_lobatto) = operators.coordinates
+    (; r_chebyshev_lobatto, r_lobatto, r_chebyshev) = operators.coordinates
     (; Δr, r_mid) = operators.radial_params
     (; ddr_lobatto) = operators.diff_operator_matrices
     (; deltafn_matrix_radial) = operators
+    (; ηρ_cheby, r_cheby) = operators.rad_terms
 
     function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
         (; n_lobatto) = operators.transforms
@@ -141,35 +142,91 @@ end
     @testset "integrals" begin
         (; r_chebyshev) = operators.coordinates
         (; TfGL_nr, TiGL_nr) = operators.transforms
+
         @testset for ℓ in 2:5:22
             J = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
-            Jc, _ = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
+            T = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
+            Jc = T.Hℓ
+            J_ηρ_by_r_c = T.Hℓ_ηρ_by_r
+            J_by_r_c = T.Hℓ_by_r
+            J_ddr′ = T.Hℓ_ddr
 
-            @testset for n = 0:5:size(Jc, 2)-1
-                f = chebyshevT(n)
+            @testset "greenfn" begin
+                @testset for n = 0:5:nr-1
+                    f = chebyshevT(n)
 
-                intres1 = [begin
-                    Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
-                    pi/nr * sum(x -> √(1-x^2) * Js(x) * f(x), r_chebyshev)
+                    intres1 = [begin
+                        Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
+                        pi/nr * sum(x -> √(1-x^2) * Js(x) * f(x), r_chebyshev)
+                    end
+                    for r_ind in axes(J, 1)]
+                    intres1 = TfGL_nr * intres1
+
+                    intres2 = [begin
+                        Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
+                        quadgk(x -> Js(x) * f(x), -1, 1)[1]
+                    end
+                    for r_ind in axes(J, 1)]
+                    intres2 = TfGL_nr * intres2
+
+                    Jf = @view Jc[:, n+1]
+                    @test Jf ≈ intres2 rtol=1e-2
+
+                    if n <= 40
+                        @test intres1 ≈ intres2 rtol=1e-2
+                    else
+                        @test intres1 ≈ intres2 rtol=3e-2
+                        @test Jf ≈ intres2 rtol=5e-2
+                    end
                 end
-                for r_ind in axes(J, 1)]
-                intres1 = TfGL_nr * intres1
+            end
 
-                intres2 = [begin
-                    Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
-                    quadgk(x -> Js(x) * f(x), -1, 1)[1]
+            @testset "greenfn times onebyr" begin
+                @testset for n = 0:5:nr-1
+                    f = chebyshevT(n)
+
+                    intres = [begin
+                            Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
+                            quadgk(x -> Js(x)/r_cheby(x) * f(x), -1, 1)[1]
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    J_by_r_c_n = @view J_by_r_c[:, n+1]
+                    @test J_by_r_c_n ≈ intresc rtol=1e-2
                 end
-                for r_ind in axes(J, 1)]
-                intres2 = TfGL_nr * intres2
+            end
 
-                Jf = @view Jc[:, n+1]
-                @test Jf ≈ intres2 rtol=1e-2
+            @testset "greenfn times ηρbyr" begin
+                ηρ_by_r(x) = ηρ_cheby(x)/r_cheby(x)
+                @testset for n = 0:5:nr-1
+                    f = chebyshevT(n)
 
-                if n <= 40
-                    @test intres1 ≈ intres2 rtol=1e-2
-                else
-                    @test intres1 ≈ intres2 rtol=3e-2
-                    @test Jf ≈ intres2 rtol=5e-2
+                    intres = [begin
+                            Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
+                            quadgk(x -> Js(x) * ηρ_by_r(x) * f(x), -1, 1)[1]
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    J_ηρ_by_r_c_n = @view J_ηρ_by_r_c[:, n+1]
+                    @test J_ηρ_by_r_c_n ≈ intresc rtol=1e-2
+                end
+            end
+
+            @testset "greenfn times ddr" begin
+                @testset for n = 1:5:nr-1
+                    f = x -> n * chebyshevU(n-1, x)* (2/Δr)
+
+                    intres = [begin
+                            Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
+                            quadgk(x -> Js(x) * f(x), -1, 1)[1]
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    J_ddr′_c_n = @view J_ddr′[:, n+1]
+                    @test_broken J_ddr′_c_n ≈ intresc rtol=1e-2
                 end
             end
         end
