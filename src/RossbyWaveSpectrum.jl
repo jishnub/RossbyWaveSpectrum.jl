@@ -569,19 +569,21 @@ function greenfn_radial_lobatto(ℓ, operators)
     return H
 end
 
-function greenfn_cheby(ℓ, operators)
-    (; nr) = operators.radial_params
-    (; r_chebyshev_lobatto, r_lobatto, r_chebyshev, r) = operators.coordinates
-    (; TfGL_nr, TiGL_nr, n_lobatto) = operators.transforms
+struct UniformRotGfn end
+struct RadRiffRotGfn end
+
+function greenfn_cheby(::UniformRotGfn, ℓ, operators)
+    (; r_chebyshev_lobatto, r_lobatto) = operators.coordinates
+    (; lobattotochebyshev) = operators.transforms
     (; ddr_lobatto) = operators.diff_operator_matrices
-    (; ηρ_cheby, ηρ_by_r, ηρ²_by_r²) = operators.rad_terms
+    (; ηρ_cheby, ηρ_by_r, ηρ²_by_r², g_cheby) = operators.rad_terms
     H = greenfn_radial_lobatto(ℓ, operators)
 
     ddr′Hrr′ = permutedims(ddr_lobatto * permutedims(H))
 
     ηρr′Hrr′ = H .* ηρ_cheby.(r_chebyshev_lobatto)'
 
-    twoddr′_plus_3ηρr′_Hrr′ = ddr′Hrr′ + ηρr′Hrr′
+    twoddr′_plus_3ηρr′_H = ddr′Hrr′ + ηρr′Hrr′
 
     Hηρ_by_r′ = H .* ηρ_by_r.(r_chebyshev_lobatto)'
     Hηρ²_by_r′² = H .* ηρ²_by_r².(r_chebyshev_lobatto)'
@@ -590,18 +592,68 @@ function greenfn_cheby(ℓ, operators)
 
     H_times_2byr_min_ηρ = H .* (2 ./ r_lobatto .- ηρ_cheby.(r_chebyshev_lobatto))'
 
-    normr′ = sqrt.(1 .- r_chebyshev_lobatto.^2)' * pi/n_lobatto
-    tochebyshev(A) = TfGL_nr * (A .* normr′) * TiGL_nr
+    H_g = H .* g_cheby.(r_chebyshev_lobatto)'
 
-    Hℓ = tochebyshev(H)
-    twoddr′_plus_3ηρr′_Hℓ = tochebyshev(twoddr′_plus_3ηρr′_Hrr′)
-    Hℓ_times_2byr_min_ηρ = tochebyshev(H_times_2byr_min_ηρ)
-    Hℓ_ηρ_by_r = tochebyshev(Hηρ_by_r′)
-    Hℓ_by_r = tochebyshev(H_by_r′)
-    Hℓ_ηρ²_by_r′² = tochebyshev(Hηρ²_by_r′²)
-    ddrHℓ = tochebyshev(ddr′Hrr′)
+    rad_terms = (; H, twoddr′_plus_3ηρr′_H, H_times_2byr_min_ηρ, Hηρ_by_r′, H_by_r′, Hηρ²_by_r′², ddr′Hrr′, H_g)
 
-    return (; Hℓ, twoddr′_plus_3ηρr′_Hℓ, Hℓ_times_2byr_min_ηρ, Hℓ_ηρ_by_r, Hℓ_by_r, Hℓ_ηρ²_by_r′², ddrHℓ)
+    Hℓ = lobattotochebyshev(H)
+    twoddr′_plus_3ηρr′_Hℓ = lobattotochebyshev(twoddr′_plus_3ηρr′_H)
+    Hℓ_times_2byr_min_ηρ = lobattotochebyshev(H_times_2byr_min_ηρ)
+    Hℓ_ηρ_by_r = lobattotochebyshev(Hηρ_by_r′)
+    Hℓ_by_r = lobattotochebyshev(H_by_r′)
+    Hℓ_ηρ²_by_r′² = lobattotochebyshev(Hηρ²_by_r′²)
+    ddrHℓ = lobattotochebyshev(ddr′Hrr′)
+    Hℓ_g = lobattotochebyshev(H_g)
+
+    cheby_terms = (; Hℓ, twoddr′_plus_3ηρr′_Hℓ, Hℓ_times_2byr_min_ηρ, Hℓ_ηρ_by_r, Hℓ_by_r, Hℓ_ηρ²_by_r′², ddrHℓ, Hℓ_g)
+
+    return (; rad_terms, cheby_terms)
+end
+
+function greenfn_cheby(::RadRiffRotGfn, ℓ, operators, ΔΩprofile_deriv,
+        G = greenfn_cheby(UniformRotGfn(), ℓ, operators))
+
+    (; r_chebyshev_lobatto, r_lobatto) = operators.coordinates
+    (; lobattotochebyshev) = operators.transforms
+    (; ηρ_cheby) = operators.rad_terms
+
+    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv
+
+    (; rad_terms, cheby_terms) = G
+
+    (; H, Hηρ_by_r′, H_times_2byr_min_ηρ, twoddr′_plus_3ηρr′_H) = rad_terms
+    Hℓ_ηρ_by_r_ΔΩ = Hηρ_by_r′ .* ΔΩ.(r_chebyshev_lobatto)'
+    Hℓ_ηρ_by_r_ΔΩ_c = lobattotochebyshev(Hℓ_ηρ_by_r_ΔΩ)
+
+    Hℓ_ddrΩ = H .* ddrΔΩ.(r_chebyshev_lobatto)'
+    Hℓ_ddrΩ_c = lobattotochebyshev(Hℓ_ddrΩ)
+
+    H_2byr_min_ηρ__min__twoddr′_plus_3ηρr′_H__times_drΔΩ =
+        (H_times_2byr_min_ηρ .- twoddr′_plus_3ηρr′_H) .* ddrΔΩ.(r_chebyshev_lobatto)'
+    H_2byr_min_ηρ__min__twoddr′_plus_3ηρr′_H__times_drΔΩ_c =
+        lobattotochebyshev(H_2byr_min_ηρ__min__twoddr′_plus_3ηρr′_H__times_drΔΩ)
+
+    twoddr′_plus_3ηρr′_Hℓ_ddrΔΩ = twoddr′_plus_3ηρr′_H .* ddrΔΩ.(r_chebyshev_lobatto)'
+    twoddr′_plus_3ηρr′_Hℓ_ddrΔΩ_c = lobattotochebyshev(twoddr′_plus_3ηρr′_Hℓ_ddrΔΩ)
+
+    H_twoΔΩ_by_r = H .*  (2 .* ΔΩ.(r_chebyshev_lobatto) ./ r_lobatto)'
+    H_twoΔΩ_by_r_c = lobattotochebyshev(H_twoΔΩ_by_r)
+
+    Hℓ_ΔΩ = H .* ΔΩ.(r_chebyshev_lobatto)'
+    Hℓ_ΔΩ_c = lobattotochebyshev(Hℓ_ΔΩ)
+
+    Hℓ_d2dr2ΔΩ = H .* d2dr2ΔΩ.(r_chebyshev_lobatto)'
+    Hℓ_d2dr2ΔΩ_c = lobattotochebyshev(Hℓ_d2dr2ΔΩ)
+
+    Hℓ_ddrΩ_ηρ = Hℓ_ddrΩ .* ηρ_cheby.(r_chebyshev_lobatto)'
+    Hℓ_ddrΩ_ηρ_c = lobattotochebyshev(Hℓ_ddrΩ_ηρ)
+
+    cheby_terms_raddiffrot = (; Hℓ_ηρ_by_r_ΔΩ_c, Hℓ_ddrΩ_c,
+        H_twoΔΩ_by_r_c, Hℓ_d2dr2ΔΩ_c, Hℓ_ddrΩ_ηρ_c,
+        H_2byr_min_ηρ__min__twoddr′_plus_3ηρr′_H__times_drΔΩ_c,
+        twoddr′_plus_3ηρr′_Hℓ_ddrΔΩ_c, Hℓ_ΔΩ_c)
+
+    (; rad_terms, cheby_terms, cheby_terms_raddiffrot)
 end
 
 splderiv(v::Vector, r::Vector, rout = r; nu = 1) = splderiv(Spline1D(r, v), rout; nu = 1)
@@ -774,13 +826,17 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     ddrDDr_lobatto = d2dr2_lobatto + Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto +
                         Diagonal((ddr * ηρ_cheby).(r_chebyshev_lobatto))
 
+    normr′ = sqrt.(1 .- r_chebyshev_lobatto.^2)' * pi/n_lobatto
+    lobattotochebyshev(A) = TfGL_nr * (A .* normr′) * TiGL_nr
+
     deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
 
     constants = (; κ, ν, nfields, Ω0)
     identities = (; Ir, Iℓ)
     coordinates = (; r, r_chebyshev, r_chebyshev_lobatto, r_lobatto)
 
-    transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial, TfGL_nr, TiGL_nr, n_lobatto)
+    transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial, TfGL_nr,
+            TiGL_nr, n_lobatto, lobattotochebyshev)
 
     rad_terms = (; onebyr, onebyr_cheby, ηρ, ηρ_cheby, ηT_cheby, onebyr2_cheby,
         ddr_lnρT, ddr_S0_by_cp, g, g_cheby, r_cheby, r2_cheby, κ, twoηρ_by_r, sρ,
@@ -836,7 +892,7 @@ function uniform_rotation_matrix_terms_outer!((WSterm, SWterm, SSterm),
 
     ℓℓp1 = ℓ*(ℓ+1)
 
-    @. WSterm = -gM / (Ω0^2 * Rsun)
+    # @. WSterm = -gM / (Ω0^2 * Rsun)
     @. SWterm = ℓℓp1 * onebyr2_cheby_ddr_S0_by_cpM * Rsun^3
     @. SSterm = (κ_∇r2_plus_ddr_lnρT_ddrM - ℓℓp1 * κ_by_r2M) * Rsun^2
 
@@ -894,7 +950,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     for ℓ in ℓs
         # numerical green function
-        (; Hℓ, Hℓ_ηρ_by_r, Hℓ_by_r) = greenfn_cheby(ℓ, operators)
+        (; Hℓ, Hℓ_ηρ_by_r, Hℓ_by_r, Hℓ_g) = greenfn_cheby(UniformRotGfn(), ℓ, operators).cheby_terms
         mul!(Hℓddr, Hℓ, ddrM)
         @. HℓC1 = Hℓddr - 2Hℓ_by_r
 
@@ -914,7 +970,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         WW[blockdiaginds_ℓ] = 2m/ℓℓp1 * I - Rsun^2 * 2m * Hℓ_ηρ_by_r
 
         if nfields == 3
-            WS[blockdiaginds_ℓ] = Hℓ * WSterm
+            @. WS[blockdiaginds_ℓ] = -Hℓ_g / (Ω0^2 * Rsun)
 
             @views @. SW[blockdiaginds_ℓ] = SWterm
             @views @. SS[blockdiaginds_ℓ] = -im * SSterm
@@ -1001,7 +1057,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
 
         @views @. VV[blockdiaginds_ℓ] -= im * ν * (d2dr2M - ℓℓp1 * onebyr2_chebyM + ηρ_ddr_minus_2byrM) * Rsun^2
 
-        (; Hℓ, Hℓ_ηρ²_by_r′²) = greenfn_cheby(ℓ, operators)
+        (; Hℓ, Hℓ_ηρ²_by_r′²) = greenfn_cheby(UniformRotGfn(), ℓ, operators).cheby_terms
 
         @. T1 = ddr_minus_2byr_r_d2dr2_ηρ_by_rM - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2M +
                 d2dr2_d2dr2_plus_4ηρ_by_rM - ℓℓp1 * one_by_r2_d2dr2_plus_4ηρ_by_r__plus_d2dr2_one_by_r2M +
@@ -1129,7 +1185,7 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
 
     for ℓ in ℓs
         # numerical green function
-        Hℓ, _ = greenfn_cheby(ℓ, operators)
+        (; Hℓ, Hℓ_ηρ_by_r, Hℓ_by_r) = greenfn_cheby(UniformRotGfn(), ℓ, operators).cheby_terms
         ℓℓp1 = ℓ * (ℓ + 1)
         blockdiaginds_ℓ = blockinds((m, nr), ℓ)
         two_over_ℓℓp1 = 2 / ℓℓp1
@@ -1137,26 +1193,28 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
         VVd = @view VV[blockdiaginds_ℓ]
         @views VVd[diagind(VVd)] .+= m * (two_over_ℓℓp1 - 1) * ΔΩ_by_Ω0
 
-        WWmat =  ΔΩ_by_Ω0 * Hℓ * mat(-twoηρ_by_r * Rsun^2) + ΔΩ_by_Ω0 * (two_over_ℓℓp1 - 1) * I
+        WWd = @view WW[blockdiaginds_ℓ]
+        @views WWd[diagind(WWd)] .+= m * ΔΩ_by_Ω0 * (two_over_ℓℓp1 - 1)
+        @. WWd -= m * 2ΔΩ_by_Ω0 * Rsun^2 * Hℓ_ηρ_by_r
 
-        @views WW[blockdiaginds_ℓ] .+= m * WWmat
+        Hℓddr = Hℓ * ddrM
+        Hℓddr_plus_2byrM = @. Hℓddr .+ 2Hℓ_by_r
 
         for ℓ′ in ℓ-1:2:ℓ+1
             ℓ′ in ℓs || continue
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
-            @views VW[inds_ℓℓ′] .-= two_over_ℓℓp1 *
+            @. @views VW[inds_ℓℓ′] -= two_over_ℓℓp1 *
                                     ΔΩ_by_Ω0 * (
                                         ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * DDr_min_2byrM +
                                         (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθo[ℓ, ℓ′]
                                     ) * Rsun
 
-            @views WV[inds_ℓℓ′] .-= Hℓ *
-                                    @. Rsun * ΔΩ_by_Ω0 / ℓℓp1 *
-                                    ((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * ddrM
+            @. @views WV[inds_ℓℓ′] .-= Rsun * ΔΩ_by_Ω0 / ℓℓp1 *
+                                    ((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * Hℓddr
                                         +
-                                        ddr_plus_2byrM * laplacian_sinθdθo[ℓ, ℓ′])
+                                        Hℓddr_plus_2byrM * laplacian_sinθdθo[ℓ, ℓ′])
         end
     end
     return M
@@ -1237,7 +1295,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     (; nfields) = operators.constants
     (; r) = operators.coordinates
     (; DDr, ddr, ddrDDr) = operators.diff_operators
-    (; twoηρ_by_rM, onebyr_chebyM,) = operators.diff_operator_matrices
+    (; twoηρ_by_rM, onebyr_chebyM, ddrM) = operators.diff_operator_matrices
     (; onebyr_cheby, onebyr2_cheby, ηρ_cheby, g_cheby, r_cheby) = operators.rad_terms
     (; mat) = operators
 
@@ -1292,12 +1350,23 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     twobyr_min_ηρM = 2onebyr_chebyM - ηρ_chebyM
 
     inner_matrices = map(mat, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r))
+    (ΔΩ_by_rM, ΔΩ_DDrM, ΔΩ_DDr_min_2byrM, ddrΔΩ_plus_ΔΩddrM, twoΔΩ_by_rM) = inner_matrices
 
     VWterm, WVterm = (zeros(nr, nr) for i in 1:2)
 
     for ℓ in ℓs
         # numerical green function
-        Hℓ, twoddr′_plus_3ηρr′_Hrr′, H_times_2byr_min_ηρ = greenfn_cheby(ℓ, operators)
+        G = greenfn_cheby(RadRiffRotGfn(), ℓ, operators, ΔΩprofile_deriv)
+        (; cheby_terms, cheby_terms_raddiffrot) = G
+
+        (; Hℓ, twoddr′_plus_3ηρr′_Hℓ, Hℓ_times_2byr_min_ηρ,
+                Hℓ_ηρ_by_r) = cheby_terms
+
+        (; Hℓ_ηρ_by_r_ΔΩ_c, twoddr′_plus_3ηρr′_Hℓ_ddrΔΩ_c,
+            H_twoΔΩ_by_r_c, Hℓ_ΔΩ_c, Hℓ_ddrΩ_c, Hℓ_d2dr2ΔΩ_c,
+            H_2byr_min_ηρ__min__twoddr′_plus_3ηρr′_H__times_drΔΩ_c,
+            Hℓ_ddrΩ_ηρ_c) = cheby_terms_raddiffrot
+
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
 
         ℓℓp1 = ℓ * (ℓ + 1)
@@ -1306,23 +1375,31 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
         @. VV[inds_ℓℓ] += m * two_over_ℓℓp1_min_1 * ΔΩM
 
-        WWmat = two_over_ℓℓp1_min_1 * ΔΩM - Rsun^2 * Hℓ * ΔΩM * twoηρ_by_rM +
-            Rsun^2 * (H_times_2byr_min_ηρ - twoddr′_plus_3ηρr′_Hrr′) * ddrΔΩM +
-            two_over_ℓℓp1 * Rsun^2 * (Hℓ * ddrΔΩDDr_plus_d2dr2ΔΩM + twoddr′_plus_3ηρr′_Hrr′ * ddrΔΩM)
+        Hℓ_ddrΔΩDDr_plus_d2dr2ΔΩM = Hℓ_ddrΩ_c * ddrM .+ Hℓ_ddrΩ_ηρ_c .+ Hℓ_d2dr2ΔΩ_c
 
-        @views WW[inds_ℓℓ] .+= m * WWmat
+        @views @. WW[inds_ℓℓ] .+= m * (two_over_ℓℓp1_min_1 * ΔΩM - 2Rsun^2 * Hℓ_ηρ_by_r_ΔΩ_c +
+            Rsun^2 * H_2byr_min_ηρ__min__twoddr′_plus_3ηρr′_H__times_drΔΩ_c +
+            two_over_ℓℓp1 * Rsun^2 * (Hℓ_ddrΔΩDDr_plus_d2dr2ΔΩM + twoddr′_plus_3ηρr′_Hℓ_ddrΔΩ_c))
+
+        Hℓ_ddrΔΩ_plus_ΔΩddrM = Hℓ_ddrΩ_c + Hℓ_ΔΩ_c * ddrM
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
-            radial_differential_rotation_terms_inner!((VWterm, WVterm),
-                    (ℓ, ℓ′), (cosθo[ℓ, ℓ′], sinθdθo[ℓ, ℓ′], ∇²_sinθdθo[ℓ, ℓ′]),
-                    (ddrΔΩM,), inner_matrices)
+            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
 
-            @views @. VW[inds_ℓℓ′] += Rsun * VWterm
+            cosθ_ℓℓ′ = cosθo[ℓ, ℓ′]
+            sinθdθ_ℓℓ′ = sinθdθo[ℓ, ℓ′]
+            ∇²_sinθdθ_ℓℓ′ = ∇²_sinθdθo[ℓ, ℓ′]
 
-            WVterm .*= Rsun
-            @views WV[inds_ℓℓ′] .+= Hℓ * WVterm
+            @views @. VW[inds_ℓℓ′] += -Rsun * two_over_ℓℓp1 *
+                    (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byrM - ddrΔΩM) +
+                    sinθdθ_ℓℓ′ * ((ΔΩ_DDrM - ℓ′ℓ′p1 * ΔΩ_by_rM) - ℓ′ℓ′p1 / 2 * ddrΔΩM))
+
+            @views @. WV[inds_ℓℓ′] += -1/ℓℓp1 * Rsun * (
+                        (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * Hℓ_ddrΔΩ_plus_ΔΩddrM
+                        + ∇²_sinθdθ_ℓℓ′ * H_twoΔΩ_by_r_c
+                    )
 
             if nfields == 3
                 @views @. SV[inds_ℓℓ′] -= (Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM

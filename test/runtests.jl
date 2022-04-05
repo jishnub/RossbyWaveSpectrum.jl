@@ -63,7 +63,7 @@ end
     operators_unstratified = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false)
     (; r_chebyshev_lobatto, r_lobatto, r_chebyshev) = operators.coordinates
     (; Δr, r_mid) = operators.radial_params
-    (; ddr_lobatto) = operators.diff_operator_matrices
+    (; ddr_lobatto, ddrM, DDrM) = operators.diff_operator_matrices
     (; deltafn_matrix_radial) = operators
     (; ηρ_cheby, r_cheby, ηρ_by_r, ηρ²_by_r²) = operators.rad_terms
     (; TfGL_nr, TiGL_nr) = operators.transforms
@@ -144,11 +144,11 @@ end
 
         @testset for ℓ in 2:5:22
             J = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
-            T = RossbyWaveSpectrum.greenfn_cheby(ℓ, operators)
-            Jc = T.Hℓ
-            J_ηρ_by_r_c = T.Hℓ_ηρ_by_r
-            J_by_r_c = T.Hℓ_by_r
-            J_ηρ²_by_r′² = T.Hℓ_ηρ²_by_r′²
+            T = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.UniformRotGfn(), ℓ, operators)
+            Jc = T.cheby_terms.Hℓ
+            J_ηρ_by_r_c = T.cheby_terms.Hℓ_ηρ_by_r
+            J_by_r_c = T.cheby_terms.Hℓ_by_r
+            J_ηρ²_by_r′² = T.cheby_terms.Hℓ_ηρ²_by_r′²
 
             @testset "greenfn" begin
                 @testset for n = 0:5:nr-1
@@ -228,6 +228,48 @@ end
                         @test J_ηρ²_by_r′²_n ≈ intresc rtol=1e-2
                     else
                         @test J_ηρ²_by_r′²_n ≈ intresc rtol=5e-2
+                    end
+                end
+            end
+
+            @testset "greenfn times ddr" begin
+                Jddrc = Jc * ddrM
+                @testset for n = 0:5:nr-1
+                    f = x -> n * chebyshevU(n-1, x) * (2/Δr)
+
+                    intres = [begin
+                            Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
+                            quadgk(x -> Js(x) * f(x), -1, 1)[1]
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    Jddrc_n = @view Jddrc[:, n+1]
+                    if n <= 40
+                        @test Jddrc_n ≈ intresc rtol=1e-2
+                    else
+                        @test Jddrc_n ≈ intresc rtol=5e-2
+                    end
+                end
+            end
+
+            @testset "greenfn times DDr" begin
+                JDDrc = Jc * DDrM
+                @testset for n = 0:5:nr-1
+                    f = x -> n * chebyshevU(n-1, x) * (2/Δr) + ηρ_cheby(x) * chebyshevT(n, x)
+
+                    intres = [begin
+                            Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
+                            quadgk(x -> Js(x) * f(x), -1, 1)[1]
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    JDDrc_n = @view JDDrc[:, n+1]
+                    if n <= 35
+                        @test JDDrc_n ≈ intresc rtol=1e-2
+                    else
+                        @test JDDrc_n ≈ intresc rtol=2e-1
                     end
                 end
             end
@@ -438,18 +480,6 @@ end
     end
 
     @testset "S terms" begin
-        @testset "WS term" begin
-            function WSterm_fn(r, n)
-                r̄_r = r̄(r)
-                Tn = chebyshevT(n, r̄_r)
-                -g_cheby(r̄_r)/(Ω0^2*Rsun) * Tn
-            end
-            @testset for n in 1:nr-1
-                WStermM_op = real(@view WSterm[:, n+1])
-                WStermM_analytical = chebyfwdnr(r -> WSterm_fn(r, n))
-                @test WStermM_op ≈ WStermM_analytical rtol=1e-8
-            end
-        end
         @testset "SS term" begin
             @testset "individual terms" begin
                 function ddr_lnρT_fn(r, n)

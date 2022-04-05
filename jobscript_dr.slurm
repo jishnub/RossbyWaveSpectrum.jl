@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --time="40:00"
 #SBATCH --job-name=rosbyspec
-#SBATCH --ntasks=28
+#SBATCH --ntasks=20
 
 cd $SCRATCH/jobs
-julia="$SCRATCH/julia/julia-1.7/bin/julia"
+julia="$HOME/.local/bin/julia"
 module purge
 export OMP_NUM_THREADS=1
 project="$HOME/RossbyWaveSpectrum.jl"

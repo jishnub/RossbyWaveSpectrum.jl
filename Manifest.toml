@@ -312,10 +312,10 @@ uuid = "057dd010-8810-581a-b7be-e3fc3b93f78c"
 version = "0.13.6"
 
 [[deps.FastTransforms_jll]]
-deps = ["Artifacts", "CompilerSupportLibraries_jll", "FFTW_jll", "JLLWrappers", "Libdl", "MPFR_jll", "OpenBLAS_jll", "Pkg"]
-git-tree-sha1 = "a3c020b5b141552f750863ae08df657a738f8225"
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "FFTW_jll", "JLLWrappers", "LLVMOpenMP_jll", "Libdl", "MPFR_jll", "OpenBLAS_jll", "Pkg"]
+git-tree-sha1 = "21dc8ae16745cafc5708b8615e57443f0bed62fd"
 uuid = "34b6f7d7-08f9-5794-9e10-3819e4c7e49a"
-version = "0.5.4+0"
+version = "0.5.4+1"
 
 [[deps.FileIO]]
 deps = ["Pkg", "Requires", "UUIDs"]
@@ -444,6 +444,12 @@ repo-rev = "bleeding_edge"
 repo-url = "https://github.com/jishnub/Kronecker.jl"
 uuid = "2c470bb0-bcc8-11e8-3dad-c9649493f05e"
 version = "0.5.1"
+
+[[deps.LLVMOpenMP_jll]]
+deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
+git-tree-sha1 = "fb6ff6647ed984fd5c7f8d386e67fae1c6aae560"
+uuid = "1d63c593-3942-5779-bab2-d838dc0a180e"
+version = "13.0.1+0"
 
 [[deps.LaTeXStrings]]
 git-tree-sha1 = "f2355693d6778a178ade15952b7ac47a4ff97996"
