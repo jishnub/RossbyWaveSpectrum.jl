@@ -33,7 +33,7 @@ operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac)
 
 # f = RossbyWaveSpectrum.uniform_rotation_spectrum!
 f = (x...; kw...) -> RossbyWaveSpectrum.differential_rotation_spectrum!(x...;
-    rotation_profile = :constant, kw...)
+    rotation_profile = :radial_linear, kw...)
 @show nr nℓ mrange Δl_cutoff Δl_power_cutoff eigen_rtol ΔΩ_by_Ω_low ΔΩ_by_Ω_high
 @show Threads.nthreads()
 

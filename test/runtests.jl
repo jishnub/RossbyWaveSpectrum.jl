@@ -297,6 +297,7 @@ end
             g_cheby, ddr_lnρT, κ, ddr_S0_by_cp) = operators.rad_terms
     (; r_in, r_out, nchebyr) = operators.radial_params
     (; mat) = operators
+    (; Wscaling, Sscaling) = operators.constants.scalings
 
     @test isapprox(onebyr_cheby(-1), 1/r_in, rtol=1e-4)
     @test isapprox(onebyr_cheby(1), 1/r_out, rtol=1e-4)
@@ -318,8 +319,8 @@ end
 
     ℓ′ = 1
     # for these terms ℓ = ℓ′ (= 1 in this case)
-    WSterm, SWterm, SSterm = (zeros(nr, nr) for i in 1:3)
-    RossbyWaveSpectrum.uniform_rotation_matrix_terms_outer!((WSterm, SWterm, SSterm),
+    SWterm, SSterm = (zeros(nr, nr) for i in 1:3)
+    RossbyWaveSpectrum.uniform_rotation_matrix_terms_outer!((SWterm, SSterm),
                         (ℓ′, m), nchebyr,
                         (ddrDDrM, onebyr2_IplusrηρM, gM,
                             κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M, onebyr2_cheby_ddr_S0_by_cpM), Ω0)
@@ -398,7 +399,7 @@ end
             function VWterm_fn(r, n)
                 r̄_r = r̄(r)
                 Tn = chebyshevT(n, r̄_r)
-                -2√(1/15) * (Drρ_fn(r, n) - 2/r * Tn) * Rsun
+                -2√(1/15) * (Drρ_fn(r, n) - 2/r * Tn) * Rsun / Wscaling
             end
 
             VW = RossbyWaveSpectrum.matrix_block(M, 1, 2, nfields)
@@ -601,8 +602,18 @@ end
     end
 end
 
+function rossby_ridge_eignorm(λ, v, M, m, nparams; ΔΩ_by_Ω = 0)
+    matchind = argmin(abs.(real(λ) .- RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_by_Ω)))
+    vi = v[:, matchind];
+    λi = λ[matchind]
+    normsden = [norm(λi * vi[i*nparams .+ (1:nparams)]) for i in 0:2]
+    normsnum = [norm(M[i*nparams .+ (1:nparams), :] * vi - λi * vi[i*nparams .+ (1:nparams)]) for i in 0:2]
+    [(d/norm(λi) > 1e-10 ? n/d : 0) for (n, d) in zip(normsnum, normsden)]
+end
+
 @testset "uniform rotation solution" begin
     nr, nℓ = 30, 15
+    nparams = nr * nℓ
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     (; r_in, r_out, Δr) = operators.radial_params
     (; BC) = constraints;
@@ -653,6 +664,13 @@ end
                     end
                 end
             end
+        end
+        @testset "full eigenvalue problem solution" begin
+            v = rossby_ridge_eignorm(λuf, vuf, Mu, m, nparams)
+            # these improve with resolution
+            @test v[1] < 1e-2
+            @test v[2] < 0.5
+            @test v[3] < 0.8
         end
     end
 end
