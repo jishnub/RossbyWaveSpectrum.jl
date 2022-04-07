@@ -1,4 +1,4 @@
-using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun
+using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun, chebyshevmatrix
 using Test
 using LinearAlgebra
 using OffsetArrays
@@ -549,20 +549,21 @@ end
     nr, nℓ = 30, 2
     nparams = nr * nℓ
     m = 1
-    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-    (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators
-    (; r, r_chebyshev) = coordinates
-    (; nfields, ν) = operators.constants
-    r_mid = radial_params.r_mid::Float64
-    Δr = radial_params.Δr::Float64
-    a = 1 / (Δr / 2)
-    b = -r_mid / (Δr / 2)
-    r̄(r) = clamp(a * r + b, -1.0, 1.0)
-    (; Tcrfwd) = transforms
-    (; Iℓ) = identities
-    (; ddr, d2dr2) = diff_operators
-    (; onebyr_cheby, r2_cheby, r_cheby, ηρ_cheby) = rad_terms
-    (; r_in, r_out) = operators.radial_params
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+    (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators;
+    (; r, r_chebyshev) = coordinates;
+    (; nfields, ν) = operators.constants;
+    r_mid = radial_params.r_mid::Float64;
+    Δr = radial_params.Δr::Float64;
+    a = 1 / (Δr / 2);
+    b = -r_mid / (Δr / 2);
+    r̄(r) = clamp(a * r + b, -1.0, 1.0);
+    (; Tcrfwd) = transforms;
+    (; Iℓ) = identities;
+    (; ddr, d2dr2, DDr) = diff_operators;
+    (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby, ηρ_by_r, ηρ_by_r², ηρ²_by_r²) = rad_terms;
+    (; r_in, r_out) = operators.radial_params;
+    (; mat) = operators;
 
     chebyfwdnr(f, scalefactor = 5) = chebyfwd(f, r_in, r_out, nr, scalefactor)
 
@@ -600,6 +601,275 @@ end
             end
         end
     end
+
+    @testset "W terms" begin
+        # first term
+        r_d2dr2_ηρ_by_r = r_cheby * d2dr2[ηρ_by_r];
+        r_d2dr2_ηρ_by_rM = mat(r_d2dr2_ηρ_by_r);
+
+        ddr_minus_2byr = ddr - 2onebyr_cheby;
+        ddr_minus_2byr_r_d2dr2_ηρ_by_r = ddr_minus_2byr * r_d2dr2_ηρ_by_r;
+        ddr_minus_2byr_r_d2dr2_ηρ_by_rM = mat(ddr_minus_2byr_r_d2dr2_ηρ_by_r);
+
+        ddr_minus_2byr_ηρ_by_r2 = ddr_minus_2byr[ηρ_by_r²];
+        ddr_minus_2byr_ηρ_by_r2M = mat(ddr_minus_2byr_ηρ_by_r2);
+
+        four_ηρ_by_r = 4ηρ_by_r;
+        d2dr2_plus_4ηρ_by_rM = mat(d2dr2[four_ηρ_by_r]);
+
+        d2dr2_plus_4ηρ_by_r = d2dr2 + 4ηρ_by_r;
+        d2dr2_d2dr2_plus_4ηρ_by_rM = mat(d2dr2 * d2dr2_plus_4ηρ_by_r);
+
+        one_by_r2_d2dr2_plus_4ηρ_by_rM = mat(onebyr2_cheby * d2dr2_plus_4ηρ_by_r);
+
+        d2dr2_one_by_r2M = mat(d2dr2[onebyr2_cheby]);
+        d2dr2_one_by_r2M_2 = mat(onebyr2_cheby * (d2dr2 - 4onebyr_cheby*ddr + 6onebyr2_cheby));
+
+        onebyr4_cheby = onebyr2_cheby*onebyr2_cheby;
+        onebyr4_chebyM = mat(onebyr4_cheby);
+
+        # third term
+        ddr_minus_2byr_DDr = ddr_minus_2byr * DDr
+        ηρ_cheby_ddr_minus_2byr_DDr = ηρ_cheby * ddr_minus_2byr_DDr
+        ddr_ηρ_cheby_ddr_minus_2byr_DDr = ddr * ηρ_cheby_ddr_minus_2byr_DDr
+        ηρ_cheby_ddr_minus_2byr_DDrM = mat(ηρ_cheby_ddr_minus_2byr_DDr);
+        ddr_ηρ_cheby_ddr_minus_2byr_DDrM = mat(ddr_ηρ_cheby_ddr_minus_2byr_DDr);
+        ηρ_cheby_ddr_minus_2byr_DDrM_2 = chebyshevmatrix(ηρ_cheby_ddr_minus_2byr_DDr, nr, 3);
+        ddr_ηρ_cheby_ddr_minus_2byr_DDrM_2 = chebyshevmatrix(ddr_ηρ_cheby_ddr_minus_2byr_DDr, nr, 3);
+
+        ddr_ηρ_by_r2 = ddr[ηρ_by_r²];
+        ηρ_by_r2_ddr_minus_2byr = ηρ_by_r² * ddr_minus_2byr;
+        ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr = ddr_ηρ_by_r2 - 2*ηρ_by_r2_ddr_minus_2byr;
+        ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byrM = mat(ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr);
+
+        # fourth term
+        ηρ²_by_r²M = mat(ηρ²_by_r²);
+
+        @testset "first term" begin
+            function WWterm11_1fn(r, n)
+                T = chebyshevT(n)
+                F1 = r -> r * d2f(r -> ηρ_cheby(r̄(r))/r * T(r̄(r)), r)
+                F1(r)
+            end
+
+            @testset for n in 0:nr-1
+                WWterm11_1_op = @view r_d2dr2_ηρ_by_rM[:, n+1]
+                WWterm11_1_analytical = chebyfwdnr(r -> WWterm11_1fn(r, n))
+                @test WWterm11_1_op ≈ WWterm11_1_analytical rtol=1e-4
+            end
+
+            function WWterm11fn(r, n)
+                T = chebyshevT(n)
+                F1 = r -> WWterm11_1fn(r, n)
+                F2 = r -> df(F1, r) - 2/r * F1(r)
+                F2(r)
+            end
+
+            @testset for n in 0:nr-1
+                WWterm11_op = @view ddr_minus_2byr_r_d2dr2_ηρ_by_rM[:, n+1]
+                WWterm11_analytical = chebyfwdnr(r -> WWterm11fn(r, n))
+                @test WWterm11_op ≈ WWterm11_analytical rtol=1e-4
+            end
+
+            function WWterm12fn(r, n)
+                T = chebyshevT(n)
+                F1 = r -> ηρ_cheby(r̄(r))/r^2 * T(r̄(r))
+                F2 = r -> df(F1, r) - 2/r * F1(r)
+                F2(r)
+            end
+
+            @testset for n in 0:nr-1
+                WWterm12_op = @view ddr_minus_2byr_ηρ_by_r2M[:, n+1]
+                WWterm12_analytical = chebyfwdnr(r -> WWterm12fn(r, n))
+                @test WWterm12_op ≈ WWterm12_analytical rtol=1e-4
+            end
+
+            function WWterm13fn(r, n)
+                T = chebyshevT(n)
+                F1 = r -> 4ηρ_cheby(r̄(r))/r * T(r̄(r))
+                F2 = r -> d2f(F1, r)
+                F2(r)
+            end
+
+            @testset for n in 0:nr-1
+                WWterm13_op = @view d2dr2_plus_4ηρ_by_rM[:, n+1]
+                WWterm13_analytical = chebyfwdnr(r -> WWterm13fn(r, n))
+                @test WWterm13_op ≈ WWterm13_analytical rtol=1e-4
+            end
+
+            function WWterm13_fullfn(r, n)
+                T = chebyshevT(n)
+                F1 = r -> d2f(T ∘ r̄, r) + 4ηρ_cheby(r̄(r))/r * T(r̄(r))
+                F2 = r -> d2f(F1, r)
+                F2(r)
+            end
+
+            @testset for n in 0:nr-1
+                WWterm13_op = @view d2dr2_d2dr2_plus_4ηρ_by_rM[:, n+1]
+                WWterm13_analytical = chebyfwdnr(r -> WWterm13_fullfn(r, n))
+                @test WWterm13_op ≈ WWterm13_analytical rtol=1e-4
+            end
+
+            function WWterm14_fullfn(r, n)
+                T = chebyshevT(n)
+                F1 = r -> d2f(T ∘ r̄, r) + 4ηρ_cheby(r̄(r))/r * T(r̄(r))
+                F2 = r -> F1(r) / r^2
+                F2(r)
+            end
+
+            @testset for n in 0:nr-1
+                WWterm14_op = @view one_by_r2_d2dr2_plus_4ηρ_by_rM[:, n+1]
+                WWterm14_analytical = chebyfwdnr(r -> WWterm14_fullfn(r, n))
+                @test WWterm14_op ≈ WWterm14_analytical rtol=1e-4
+            end
+
+            function WWterm15fn(r, n)
+                T = chebyshevT(n)
+                F1 = r -> 1/r^2 * T(r̄(r))
+                d2f(F1, r)
+            end
+
+            @testset for n in 0:nr-1
+                WWterm15_op = @view d2dr2_one_by_r2M[:, n+1]
+                WWterm15_analytical = chebyfwdnr(r -> WWterm15fn(r, n))
+                @test WWterm15_op ≈ WWterm15_analytical rtol=3e-2
+                WWterm15_op_2 = @view d2dr2_one_by_r2M_2[:, n+1]
+                @test WWterm15_op_2 ≈ WWterm15_analytical rtol=1e-4
+            end
+
+            function WWterm16fn(r, n)
+                T = chebyshevT(n)
+                1/r^4 * T(r̄(r))
+            end
+
+            @testset for n in 0:nr-1
+                WWterm16_op = @view onebyr4_chebyM[:, n+1]
+                WWterm16_analytical = chebyfwdnr(r -> WWterm16fn(r, n))
+                @test WWterm16_op ≈ WWterm16_analytical rtol=1e-4
+            end
+        end
+        @testset "third term" begin
+            function WWterm31_1fn(r, n)
+                T = chebyshevT(n) ∘ r̄
+                # F1 = DDr
+                F1 = r -> df(T, r) + (ηρ_cheby ∘ r̄)(r) * T(r)
+                F2 = r -> (ηρ_cheby ∘ r̄)(r) * (df(F1, r) - 2/r * F1(r))
+                F2(r)
+            end
+
+            @testset for n in 0:nr-1
+                WWterm31_1_op = @view ηρ_cheby_ddr_minus_2byr_DDrM[:, n+1]
+                WWterm31_1_analytical = chebyfwdnr(r -> WWterm31_1fn(r, n))
+                @test WWterm31_1_op ≈ WWterm31_1_analytical rtol=5e-2
+                WWterm31_1_op = @view ηρ_cheby_ddr_minus_2byr_DDrM_2[:, n+1]
+                WWterm31_1_analytical = chebyfwdnr(r -> WWterm31_1fn(r, n))
+                @test WWterm31_1_op ≈ WWterm31_1_analytical rtol=1e-4
+            end
+
+            function WWterm31_2fn(r, n)
+                F1 = r -> WWterm31_1fn(r, n)
+                df(F1, r)
+            end
+
+            @testset for n in 0:nr-1
+                WWterm31_2_op = @view ddr_ηρ_cheby_ddr_minus_2byr_DDrM[:, n+1]
+                WWterm31_2_analytical = chebyfwdnr(r -> WWterm31_2fn(r, n))
+                @test WWterm31_2_op ≈ WWterm31_2_analytical rtol=5e-2
+                WWterm31_2_op = @view ddr_ηρ_cheby_ddr_minus_2byr_DDrM_2[:, n+1]
+                WWterm31_2_analytical = chebyfwdnr(r -> WWterm31_2fn(r, n))
+                @test WWterm31_2_op ≈ WWterm31_2_analytical rtol=1e-4
+            end
+
+            function WWterm32fn(r, n)
+                T = chebyshevT(n) ∘ r̄
+                # F1 = DDr
+                F1 = r -> df(r -> (ηρ_cheby ∘ r̄)(r)/r^2 * T(r), r)
+                F2 = r -> -2/r^2*(ηρ_cheby ∘ r̄)(r) * (df(T, r) - 2/r * T(r))
+                F1(r) + F2(r)
+            end
+
+            @testset for n in 0:nr-1
+                WWterm32_op = @view ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byrM[:, n+1]
+                WWterm32_analytical = chebyfwdnr(r -> WWterm32fn(r, n))
+                @test WWterm32_op ≈ WWterm32_analytical rtol=1e-3
+            end
+        end
+        @testset "fourth term" begin
+            function WWterm4fn(r, n)
+                T = chebyshevT(n) ∘ r̄
+                # F1 = DDr
+                F2 = r -> (ηρ²_by_r² ∘ r̄)(r) * T(r)
+                F2(r)
+            end
+
+            @testset for n in 0:nr-1
+                WWterm4op = @view ηρ²_by_r²M[:, n+1]
+                WWterm4analytical = chebyfwdnr(r -> WWterm4fn(r, n))
+                @test WWterm4op ≈ WWterm4analytical rtol=1e-7
+            end
+        end
+    end
+end
+
+@testset "matrix with resolution" begin
+    nr, nℓ = 30, 20
+    m = 5
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+    (; nfields) = operators.constants;
+    M1 = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m; operators);
+    operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
+    M2 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ, m; operators = operators2);
+    operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
+    M3 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ+5, m; operators = operators3);
+
+    function matrix_subsample(M, nr_M, nr, nℓ, nfields)
+        nparams = nr*nℓ
+        M_subsample = zeros(eltype(M), nfields*nparams, nfields*nparams)
+        for colind in 1:nfields, rowind in 1:nfields
+            Mv = matrix_block(M, rowind, colind, nfields)
+            M_subsample_v = matrix_block(M_subsample, rowind, colind, nfields)
+            for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
+                indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
+                indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
+                @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
+            end
+        end
+        return M_subsample
+    end
+
+    @test matrix_subsample(M1, nr, nr, nℓ, nfields) == M1;
+    M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nfields);
+    @testset for colind in 1:nfields, rowind in 1:nfields
+        M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields)
+        M1v = matrix_block(M1, rowind, colind, nfields)
+        @testset "real" begin
+            @test real(M2_ssv) ≈ real(M1v) rtol=5e-3
+        end
+        @testset "imag" begin
+            if rowind == colind == 2
+                @test_broken imag(M2_ssv) ≈ imag(M1v) rtol=1e-2
+            else
+                @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-2
+            end
+        end
+    end
+
+    M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nfields);
+    @testset for colind in 1:nfields, rowind in 1:nfields
+        M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
+        M1v = matrix_block(M1, rowind, colind, nfields)
+        @testset "real" begin
+            @test real(M3_ssv) ≈ real(M1v) rtol=5e-3
+        end
+        @testset "imag" begin
+            if rowind == colind == 2
+                @test_broken imag(M3_ssv) ≈ imag(M1v) rtol=1e-2
+            else
+                @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-2
+            end
+        end
+    end
+
 end
 
 function rossby_ridge_eignorm(λ, v, M, m, nparams; ΔΩ_by_Ω = 0)

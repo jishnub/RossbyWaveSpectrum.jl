@@ -796,7 +796,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
 
     Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out_frac)
 
-    κ = 3e10
+    κ = 1e10
     κ /= Ω0*Rsun^2
     ddr_lnρT = ηρ_cheby + ηT_cheby
 
@@ -963,7 +963,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp)
     ∇r2_plus_ddr_lnρT_ddr = d2dr2 + 2onebyr_cheby*ddr + ddr_lnρT * ddr
-    κ_∇r2_plus_ddr_lnρT_ddrM = κ * mat(∇r2_plus_ddr_lnρT_ddr)
+    κ_∇r2_plus_ddr_lnρT_ddrM = κ * chebyshevmatrix(∇r2_plus_ddr_lnρT_ddr, nr, 3)
     κ_by_r2M = κ .* onebyr2_chebyM
 
     SWterm = zeros(nr, nr)
@@ -1045,8 +1045,8 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
     ηρ_cheby_ddr_minus_2byr_DDr = (ηρ_cheby * ddr_minus_2byr_DDr)::Tmul
     ηρ_by_r2_ddr_minus_2byr = (ηρ_by_r² * ddr_minus_2byr)::Tmul
     ddr_ηρ_cheby_ddr_minus_2byr_DDr = (ddr * ηρ_cheby_ddr_minus_2byr_DDr)::Tmul
-    ddr_ηρ_cheby_ddr_minus_2byr_DDrM = mat(ddr_ηρ_cheby_ddr_minus_2byr_DDr)
-    ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr = (ddr_ηρ_by_r2 - 2ηρ_by_r2_ddr_minus_2byr)::Tplus
+    ddr_ηρ_cheby_ddr_minus_2byr_DDrM = chebyshevmatrix(ddr_ηρ_cheby_ddr_minus_2byr_DDr, nr, 3)
+    ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr = (ddr_ηρ_by_r2 - 2*ηρ_by_r2_ddr_minus_2byr)::Tplus
     ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byrM = mat(ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr)
     r_cheby_d2dr2_ηρ_by_r = (r_cheby * d2dr2[ηρ_by_r]::Tmul)::Tmul
 
@@ -1056,15 +1056,12 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
     ddr_minus_2byr_r_d2dr2_ηρ_by_rM = mat(ddr_minus_2byr_r_cheby_d2dr2_ηρ_by_r)
     d2dr2_plus_4ηρ_by_r = 4ηρ_by_r #+ d2dr2
 
-    d2dr2_d2dr2_plus_4ηρ_by_rM = mat(d2dr2 * d2dr2_plus_4ηρ_by_r)
+    d2dr2_d2dr2_plus_4ηρ_by_rM = mat(d2dr2[d2dr2_plus_4ηρ_by_r])
     one_by_r2_d2dr2_plus_4ηρ_by_rM = mat(onebyr2_cheby * d2dr2_plus_4ηρ_by_r)
-    d2dr2_one_by_r2M = mat(d2dr2[onebyr2_cheby])
+    d2dr2_one_by_r2M = mat(onebyr2_cheby * (d2dr2 - 4onebyr_cheby*ddr + 6onebyr2_cheby));
     onebyr4_chebyM = mat(onebyr2_cheby*onebyr2_cheby)
 
     one_by_r2_d2dr2_plus_4ηρ_by_r__plus_d2dr2_one_by_r2M = one_by_r2_d2dr2_plus_4ηρ_by_rM + d2dr2_one_by_r2M
-
-    d3dr3_plus_4ηρ²_by_r = mat(ddr * d2dr2 + 4ηρ_cheby*ηρ_cheby*onebyr_cheby)
-    invr²DDrM = mat(onebyr2_cheby * DDr)
 
     # caches for the WW term
     T1 = zeros(nr, nr)
@@ -1905,7 +1902,20 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
         eqfilter &= powflag & peakflag
     end
 
-    eqfilter
+    eqfilter, θ, fields
+end
+
+function nodes_filter(fields, θ, nnodesmax = 5; filterfieldpowercutoff = 1e-4)
+    nodesfilter = true
+    eqind = argmin(abs.(θ .- pi/2))
+
+    for X in fields
+        radprof = @view X[:, eqind]
+        nnodes_real = count(Bool.(sign.(abs.(diff(sign.(real(radprof)))))))
+        nnodes_imag = count(Bool.(sign.(abs.(diff(sign.(imag(radprof)))))))
+        nodesfilter &= nnodes_real <= nnodesmax && nnodes_imag <= nnodesmax
+    end
+    nodesfilter
 end
 
 function filterfn(λ, v, m, M, operators, additional_params; kw...)
@@ -1915,7 +1925,7 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
         Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
         VWSinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
         θ_cutoff, equator_power_cutoff_frac, MVcache, eigen_rtol, VWSinvsh, F,
-        filters, filterfieldpowercutoff) = additional_params
+        filters, filterfieldpowercutoff, nnodesmax) = additional_params
 
     if get(filters, :eigenvalue, true)
         f1 = eigenvalue_filter(λ, m;
@@ -1942,7 +1952,7 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
     end
 
     if get(filters, :spatial, true)
-        f5 = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
+        f5, θ, fields = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
             θ_cutoff, equator_power_cutoff_frac; nℓ, Plcosθ,
             filterfieldpowercutoff)
         f5 || return false
@@ -1951,6 +1961,11 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
     if get(filters, :eigensystem_satisfy, true)
         f6 = eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
         f6 || return false
+    end
+
+    if get(filters, :nodes, true)
+        f7 = nodes_filter(fields, θ, nnodesmax)
+        f7 || return false
     end
 
     return true
@@ -1997,6 +2012,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     ΔΩ_by_Ω_high = ΔΩ_by_Ω_low,
     θ_cutoff = deg2rad(75),
     equator_power_cutoff_frac = 0.3,
+    nnodesmax = 5,
     filterfieldpowercutoff = 1e-4,
     eigenvalue_filter = true,
     sphericalharmonic_filter = true,
@@ -2004,6 +2020,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     boundarycondition_filter = true,
     spatial_filter = true,
     eigensystem_satisfy_filter = true,
+    nodes_filter = true,
     kw...)
 
     filters = (;
@@ -2012,7 +2029,8 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
         chebyshev = chebyshev_filter,
         boundarycondition = boundarycondition_filter,
         spatial = spatial_filter,
-        eigensystem_satisfy = eigensystem_satisfy_filter
+        eigensystem_satisfy = eigensystem_satisfy_filter,
+        nodes = nodes_filter,
     )
 
     (; BC) = constraints
@@ -2024,7 +2042,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
         Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
         VWSinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
         θ_cutoff, equator_power_cutoff_frac, MVcache,
-        eigen_rtol, VWSinvsh, F, filters, filterfieldpowercutoff,
+        eigen_rtol, VWSinvsh, F, filters, filterfieldpowercutoff, nnodesmax,
     )
 
     inds_bool = filterfn.(λ, eachcol(v), m, (M,), (operators,), (additional_params,))
