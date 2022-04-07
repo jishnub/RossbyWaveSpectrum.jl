@@ -812,64 +812,119 @@ end
 end
 
 @testset "matrix with resolution" begin
-    nr, nℓ = 30, 20
-    m = 5
-    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-    (; nfields) = operators.constants;
-    M1 = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m; operators);
-    operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
-    M2 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ, m; operators = operators2);
-    operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
-    M3 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ+5, m; operators = operators3);
+    @testset "without green function" begin
+        nr, nℓ = 45, 2
+        m = 5
+        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+        (; nfields) = operators.constants;
+        M1 = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m;
+                operators, _greenfn = false);
+        operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
+        M2 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ, m;
+                operators = operators2, _greenfn = false);
+        operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
+        M3 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ+5, m;
+                operators = operators3, _greenfn = false);
 
-    function matrix_subsample(M, nr_M, nr, nℓ, nfields)
-        nparams = nr*nℓ
-        M_subsample = zeros(eltype(M), nfields*nparams, nfields*nparams)
-        for colind in 1:nfields, rowind in 1:nfields
-            Mv = matrix_block(M, rowind, colind, nfields)
-            M_subsample_v = matrix_block(M_subsample, rowind, colind, nfields)
-            for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
-                indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
-                indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
-                @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
+        function matrix_subsample(M, nr_M, nr, nℓ, nfields)
+            nparams = nr*nℓ
+            M_subsample = zeros(eltype(M), nfields*nparams, nfields*nparams)
+            for colind in 1:nfields, rowind in 1:nfields
+                Mv = matrix_block(M, rowind, colind, nfields)
+                M_subsample_v = matrix_block(M_subsample, rowind, colind, nfields)
+                for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
+                    indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
+                    indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
+                    @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
+                end
+            end
+            return M_subsample
+        end
+
+        @test matrix_subsample(M1, nr, nr, nℓ, nfields) == M1;
+        M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nfields);
+        @testset for rowind in 1:nfields, colind in 1:nfields
+            M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields)
+            M1v = matrix_block(M1, rowind, colind, nfields)
+            @testset "real" begin
+                @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
+            end
+            @testset "imag" begin
+                @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
             end
         end
-        return M_subsample
-    end
 
-    @test matrix_subsample(M1, nr, nr, nℓ, nfields) == M1;
-    M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nfields);
-    @testset for colind in 1:nfields, rowind in 1:nfields
-        M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields)
-        M1v = matrix_block(M1, rowind, colind, nfields)
-        @testset "real" begin
-            @test real(M2_ssv) ≈ real(M1v) rtol=5e-3
-        end
-        @testset "imag" begin
-            if rowind == colind == 2
-                @test_broken imag(M2_ssv) ≈ imag(M1v) rtol=1e-2
-            else
-                @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-2
+        M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nfields);
+        @testset for rowind in 1:nfields, colind in 1:nfields
+            M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
+            M1v = matrix_block(M1, rowind, colind, nfields)
+            @testset "real" begin
+                @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
             end
-        end
-    end
-
-    M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nfields);
-    @testset for colind in 1:nfields, rowind in 1:nfields
-        M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
-        M1v = matrix_block(M1, rowind, colind, nfields)
-        @testset "real" begin
-            @test real(M3_ssv) ≈ real(M1v) rtol=5e-3
-        end
-        @testset "imag" begin
-            if rowind == colind == 2
-                @test_broken imag(M3_ssv) ≈ imag(M1v) rtol=1e-2
-            else
-                @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-2
+            @testset "imag" begin
+                @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
             end
         end
     end
+    @testset "with green function" begin
+        nr, nℓ = 45, 2
+        m = 5
+        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+        (; nfields) = operators.constants;
+        M1 = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m; operators);
+        operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
+        M2 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ, m; operators = operators2);
+        operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
+        M3 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ+5, m; operators = operators3);
 
+        function matrix_subsample(M, nr_M, nr, nℓ, nfields)
+            nparams = nr*nℓ
+            M_subsample = zeros(eltype(M), nfields*nparams, nfields*nparams)
+            for colind in 1:nfields, rowind in 1:nfields
+                Mv = matrix_block(M, rowind, colind, nfields)
+                M_subsample_v = matrix_block(M_subsample, rowind, colind, nfields)
+                for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
+                    indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
+                    indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
+                    @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
+                end
+            end
+            return M_subsample
+        end
+
+        @test matrix_subsample(M1, nr, nr, nℓ, nfields) == M1;
+        M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nfields);
+        @testset for rowind in 1:nfields, colind in 1:nfields
+            M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields)
+            M1v = matrix_block(M1, rowind, colind, nfields)
+            @testset "real" begin
+                @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
+            end
+            @testset "imag" begin
+                if rowind == colind == 2
+                    @test_broken imag(M2_ssv) ≈ imag(M1v) rtol=1e-3
+                else
+                    @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
+                end
+            end
+        end
+
+        M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nfields);
+        @testset for rowind in 1:nfields, colind in 1:nfields
+            M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
+            M1v = matrix_block(M1, rowind, colind, nfields)
+            @testset "real" begin
+                @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
+            end
+            @testset "imag" begin
+                if rowind == colind == 2
+                    @test_broken imag(M3_ssv) ≈ imag(M1v) rtol=1e-3
+                else
+                    @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
+                end
+            end
+        end
+    end
 end
 
 function rossby_ridge_eignorm(λ, v, M, m, nparams; ΔΩ_by_Ω = 0)

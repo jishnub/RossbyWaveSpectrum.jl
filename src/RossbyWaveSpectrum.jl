@@ -923,16 +923,18 @@ function uniform_rotation_matrix_terms_outer!((SWterm, SSterm),
 end
 
 function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
-    (; nfields, Ω0, scalings) = operators.constants
-    (; nchebyr, r_out) = operators.radial_params
-    (; ddr, d2dr2) = operators.diff_operators
+    (; nfields, Ω0, scalings) = operators.constants;
+    (; nchebyr, r_out) = operators.radial_params;
+    (; ddr, d2dr2) = operators.diff_operators;
     (; onebyr2_cheby, onebyr_cheby, ddr_lnρT, κ,
-        ηρ_cheby, r_cheby, ddr_S0_by_cp) = operators.rad_terms
+        ηρ_cheby, r_cheby, ddr_S0_by_cp) = operators.rad_terms;
     (; ddrDDrM, ddrM, DDrM, onebyr2_chebyM,
         onebyr_chebyM, grddrM, gM, ddr_minus_2byrM,
-        DDr_minus_2byrM) = operators.diff_operator_matrices
-    (; mat) = operators
-    (; Sscaling, Wscaling) = scalings
+        DDr_minus_2byrM, ηρ_by_rM) = operators.diff_operator_matrices;
+    (; mat) = operators;
+    (; Sscaling, Wscaling) = scalings;
+
+    _greenfn = get(kw, :_greenfn, true)
 
     Cℓ′ = zeros(nr, nr)
     WVℓℓ′ = zeros(nr, nr)
@@ -973,7 +975,11 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         # numerical green function
         (; Hℓ, Hℓ_ηρ_by_r, Hℓ_by_r, Hℓ_g) = greenfn_cheby(UniformRotGfn(), ℓ, operators).cheby_terms
         mul!(Hℓddr, Hℓ, ddrM)
-        @. HℓC1 = Hℓddr - 2Hℓ_by_r
+        if _greenfn
+            @. HℓC1 = Hℓddr - 2Hℓ_by_r
+        else
+            @. HℓC1 = ddrM - 2onebyr_chebyM
+        end
 
         ℓℓp1 = ℓ * (ℓ + 1)
 
@@ -993,10 +999,10 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         WWblockdiag = WW[blockdiaginds_ℓ]
         WWblockdiag_diag = WWblockdiag[diagind(WWblockdiag)]
         WWblockdiag_diag .= diagterm
-        @. WW[blockdiaginds_ℓ] -= Rsun^2 * 2m * Hℓ_ηρ_by_r
+        @. WW[blockdiaginds_ℓ] -= Rsun^2 * 2m * (_greenfn ? Hℓ_ηρ_by_r : ηρ_by_rM)
 
         if nfields == 3
-            @. WS[blockdiaginds_ℓ] = -Hℓ_g / (Ω0^2 * Rsun)  * Wscaling/Sscaling
+            @. WS[blockdiaginds_ℓ] = -(_greenfn ? gM : Hℓ_g) / (Ω0^2 * Rsun)  * Wscaling/Sscaling
             @. SW[blockdiaginds_ℓ] = SWterm * Sscaling/Wscaling
             @. SS[blockdiaginds_ℓ] = -im * SSterm
         end
@@ -1007,7 +1013,11 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
             @. VWℓℓ′ = (-2/ℓℓp1) * (ℓ′ℓ′p1 * DDr_minus_2byrM * cosθ[ℓ, ℓ′] +
                     (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθ[ℓ, ℓ′]) * Rsun / Wscaling
 
-            @. HℓCℓ′ = Hℓddr - ℓ′ℓ′p1 * Hℓ_by_r
+            if _greenfn
+                @. HℓCℓ′ = Hℓddr - ℓ′ℓ′p1 * Hℓ_by_r
+            else
+                @. HℓCℓ′ = ddrM - ℓ′ℓ′p1 * onebyr_chebyM
+            end
             @. WVℓℓ′ = (-2/ℓℓp1) * (ℓ′ℓ′p1 * HℓC1 * cosθ[ℓ, ℓ′] + HℓCℓ′ * sinθdθ[ℓ, ℓ′]) * Rsun * Wscaling
 
             blockinds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
@@ -1017,12 +1027,12 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         end
     end
 
-    viscosity_terms!(M, nr, nℓ, m; operators)
+    viscosity_terms!(M, nr, nℓ, m; operators, _greenfn)
 
     return M
 end
 
-function viscosity_terms!(M, nr, nℓ, m; operators)
+function viscosity_terms!(M, nr, nℓ, m; operators, _greenfn = true)
     (; nchebyr) = operators.radial_params
     (; DDr, ddr, d2dr2) = operators.diff_operators
     (; d2dr2M, onebyr2_chebyM, ηρ²_by_r²M) = operators.diff_operator_matrices
@@ -1088,10 +1098,18 @@ function viscosity_terms!(M, nr, nℓ, m; operators)
         @. T3 = ddr_ηρ_cheby_ddr_minus_2byr_DDrM + ℓℓp1 * ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byrM
 
         @. WWop = T1 + T3
-        mul!(WWop2, Hℓ, WWop)
+        if _greenfn
+            mul!(WWop2, Hℓ, WWop)
+        else
+            WWop2 .= WWop
+        end
 
         neg2by3_ℓℓp1 = -2ℓℓp1 / 3
-        WWop2 .+= neg2by3_ℓℓp1 * Hℓ_ηρ²_by_r′²
+        if _greenfn
+            WWop2 .+= neg2by3_ℓℓp1 * Hℓ_ηρ²_by_r′²
+        else
+            WWop2 .+= neg2by3_ℓℓp1 * ηρ²_by_r²M
+        end
 
         @views @. WW[blockdiaginds_ℓ] -= im * ν * WWop2 * Rsun^4
     end
