@@ -158,6 +158,8 @@ end
     Nquad = 1000;
     nodesquad = gausschebyshev(Nquad)[1];
 
+    integral_cache = zeros(length(r_chebyshev_lobatto));
+
     @testset "integrals" begin
         @testset for ℓ in 2:10:52
             ℓℓp1 = ℓ*(ℓ+1)
@@ -176,7 +178,13 @@ end
 
             J_splines = [Spline1D(r_chebyshev_lobatto, @view J[r_ind, :]) for r_ind in axes(J, 1)];
             intJ_rp_r = [pi/Nquad .* sqrt.(1 .- nodesquad.^2) .* Jsp(nodesquad) for Jsp in J_splines];
-            intJ_quadgc(f) = [sum(((Jinode,node), ) -> Jinode * f(node), zip(Ji, nodesquad)) for Ji in intJ_rp_r];
+            function intJ_quadgc(f)
+                integral_cache .= 0
+                for (rind, Ji) in enumerate(intJ_rp_r)
+                    integral_cache[rind] = sum(((Jinode,node), ) -> Jinode * f(node), zip(Ji, nodesquad))
+                end
+                integral_cache
+            end
 
             @testset "J" begin
                 @testset for n = 0:5:nr-1
