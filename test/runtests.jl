@@ -79,6 +79,9 @@ end
     ddr_ηρM = mat(ddr[ηρ_cheby]);
     onebyr4_cheby = onebyr2_cheby*onebyr2_cheby;
     onebyr3_cheby = onebyr_cheby*onebyr2_cheby;
+    onebyr3_chebyM = mat(onebyr3_cheby);
+    onebyr4_chebyM = mat(onebyr4_cheby);
+    onebyr3_ddrM = mat(onebyr3_cheby*ddr);
 
     function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
         (; n_lobatto) = operators.transforms;
@@ -154,7 +157,6 @@ end
 
     Nquad = 1000;
     nodesquad = gausschebyshev(Nquad)[1];
-    quadgc(f) = pi/Nquad * sum(x -> √(1-x^2) * f(x), nodesquad);
 
     @testset "integrals" begin
         @testset for ℓ in 2:10:52
@@ -173,16 +175,14 @@ end
             J_ηρ = T.cheby_terms.Hℓ_ηρ;
 
             J_splines = [Spline1D(r_chebyshev_lobatto, @view J[r_ind, :]) for r_ind in axes(J, 1)];
+            intJ_rp_r = [pi/Nquad .* sqrt.(1 .- nodesquad.^2) .* Jsp(nodesquad) for Jsp in J_splines];
+            intJ_quadgc(f) = [sum(((Jinode,node), ) -> Jinode * f(node), zip(Ji, nodesquad)) for Ji in intJ_rp_r];
 
             @testset "J" begin
                 @testset for n = 0:5:nr-1
                     f = chebyshevT(n);
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)];
+                    intres = intJ_quadgc(f)
                     intres = TfGL_nr * intres;
 
                     Jf = @view Jc[:, n+1];
@@ -192,13 +192,10 @@ end
 
             @testset "J/r" begin
                 @testset for n = 0:5:nr-1
-                    f = chebyshevT(n)
+                    T = chebyshevT(n)
+                    f = x -> T(x)/r_cheby(x)
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x)/r_cheby(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
+                    intres = intJ_quadgc(f)
                     intresc = TfGL_nr * intres
 
                     Xn = @view J_by_r_c[:, n+1]
@@ -207,15 +204,12 @@ end
             end
 
             @testset "J/r^4" begin
-                J_by_r4_c = Jc * mat(onebyr2_cheby*onebyr2_cheby)
+                J_by_r4_c = Jc * onebyr4_chebyM
                 @testset for n = 0:5:nr-1
-                    f = chebyshevT(n)
+                    T = chebyshevT(n)
+                    f = x -> T(x)/r_cheby(x)^4
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x)/r_cheby(x)^4 * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
+                    intres = intJ_quadgc(f)
                     intresc = TfGL_nr * intres
 
                     Xn = @view J_by_r4_c[:, n+1]
@@ -224,16 +218,12 @@ end
             end
 
             @testset "J/r^3*ddr" begin
-                J_by_r3_ddr_c = Jc * mat(onebyr2_cheby*onebyr_cheby*ddr);
+                J_by_r3_ddr_c = Jc * onebyr3_ddrM;
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     f = x -> df(T, x) * (2/Δr) / r_cheby(x)^3
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)];
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres;
 
                     Xn = @view J_by_r3_ddr_c[:, n+1];
@@ -247,11 +237,7 @@ end
                     T = chebyshevT(n)
                     f = x -> d2f(T, x) * (2/Δr)^2 / r_cheby(x)^2
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)];
+                    intres = intJ_quadgc(f)
                     intresc = TfGL_nr * intres;
 
                     Xn = @view J_by_r2_d2dr2_c[:, n+1]
@@ -267,11 +253,7 @@ end
                     op = x -> d2f(T, x) * (2/Δr)^2  - ℓℓp1/r_cheby(x)^2 * T(x)
                     f = x -> d2f(op, x) * (2/Δr)^2  - ℓℓp1/r_cheby(x)^2 * op(x)
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)];
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres;
 
                     Xn = @view Jopc2[:, n+1];
@@ -281,36 +263,30 @@ end
 
             @testset "J*ηρ/r" begin
                 @testset for n = 0:5:nr-1
-                    f = chebyshevT(n)
+                    T = chebyshevT(n)
+                    f = x -> T(x) *  ηρ_by_r(x)
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * ηρ_by_r(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres
 
-                    J_ηρ_by_r_c_n = @view J_ηρ_by_r_c[:, n+1]
-                    @test J_ηρ_by_r_c_n ≈ intresc rtol=1e-2
+                    Xn = @view J_ηρ_by_r_c[:, n+1]
+                    @test Xn ≈ intresc rtol=1e-2
                 end
             end
 
             @testset "J*ηρ²/r²" begin
                 @testset for n = 0:5:nr-1
-                    f = chebyshevT(n)
+                    T = chebyshevT(n)
+                    f = x -> T(x) * ηρ²_by_r²(x)
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * ηρ²_by_r²(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
-                    intresc = TfGL_nr * intres
+                    intres = intJ_quadgc(f);
+                    intresc = TfGL_nr * intres;
 
-                    J_ηρ²_by_r′²_n = @view J_ηρ²_by_r′²[:, n+1]
+                    Xn = @view J_ηρ²_by_r′²[:, n+1]
                     if n <= 40
-                        @test J_ηρ²_by_r′²_n ≈ intresc rtol=1e-2
+                        @test Xn ≈ intresc rtol=1e-2
                     else
-                        @test J_ηρ²_by_r′²_n ≈ intresc rtol=5e-2
+                        @test Xn ≈ intresc rtol=5e-2
                     end
                 end
             end
@@ -321,11 +297,7 @@ end
                     T = chebyshevT(n)
                     f = x -> df(T, x) * (2/Δr)
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres
 
                     Jddrc_n = @view Jddrc[:, n+1]
@@ -345,11 +317,7 @@ end
                     T = chebyshevT(n)
                     f = x -> (df(T, x) * (2/Δr))/r_cheby(x)
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres
 
                     Xn = @view Jddr_by_rc[:, n+1]
@@ -366,20 +334,17 @@ end
             @testset "J*DDr" begin
                 JDDrc = Jc * DDrM
                 @testset for n = 0:5:nr-1
-                    f = x -> n * chebyshevU(n-1, x) * (2/Δr) + ηρ_cheby(x) * chebyshevT(n, x)
+                    T = chebyshevT(n)
+                    f = x -> df(T, x) * (2/Δr) + ηρ_cheby(x) * T(x)
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres
 
-                    JDDrc_n = @view JDDrc[:, n+1]
+                    Xn = @view JDDrc[:, n+1]
                     if n <= 35
-                        @test JDDrc_n ≈ intresc rtol=1e-2
+                        @test Xn ≈ intresc rtol=1e-2
                     else
-                        @test JDDrc_n ≈ intresc rtol=2e-1
+                        @test Xn ≈ intresc rtol=2e-1
                     end
                 end
             end
@@ -390,20 +355,16 @@ end
                     T = chebyshevT(n)
                     f = x -> d2f(T, x) * (2/Δr)^2
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres
 
-                    Jd2d2rc_n = @view Jd2dr2c[:, n+1]
+                    Xn = @view Jd2dr2c[:, n+1]
                     if n < 20
-                        @test Jd2d2rc_n ≈ intresc rtol=1e-4
+                        @test Xn ≈ intresc rtol=1e-4
                     elseif n <= 40
-                        @test Jd2d2rc_n ≈ intresc rtol=1e-3
+                        @test Xn ≈ intresc rtol=1e-3
                     else
-                        @test Jd2d2rc_n ≈ intresc rtol=5e-3
+                        @test Xn ≈ intresc rtol=5e-3
                     end
                 end
             end
@@ -414,11 +375,7 @@ end
                     T = chebyshevT(n)
                     f = x -> d3f(T, x) * (2/Δr)^3
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres
 
                     Xn = @view Jd3dr3c[:, n+1]
@@ -438,11 +395,7 @@ end
                     T = chebyshevT(n)
                     f = x -> d4f(T, x) * (2/Δr)^4
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres
 
                     Xn = @view Jd4dr4c[:, n+1]
@@ -462,11 +415,7 @@ end
                     T = chebyshevT(n)
                     f = x -> ddr_ηρ(x) * d2f(T, x) * (2/Δr)^2
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres
 
                     Xn = @view J_ddrηρ_d2dr2c[:, n+1]
@@ -486,11 +435,7 @@ end
                     T = chebyshevT(n)
                     f = x -> ηρ_cheby(x) * d3f(T, x) * (2/Δr)^3
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)]
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres
 
                     Xn = @view J_ηρ_d3dr3c[:, n+1]
@@ -511,11 +456,7 @@ end
                     T = chebyshevT(n)
                     f = x -> d2f(x -> T(x) * onebyr2_cheby(x), x) * (2/Δr)^2
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)];
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres;
 
                     Xn = @view Jd2dr2_one_by_r2_2[:, n+1];
@@ -529,11 +470,7 @@ end
                     T = chebyshevT(n)
                     f = x -> df(x -> ηρ_by_r²(x) * T(x), x) * (2/Δr)
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)];
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres;
 
                     J_ddr_ηρ_by_r2_c_n = @view J_ddr_ηρ_by_r2_c[:, n+1];
@@ -552,11 +489,7 @@ end
                     f = x -> df(x -> ηρ_by_r²(x) * T(x), x) * (2/Δr) -
                         2ηρ_cheby(x)/r_cheby(x)^2 * (df(T, x) * (2/Δr) -2T(x)/r_cheby(x))
 
-                    intres = [begin
-                            Js = J_splines[r_ind]
-                            quadgc(x -> Js(x) * f(x))
-                        end
-                        for r_ind in axes(J, 1)];
+                    intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres;
 
                     Xn = @view J_ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr_c[:, n+1];
