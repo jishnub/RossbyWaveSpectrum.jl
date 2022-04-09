@@ -7,7 +7,7 @@ import SpecialPolynomials
 using ForwardDiff
 using FastTransforms
 using Dierckx
-using QuadGK
+using FastGaussQuadrature
 
 @testset "project quality" begin
     Aqua.test_all(RossbyWaveSpectrum,
@@ -25,6 +25,10 @@ df(f) = x -> ForwardDiff.derivative(f, x)
 df(f, r) = df(f)(r)
 d2f(f) = df(df(f))
 d2f(f, r) = df(df(f))(r)
+d3f(f) = df(d2f(f))
+d3f(f, r) = df(d2f(f))(r)
+d4f(f) = df(d3f(f))
+d4f(f, r) = df(d3f(f))(r)
 
 # define an alias to avoid clashes in the REPL with Chebyshev from ApproxFun
 const ChebyshevT = SpecialPolynomials.Chebyshev
@@ -59,24 +63,32 @@ end
 @testset "green fn W" begin
     nr, nℓ = 50, 2
 
-    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-    operators_unstratified = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false)
-    (; r_chebyshev_lobatto, r_lobatto, r_chebyshev) = operators.coordinates
-    (; Δr, r_mid) = operators.radial_params
-    (; ddr_lobatto, ddrM, DDrM) = operators.diff_operator_matrices
-    (; deltafn_matrix_radial) = operators
-    (; ηρ_cheby, r_cheby, ηρ_by_r, ηρ²_by_r²) = operators.rad_terms
-    (; TfGL_nr, TiGL_nr) = operators.transforms
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+    operators_unstratified = RossbyWaveSpectrum.radial_operators(nr, nℓ, _stratified = false);
+    (; r_chebyshev_lobatto, r_lobatto, r_chebyshev) = operators.coordinates;
+    (; Δr, r_mid) = operators.radial_params;
+    (; d2dr2, ddr, DDr, d4dr4) = operators.diff_operators;
+    (; ddr_lobatto, ddrM, DDrM, d2dr2M, d3dr3M, d4dr4M) = operators.diff_operator_matrices;
+    (; deltafn_matrix_radial) = operators;
+    (; ηρ_cheby, r_cheby, ηρ_by_r, ηρ²_by_r², ηρ_by_r²,
+        onebyr2_cheby, onebyr_cheby, ddr_ηρ) = operators.rad_terms;
+    (; TfGL_nr, TiGL_nr) = operators.transforms;
+    (; mat) = operators;
+    d2dr2_one_by_r2_2M = mat(d2dr2[onebyr2_cheby]);
+    onebyr_ddrM = mat(onebyr_cheby * ddr);
+    ddr_ηρM = mat(ddr[ηρ_cheby]);
+    onebyr4_cheby = onebyr2_cheby*onebyr2_cheby;
+    onebyr3_cheby = onebyr_cheby*onebyr2_cheby;
 
     function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
-        (; n_lobatto) = operators.transforms
-        (; r_in, r_out, Δr) = operators.radial_params
-        (; r_lobatto) = operators.coordinates
-        r_in_frac = r_in/Rsun
-        r_out_frac = r_out/Rsun
+        (; n_lobatto) = operators.transforms;
+        (; r_in, r_out, Δr) = operators.radial_params;
+        (; r_lobatto) = operators.coordinates;
+        r_in_frac = r_in/Rsun;
+        r_out_frac = r_out/Rsun;
         W = (2ℓ+1)*((r_out_frac)^(2ℓ+1) - (r_in_frac)^(2ℓ+1))
         norm = 1/W * (Δr/2) / Rsun
-        H = zeros(n_lobatto+1, n_lobatto+1)
+        H = zeros(n_lobatto+1, n_lobatto+1);
 
         for rind in axes(r_lobatto, 1)[2:end-1]
             ri = r_lobatto[rind]/Rsun
@@ -140,69 +152,140 @@ end
         end
     end
 
+    Nquad = 1000;
+    nodesquad = gausschebyshev(Nquad)[1];
+    quadgc(f) = pi/Nquad * sum(x -> √(1-x^2) * f(x), nodesquad);
+
     @testset "integrals" begin
+        @testset for ℓ in 2:10:52
+            ℓℓp1 = ℓ*(ℓ+1)
 
-        @testset for ℓ in 2:5:22
-            J = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
-            T = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.UniformRotGfn(), ℓ, operators)
-            Jc = T.cheby_terms.Hℓ
-            J_ηρ_by_r_c = T.cheby_terms.Hℓ_ηρ_by_r
-            J_by_r_c = T.cheby_terms.Hℓ_by_r
-            J_ηρ²_by_r′² = T.cheby_terms.Hℓ_ηρ²_by_r′²
+            J = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators);
+            T = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.UniformRotGfn(), ℓ, operators);
+            Jc = T.cheby_terms.Hℓ;
+            J_ηρ_by_r_c = T.cheby_terms.Hℓ_ηρ_by_r;
+            J_by_r_c = T.cheby_terms.Hℓ_by_r;
+            J_ηρ²_by_r′² = T.cheby_terms.Hℓ_ηρ²_by_r′²;
+            J_ηρ_by_r′² = T.cheby_terms.Hℓ_ηρ_by_r′²;
+            J_ddr_ηρ_by_r′² = T.cheby_terms.Hℓ_ddr_ηρ_by_r′²;
+            J_ddr_ηρ_by_r²_plus_4ηρ_by_r′³ = T.cheby_terms.Hℓ_ddr_ηρ_by_r²_plus_4ηρ_by_r′³;
+            J_ddrηρ = T.cheby_terms.Hℓ_ddrηρ;
+            J_ηρ = T.cheby_terms.Hℓ_ηρ;
 
-            @testset "greenfn" begin
+            J_splines = [Spline1D(r_chebyshev_lobatto, @view J[r_ind, :]) for r_ind in axes(J, 1)];
+
+            @testset "J" begin
                 @testset for n = 0:5:nr-1
-                    f = chebyshevT(n)
+                    f = chebyshevT(n);
 
-                    intres1 = [begin
-                        Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
-                        pi/nr * sum(x -> √(1-x^2) * Js(x) * f(x), r_chebyshev)
-                    end
-                    for r_ind in axes(J, 1)]
-                    intres1 = TfGL_nr * intres1
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)];
+                    intres = TfGL_nr * intres;
 
-                    intres2 = [begin
-                        Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
-                        quadgk(x -> Js(x) * f(x), -1, 1)[1]
-                    end
-                    for r_ind in axes(J, 1)]
-                    intres2 = TfGL_nr * intres2
-
-                    Jf = @view Jc[:, n+1]
-                    @test Jf ≈ intres2 rtol=1e-2
-
-                    if n <= 40
-                        @test intres1 ≈ intres2 rtol=1e-2
-                    else
-                        @test intres1 ≈ intres2 rtol=3e-2
-                        @test Jf ≈ intres2 rtol=5e-2
-                    end
+                    Jf = @view Jc[:, n+1];
+                    @test Jf ≈ intres rtol=1e-3
                 end
             end
 
-            @testset "greenfn times onebyr" begin
+            @testset "J/r" begin
                 @testset for n = 0:5:nr-1
                     f = chebyshevT(n)
 
                     intres = [begin
-                            Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
-                            quadgk(x -> Js(x)/r_cheby(x) * f(x), -1, 1)[1]
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x)/r_cheby(x) * f(x))
                         end
                         for r_ind in axes(J, 1)]
                     intresc = TfGL_nr * intres
 
-                    J_by_r_c_n = @view J_by_r_c[:, n+1]
-                    @test J_by_r_c_n ≈ intresc rtol=1e-2
+                    Xn = @view J_by_r_c[:, n+1]
+                    @test Xn ≈ intresc rtol=1e-3
                 end
             end
 
-            @testset "greenfn times ηρbyr" begin
+            @testset "J/r^4" begin
+                J_by_r4_c = Jc * mat(onebyr2_cheby*onebyr2_cheby)
                 @testset for n = 0:5:nr-1
                     f = chebyshevT(n)
 
                     intres = [begin
-                            Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
-                            quadgk(x -> Js(x) * ηρ_by_r(x) * f(x), -1, 1)[1]
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x)/r_cheby(x)^4 * f(x))
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    Xn = @view J_by_r4_c[:, n+1]
+                    @test Xn ≈ intresc rtol=1e-3
+                end
+            end
+
+            @testset "J/r^3*ddr" begin
+                J_by_r3_ddr_c = Jc * mat(onebyr2_cheby*onebyr_cheby*ddr);
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> df(T, x) * (2/Δr) / r_cheby(x)^3
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)];
+                    intresc = TfGL_nr * intres;
+
+                    Xn = @view J_by_r3_ddr_c[:, n+1];
+                    @test Xn ≈ intresc rtol=2e-3
+                end
+            end
+
+            @testset "J/r^2*d2dr2" begin
+                J_by_r2_d2dr2_c = Jc * mat(onebyr2_cheby*d2dr2)
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> d2f(T, x) * (2/Δr)^2 / r_cheby(x)^2
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)];
+                    intresc = TfGL_nr * intres;
+
+                    Xn = @view J_by_r2_d2dr2_c[:, n+1]
+                    @test Xn ≈ intresc rtol=2e-3
+                end
+            end
+
+            @testset "J(d²dr² - ℓℓp1/r²)²" begin
+                ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
+                Jopc2 = Jc * mat(d4dr4 + ℓpre*onebyr4_cheby - 2ℓℓp1*onebyr2_cheby*d2dr2 + 4ℓℓp1*onebyr3_cheby*ddr);
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    op = x -> d2f(T, x) * (2/Δr)^2  - ℓℓp1/r_cheby(x)^2 * T(x)
+                    f = x -> d2f(op, x) * (2/Δr)^2  - ℓℓp1/r_cheby(x)^2 * op(x)
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)];
+                    intresc = TfGL_nr * intres;
+
+                    Xn = @view Jopc2[:, n+1];
+                    @test Xn ≈ intresc rtol=1e-3 atol=1e-12/Rsun^4
+                end
+            end
+
+            @testset "J*ηρ/r" begin
+                @testset for n = 0:5:nr-1
+                    f = chebyshevT(n)
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * ηρ_by_r(x) * f(x))
                         end
                         for r_ind in axes(J, 1)]
                     intresc = TfGL_nr * intres
@@ -212,13 +295,13 @@ end
                 end
             end
 
-            @testset "greenfn times ηρ²byr²" begin
+            @testset "J*ηρ²/r²" begin
                 @testset for n = 0:5:nr-1
                     f = chebyshevT(n)
 
                     intres = [begin
-                            Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
-                            quadgk(x -> Js(x) * ηρ²_by_r²(x) * f(x), -1, 1)[1]
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * ηρ²_by_r²(x) * f(x))
                         end
                         for r_ind in axes(J, 1)]
                     intresc = TfGL_nr * intres
@@ -232,35 +315,62 @@ end
                 end
             end
 
-            @testset "greenfn times ddr" begin
+            @testset "J*ddr" begin
                 Jddrc = Jc * ddrM
                 @testset for n = 0:5:nr-1
-                    f = x -> n * chebyshevU(n-1, x) * (2/Δr)
+                    T = chebyshevT(n)
+                    f = x -> df(T, x) * (2/Δr)
 
                     intres = [begin
-                            Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
-                            quadgk(x -> Js(x) * f(x), -1, 1)[1]
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
                         end
                         for r_ind in axes(J, 1)]
                     intresc = TfGL_nr * intres
 
                     Jddrc_n = @view Jddrc[:, n+1]
-                    if n <= 40
-                        @test Jddrc_n ≈ intresc rtol=1e-2
+                    if n <= 20
+                        @test Jddrc_n ≈ intresc rtol=1e-4
+                    elseif n <= 40
+                        @test Jddrc_n ≈ intresc rtol=1e-3
                     else
-                        @test Jddrc_n ≈ intresc rtol=5e-2
+                        @test Jddrc_n ≈ intresc rtol=5e-3
                     end
                 end
             end
 
-            @testset "greenfn times DDr" begin
+            @testset "J*1/r*ddr" begin
+                Jddr_by_rc = Jc * onebyr_ddrM;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> (df(T, x) * (2/Δr))/r_cheby(x)
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    Xn = @view Jddr_by_rc[:, n+1]
+                    if n <= 20
+                        @test Xn ≈ intresc rtol=1e-4
+                    elseif n <= 40
+                        @test Xn ≈ intresc rtol=1e-3
+                    else
+                        @test Xn ≈ intresc rtol=5e-3
+                    end
+                end
+            end
+
+            @testset "J*DDr" begin
                 JDDrc = Jc * DDrM
                 @testset for n = 0:5:nr-1
                     f = x -> n * chebyshevU(n-1, x) * (2/Δr) + ηρ_cheby(x) * chebyshevT(n, x)
 
                     intres = [begin
-                            Js = Spline1D(r_chebyshev_lobatto, @view J[r_ind, :])
-                            quadgk(x -> Js(x) * f(x), -1, 1)[1]
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
                         end
                         for r_ind in axes(J, 1)]
                     intresc = TfGL_nr * intres
@@ -270,6 +380,190 @@ end
                         @test JDDrc_n ≈ intresc rtol=1e-2
                     else
                         @test JDDrc_n ≈ intresc rtol=2e-1
+                    end
+                end
+            end
+
+            @testset "J * d2dr2" begin
+                Jd2dr2c = Jc * d2dr2M;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> d2f(T, x) * (2/Δr)^2
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    Jd2d2rc_n = @view Jd2dr2c[:, n+1]
+                    if n < 20
+                        @test Jd2d2rc_n ≈ intresc rtol=1e-4
+                    elseif n <= 40
+                        @test Jd2d2rc_n ≈ intresc rtol=1e-3
+                    else
+                        @test Jd2d2rc_n ≈ intresc rtol=5e-3
+                    end
+                end
+            end
+
+            @testset "J * d3dr3" begin
+                Jd3dr3c = Jc * d3dr3M;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> d3f(T, x) * (2/Δr)^3
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    Xn = @view Jd3dr3c[:, n+1]
+                    if n < 20
+                        @test Xn ≈ intresc rtol=1e-4
+                    elseif n <= 40
+                        @test Xn ≈ intresc rtol=1e-3
+                    else
+                        @test Xn ≈ intresc rtol=5e-3
+                    end
+                end
+            end
+
+            @testset "J * d4dr4" begin
+                Jd4dr4c = Jc * d4dr4M;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> d4f(T, x) * (2/Δr)^4
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    Xn = @view Jd4dr4c[:, n+1]
+                    if n < 20
+                        @test Xn ≈ intresc rtol=1e-4
+                    elseif n <= 40
+                        @test Xn ≈ intresc rtol=1e-3
+                    else
+                        @test Xn ≈ intresc rtol=5e-3
+                    end
+                end
+            end
+
+            @testset "J * ddrηρ * d2dr2" begin
+                J_ddrηρ_d2dr2c = J_ddrηρ * d2dr2M;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> ddr_ηρ(x) * d2f(T, x) * (2/Δr)^2
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    Xn = @view J_ddrηρ_d2dr2c[:, n+1]
+                    if n < 20
+                        @test Xn ≈ intresc rtol=1e-4
+                    elseif n <= 40
+                        @test Xn ≈ intresc rtol=1e-3
+                    else
+                        @test Xn ≈ intresc rtol=5e-3
+                    end
+                end
+            end
+
+            @testset "J * ηρ * d3dr3" begin
+                J_ηρ_d3dr3c = J_ηρ * d3dr3M;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> ηρ_cheby(x) * d3f(T, x) * (2/Δr)^3
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)]
+                    intresc = TfGL_nr * intres
+
+                    Xn = @view J_ηρ_d3dr3c[:, n+1]
+                    if n < 20
+                        @test Xn ≈ intresc rtol=1e-4
+                    elseif n <= 40
+                        @test Xn ≈ intresc rtol=1e-3
+                    else
+                        @test Xn ≈ intresc rtol=5e-3
+                    end
+                end
+            end
+
+            @testset "J * d2dr2_onebyr2" begin
+                # Jd2dr2byr2c = Jc * d2dr2_one_by_r2M;
+                Jd2dr2_one_by_r2_2 = Jc * d2dr2_one_by_r2_2M;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> d2f(x -> T(x) * onebyr2_cheby(x), x) * (2/Δr)^2
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)];
+                    intresc = TfGL_nr * intres;
+
+                    Xn = @view Jd2dr2_one_by_r2_2[:, n+1];
+                    @test Xn ≈ intresc rtol=1e-2
+                end
+            end
+
+            @testset "J * ddr_ηρ_by_r2" begin
+                J_ddr_ηρ_by_r2_c = J_ηρ_by_r′² * ddrM .+ J_ddr_ηρ_by_r′²;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> df(x -> ηρ_by_r²(x) * T(x), x) * (2/Δr)
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)];
+                    intresc = TfGL_nr * intres;
+
+                    J_ddr_ηρ_by_r2_c_n = @view J_ddr_ηρ_by_r2_c[:, n+1];
+                    if n <= 40
+                        @test J_ddr_ηρ_by_r2_c_n ≈ intresc rtol=3e-3
+                    else
+                        @test J_ddr_ηρ_by_r2_c_n ≈ intresc rtol=6e-3
+                    end
+                end
+            end
+
+            @testset "J * ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr" begin
+                J_ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr_c = -J_ηρ_by_r′² * ddrM .+ J_ddr_ηρ_by_r²_plus_4ηρ_by_r′³;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> df(x -> ηρ_by_r²(x) * T(x), x) * (2/Δr) -
+                        2ηρ_cheby(x)/r_cheby(x)^2 * (df(T, x) * (2/Δr) -2T(x)/r_cheby(x))
+
+                    intres = [begin
+                            Js = J_splines[r_ind]
+                            quadgc(x -> Js(x) * f(x))
+                        end
+                        for r_ind in axes(J, 1)];
+                    intresc = TfGL_nr * intres;
+
+                    Xn = @view J_ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr_c[:, n+1];
+                    if n <= 40
+                        @test Xn ≈ intresc rtol=3e-3
+                    else
+                        @test Xn ≈ intresc rtol=6e-3
                     end
                 end
             end
@@ -811,7 +1105,7 @@ end
     end
 end
 
-@testset "matrix with resolution" begin
+@testset "matrix convergence with resolution" begin
     @testset "without green function" begin
         nr, nℓ = 45, 2
         m = 5
@@ -847,7 +1141,11 @@ end
             M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields)
             M1v = matrix_block(M1, rowind, colind, nfields)
             @testset "real" begin
-                @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
+                if rowind == 3 && colind == 2
+                    @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
+                else
+                    @test real(M2_ssv) ≈ real(M1v) rtol=1e-4
+                end
             end
             @testset "imag" begin
                 @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
@@ -859,7 +1157,11 @@ end
             M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
             M1v = matrix_block(M1, rowind, colind, nfields)
             @testset "real" begin
-                @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
+                if rowind == 3 && colind == 2
+                    @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
+                else
+                    @test real(M3_ssv) ≈ real(M1v) rtol=1e-4
+                end
             end
             @testset "imag" begin
                 @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
@@ -902,7 +1204,7 @@ end
             end
             @testset "imag" begin
                 if rowind == colind == 2
-                    @test_broken imag(M2_ssv) ≈ imag(M1v) rtol=1e-3
+                    @test imag(M2_ssv) ≈ imag(M1v) rtol=15e-2
                 else
                     @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
                 end
@@ -918,7 +1220,7 @@ end
             end
             @testset "imag" begin
                 if rowind == colind == 2
-                    @test_broken imag(M3_ssv) ≈ imag(M1v) rtol=1e-3
+                    @test imag(M3_ssv) ≈ imag(M1v) rtol=15e-2
                 else
                     @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
                 end
@@ -937,7 +1239,7 @@ function rossby_ridge_eignorm(λ, v, M, m, nparams; ΔΩ_by_Ω = 0)
 end
 
 @testset "uniform rotation solution" begin
-    nr, nℓ = 30, 15
+    nr, nℓ = 45, 15
     nparams = nr * nℓ
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     (; r_in, r_out, Δr) = operators.radial_params
@@ -1022,24 +1324,24 @@ end
     end
 
     @testset "radial differential rotation" begin
-        nr, nℓ = 30, 2
+        nr, nℓ = 50, 2
         nparams = nr * nℓ
         m = 1
-        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-        (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators
-        (; r, r_chebyshev) = coordinates
-        (; nfields, ν) = operators.constants
-        r_mid = radial_params.r_mid::Float64
-        Δr = radial_params.Δr::Float64
-        a = 1 / (Δr / 2)
-        b = -r_mid / (Δr / 2)
+        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+        (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators;
+        (; r, r_chebyshev) = coordinates;
+        (; nfields, ν) = operators.constants;
+        r_mid = radial_params.r_mid::Float64;
+        Δr = radial_params.Δr::Float64;
+        a = 1 / (Δr / 2);
+        b = -r_mid / (Δr / 2);
         r̄(r) = clamp(a * r + b, -1.0, 1.0)
-        (; Tcrfwd) = transforms
-        (; Iℓ) = identities
-        (; ddr, d2dr2, DDr, ddrDDr) = diff_operators
-        (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby) = rad_terms
-        (; r_in, r_out) = operators.radial_params
-        (; mat) = operators
+        (; Tcrfwd) = transforms;
+        (; Iℓ) = identities;
+        (; ddr, d2dr2, DDr, ddrDDr) = diff_operators;
+        (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby) = rad_terms;
+        (; r_in, r_out) = operators.radial_params;
+        (; mat) = operators;
         chebyfwdnr(f, scalefactor = 5) = chebyfwd(f, r_in, r_out, nr, scalefactor)
 
         ℓ = 2
@@ -1050,14 +1352,14 @@ end
         ∇²_sinθdθ21 = -ℓℓp1 * sinθdθ21
 
         # used to check the VV term
-        M = zeros(3nr*nℓ, 3nr*nℓ)
-        RossbyWaveSpectrum._differential_rotation_matrix!(M, nr, nℓ, m, :constant; operators)
+        M = zeros(3nr*nℓ, 3nr*nℓ);
+        RossbyWaveSpectrum._differential_rotation_matrix!(M, nr, nℓ, m, :constant; operators);
 
         @testset for rotation_profile in [:constant, :linear, :solar_equator]
 
             (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) =
                 RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
-                        nℓ, m, r; operators, rotation_profile)
+                    m; operators, rotation_profile);
 
             ΔΩ_by_r = ΔΩ * onebyr_cheby
             ΔΩ_DDr = ΔΩ * DDr
