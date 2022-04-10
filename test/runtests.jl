@@ -70,18 +70,18 @@ end
     (; d2dr2, ddr, DDr, d4dr4) = operators.diff_operators;
     (; ddr_lobatto, ddrM, DDrM, d2dr2M, d3dr3M, d4dr4M) = operators.diff_operator_matrices;
     (; deltafn_matrix_radial) = operators;
-    (; ηρ_cheby, r_cheby, ηρ_by_r, ηρ²_by_r², ηρ_by_r²,
-        onebyr2_cheby, onebyr_cheby, ddr_ηρ) = operators.rad_terms;
+    (; ηρ_cheby, r_cheby, ηρ_by_r, ηρ2_by_r2, ηρ_by_r2,
+        onebyr2_cheby, onebyr_cheby, onebyr3_cheby, onebyr4_cheby,
+        ddr_ηρ, d2dr2_ηρ) = operators.rad_terms;
     (; TfGL_nr, TiGL_nr) = operators.transforms;
     (; mat) = operators;
     d2dr2_one_by_r2_2M = mat(d2dr2[onebyr2_cheby]);
     onebyr_ddrM = mat(onebyr_cheby * ddr);
     ddr_ηρM = mat(ddr[ηρ_cheby]);
-    onebyr4_cheby = onebyr2_cheby*onebyr2_cheby;
-    onebyr3_cheby = onebyr_cheby*onebyr2_cheby;
     onebyr3_chebyM = mat(onebyr3_cheby);
     onebyr4_chebyM = mat(onebyr4_cheby);
     onebyr3_ddrM = mat(onebyr3_cheby*ddr);
+    ηρ_by_r3M = mat(ηρ_by_r * onebyr2_cheby);
 
     function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
         (; n_lobatto) = operators.transforms;
@@ -129,12 +129,12 @@ end
         @testset "unstratified" begin
             # in this case there's an analytical solution
             Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators_unstratified)
-            Hℓ_exp = greenfn_radial_lobatto_unstratified_analytical(ℓ, operators_unstratified)
+            J_exp = greenfn_radial_lobatto_unstratified_analytical(ℓ, operators_unstratified)
             if ℓ < 15
-                @test Hℓ ≈ Hℓ_exp rtol=1e-2
+                @test Hℓ ≈ J_exp rtol=1e-2
             else
-                @test Hℓ ≈ Hℓ_exp rtol=1e-1
-                @test_broken Hℓ ≈ Hℓ_exp rtol=1e-2
+                @test Hℓ ≈ J_exp rtol=1e-1
+                @test_broken Hℓ ≈ J_exp rtol=1e-2
             end
             @testset "symmetry" begin
                 if ℓ < 20
@@ -164,19 +164,17 @@ end
         @testset for ℓ in 2:10:52
             ℓℓp1 = ℓ*(ℓ+1)
 
-            J = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators);
+            Jrr′ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators);
             T = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.UniformRotGfn(), ℓ, operators);
-            Jc = T.cheby_terms.Hℓ;
-            J_ηρ_by_r_c = T.cheby_terms.Hℓ_ηρ_by_r;
-            J_by_r_c = T.cheby_terms.Hℓ_by_r;
-            J_ηρ²_by_r′² = T.cheby_terms.Hℓ_ηρ²_by_r′²;
-            J_ηρ_by_r′² = T.cheby_terms.Hℓ_ηρ_by_r′²;
-            J_ddr_ηρ_by_r′² = T.cheby_terms.Hℓ_ddr_ηρ_by_r′²;
-            J_ddr_ηρ_by_r²_plus_4ηρ_by_r′³ = T.cheby_terms.Hℓ_ddr_ηρ_by_r²_plus_4ηρ_by_r′³;
-            J_ddrηρ = T.cheby_terms.Hℓ_ddrηρ;
-            J_ηρ = T.cheby_terms.Hℓ_ηρ;
+            (; J, J_ηρbyr, J_by_r) = T.unirot_terms;
+            Tv = T.viscosity_terms;
+            (; J_ηρ2byr2, J_ηρbyr2,
+                J_ddrηρbyr2_plus_4ηρbyr3, J_ddrηρ, J_ηρ,
+                J_4ηρbyr3,
+                J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2,
+                J_ddrηρ_by_r_min_ηρbyr2) = Tv;
 
-            J_splines = [Spline1D(r_chebyshev_lobatto, @view J[r_ind, :]) for r_ind in axes(J, 1)];
+            J_splines = [Spline1D(r_chebyshev_lobatto, @view Jrr′[r_ind, :]) for r_ind in axes(Jrr′, 1)];
             intJ_rp_r = [pi/Nquad .* sqrt.(1 .- nodesquad.^2) .* Jsp(nodesquad) for Jsp in J_splines];
             function intJ_quadgc(f)
                 integral_cache .= 0
@@ -193,7 +191,7 @@ end
                     intres = intJ_quadgc(f)
                     intres = TfGL_nr * intres;
 
-                    Jf = @view Jc[:, n+1];
+                    Jf = @view J[:, n+1];
                     @test Jf ≈ intres rtol=1e-3
                 end
             end
@@ -206,13 +204,13 @@ end
                     intres = intJ_quadgc(f)
                     intresc = TfGL_nr * intres
 
-                    Xn = @view J_by_r_c[:, n+1]
+                    Xn = @view J_by_r[:, n+1]
                     @test Xn ≈ intresc rtol=1e-3
                 end
             end
 
             @testset "J/r^4" begin
-                J_by_r4_c = Jc * onebyr4_chebyM
+                J_by_r4_c = J * onebyr4_chebyM
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     f = x -> T(x)/r_cheby(x)^4
@@ -225,8 +223,34 @@ end
                 end
             end
 
+            @testset "J*4ηρ/r^3" begin
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> T(x)*4ηρ_cheby(x)/r_cheby(x)^3
+
+                    intres = intJ_quadgc(f)
+                    intresc = TfGL_nr * intres
+
+                    Xn = @view J_4ηρbyr3[:, n+1]
+                    @test Xn ≈ intresc rtol=1e-3
+                end
+            end
+
+            @testset "J*(∂2rηρ/r - 2∂rηρ/r^2)" begin
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> T(x)*(d2dr2_ηρ(x)/r_cheby(x) - 2ddr_ηρ(x)/r_cheby(x)^2)
+
+                    intres = intJ_quadgc(f)
+                    intresc = TfGL_nr * intres
+
+                    Xn = @view J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2[:, n+1]
+                    @test Xn ≈ intresc rtol=1e-3
+                end
+            end
+
             @testset "J/r^3*ddr" begin
-                J_by_r3_ddr_c = Jc * onebyr3_ddrM;
+                J_by_r3_ddr_c = J * onebyr3_ddrM;
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     f = x -> df(T, x) * (2/Δr) / r_cheby(x)^3
@@ -240,7 +264,7 @@ end
             end
 
             @testset "J/r^2*d2dr2" begin
-                J_by_r2_d2dr2_c = Jc * mat(onebyr2_cheby*d2dr2)
+                J_by_r2_d2dr2_c = J * mat(onebyr2_cheby*d2dr2)
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     f = x -> d2f(T, x) * (2/Δr)^2 / r_cheby(x)^2
@@ -255,7 +279,7 @@ end
 
             @testset "J(d²dr² - ℓℓp1/r²)²" begin
                 ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
-                Jopc2 = Jc * mat(d4dr4 + ℓpre*onebyr4_cheby - 2ℓℓp1*onebyr2_cheby*d2dr2 + 4ℓℓp1*onebyr3_cheby*ddr);
+                Jopc2 = J * mat(d4dr4 + ℓpre*onebyr4_cheby - 2ℓℓp1*onebyr2_cheby*d2dr2 + 4ℓℓp1*onebyr3_cheby*ddr);
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     op = x -> d2f(T, x) * (2/Δr)^2  - ℓℓp1/r_cheby(x)^2 * T(x)
@@ -277,7 +301,7 @@ end
                     intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres
 
-                    Xn = @view J_ηρ_by_r_c[:, n+1]
+                    Xn = @view J_ηρbyr[:, n+1]
                     @test Xn ≈ intresc rtol=1e-2
                 end
             end
@@ -285,12 +309,12 @@ end
             @testset "J*ηρ²/r²" begin
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
-                    f = x -> T(x) * ηρ²_by_r²(x)
+                    f = x -> T(x) * ηρ2_by_r2(x)
 
                     intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres;
 
-                    Xn = @view J_ηρ²_by_r′²[:, n+1]
+                    Xn = @view J_ηρ2byr2[:, n+1]
                     if n <= 40
                         @test Xn ≈ intresc rtol=1e-2
                     else
@@ -300,7 +324,7 @@ end
             end
 
             @testset "J*ddr" begin
-                Jddrc = Jc * ddrM
+                Jddrc = J * ddrM
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     f = x -> df(T, x) * (2/Δr)
@@ -320,7 +344,7 @@ end
             end
 
             @testset "J*1/r*ddr" begin
-                Jddr_by_rc = Jc * onebyr_ddrM;
+                Jddr_by_rc = J * onebyr_ddrM;
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     f = x -> (df(T, x) * (2/Δr))/r_cheby(x)
@@ -340,7 +364,7 @@ end
             end
 
             @testset "J*DDr" begin
-                JDDrc = Jc * DDrM
+                JDDrc = J * DDrM
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     f = x -> df(T, x) * (2/Δr) + ηρ_cheby(x) * T(x)
@@ -358,7 +382,7 @@ end
             end
 
             @testset "J * d2dr2" begin
-                Jd2dr2c = Jc * d2dr2M;
+                Jd2dr2c = J * d2dr2M;
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     f = x -> d2f(T, x) * (2/Δr)^2
@@ -378,7 +402,7 @@ end
             end
 
             @testset "J * d3dr3" begin
-                Jd3dr3c = Jc * d3dr3M;
+                Jd3dr3c = J * d3dr3M;
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     f = x -> d3f(T, x) * (2/Δr)^3
@@ -398,7 +422,7 @@ end
             end
 
             @testset "J * d4dr4" begin
-                Jd4dr4c = Jc * d4dr4M;
+                Jd4dr4c = J * d4dr4M;
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     f = x -> d4f(T, x) * (2/Δr)^4
@@ -437,6 +461,40 @@ end
                 end
             end
 
+            @testset "J * ηρ/r * d2dr2" begin
+                J_ηρbyr_d2dr2c = J_ηρbyr * d2dr2M;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> ηρ_by_r(x) * d2f(T, x) * (2/Δr)^2
+
+                    intres = intJ_quadgc(f);
+                    intresc = TfGL_nr * intres
+
+                    Xn = @view J_ηρbyr_d2dr2c[:, n+1]
+                    if n < 20
+                        @test Xn ≈ intresc rtol=1e-4
+                    elseif n <= 35
+                        @test Xn ≈ intresc rtol=1e-3
+                    else
+                        @test Xn ≈ intresc rtol=5e-3
+                    end
+                end
+            end
+
+            @testset "J * (∂rηρ/r - ηρ/r^2) * ddr" begin
+                J_ddrηρ_by_r_min_ηρbyr2_ddr = J_ddrηρ_by_r_min_ηρbyr2 * ddrM;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> (ddr_ηρ(x)/r_cheby(x) - ηρ_by_r(x)/r_cheby(x)^2) * df(T, x) * (2/Δr)
+
+                    intres = intJ_quadgc(f);
+                    intresc = TfGL_nr * intres;
+
+                    Xn = @view J_ddrηρ_by_r_min_ηρbyr2_ddr[:, n+1]
+                    @test Xn ≈ intresc rtol=2e-2
+                end
+            end
+
             @testset "J * ηρ * d3dr3" begin
                 J_ηρ_d3dr3c = J_ηρ * d3dr3M;
                 @testset for n = 0:5:nr-1
@@ -458,8 +516,8 @@ end
             end
 
             @testset "J * d2dr2_onebyr2" begin
-                # Jd2dr2byr2c = Jc * d2dr2_one_by_r2M;
-                Jd2dr2_one_by_r2_2 = Jc * d2dr2_one_by_r2_2M;
+                # Jd2dr2byr2c = J * d2dr2_one_by_r2M;
+                Jd2dr2_one_by_r2_2 = J * d2dr2_one_by_r2_2M;
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
                     f = x -> d2f(x -> T(x) * onebyr2_cheby(x), x) * (2/Δr)^2
@@ -472,29 +530,11 @@ end
                 end
             end
 
-            @testset "J * ddr_ηρ_by_r2" begin
-                J_ddr_ηρ_by_r2_c = J_ηρ_by_r′² * ddrM .+ J_ddr_ηρ_by_r′²;
-                @testset for n = 0:5:nr-1
-                    T = chebyshevT(n)
-                    f = x -> df(x -> ηρ_by_r²(x) * T(x), x) * (2/Δr)
-
-                    intres = intJ_quadgc(f);
-                    intresc = TfGL_nr * intres;
-
-                    J_ddr_ηρ_by_r2_c_n = @view J_ddr_ηρ_by_r2_c[:, n+1];
-                    if n <= 40
-                        @test J_ddr_ηρ_by_r2_c_n ≈ intresc rtol=3e-3
-                    else
-                        @test J_ddr_ηρ_by_r2_c_n ≈ intresc rtol=6e-3
-                    end
-                end
-            end
-
             @testset "J * ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr" begin
-                J_ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr_c = -J_ηρ_by_r′² * ddrM .+ J_ddr_ηρ_by_r²_plus_4ηρ_by_r′³;
+                J_ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr_c = -J_ηρbyr2 * ddrM .+ J_ddrηρbyr2_plus_4ηρbyr3;
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
-                    f = x -> df(x -> ηρ_by_r²(x) * T(x), x) * (2/Δr) -
+                    f = x -> df(x -> ηρ_by_r2(x) * T(x), x) * (2/Δr) -
                         2ηρ_cheby(x)/r_cheby(x)^2 * (df(T, x) * (2/Δr) -2T(x)/r_cheby(x))
 
                     intres = intJ_quadgc(f);
@@ -796,7 +836,7 @@ end
     (; Tcrfwd) = transforms;
     (; Iℓ) = identities;
     (; ddr, d2dr2, DDr) = diff_operators;
-    (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby, ηρ_by_r, ηρ_by_r², ηρ²_by_r²) = rad_terms;
+    (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby, ηρ_by_r, ηρ_by_r2, ηρ2_by_r2) = rad_terms;
     (; r_in, r_out) = operators.radial_params;
     (; mat) = operators;
 
@@ -846,7 +886,7 @@ end
         ddr_minus_2byr_r_d2dr2_ηρ_by_r = ddr_minus_2byr * r_d2dr2_ηρ_by_r;
         ddr_minus_2byr_r_d2dr2_ηρ_by_rM = mat(ddr_minus_2byr_r_d2dr2_ηρ_by_r);
 
-        ddr_minus_2byr_ηρ_by_r2 = ddr_minus_2byr[ηρ_by_r²];
+        ddr_minus_2byr_ηρ_by_r2 = ddr_minus_2byr[ηρ_by_r2];
         ddr_minus_2byr_ηρ_by_r2M = mat(ddr_minus_2byr_ηρ_by_r2);
 
         four_ηρ_by_r = 4ηρ_by_r;
@@ -872,13 +912,13 @@ end
         ηρ_cheby_ddr_minus_2byr_DDrM_2 = chebyshevmatrix(ηρ_cheby_ddr_minus_2byr_DDr, nr, 3);
         ddr_ηρ_cheby_ddr_minus_2byr_DDrM_2 = chebyshevmatrix(ddr_ηρ_cheby_ddr_minus_2byr_DDr, nr, 3);
 
-        ddr_ηρ_by_r2 = ddr[ηρ_by_r²];
-        ηρ_by_r2_ddr_minus_2byr = ηρ_by_r² * ddr_minus_2byr;
+        ddr_ηρ_by_r2 = ddr[ηρ_by_r2];
+        ηρ_by_r2_ddr_minus_2byr = ηρ_by_r2 * ddr_minus_2byr;
         ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr = ddr_ηρ_by_r2 - 2*ηρ_by_r2_ddr_minus_2byr;
         ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byrM = mat(ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr);
 
         # fourth term
-        ηρ²_by_r²M = mat(ηρ²_by_r²);
+        ηρ2_by_r2M = mat(ηρ2_by_r2);
 
         @testset "first term" begin
             function WWterm11_1fn(r, n)
@@ -1033,12 +1073,12 @@ end
             function WWterm4fn(r, n)
                 T = chebyshevT(n) ∘ r̄
                 # F1 = DDr
-                F2 = r -> (ηρ²_by_r² ∘ r̄)(r) * T(r)
+                F2 = r -> (ηρ2_by_r2 ∘ r̄)(r) * T(r)
                 F2(r)
             end
 
             @testset for n in 0:nr-1
-                WWterm4op = @view ηρ²_by_r²M[:, n+1]
+                WWterm4op = @view ηρ2_by_r2M[:, n+1]
                 WWterm4analytical = chebyfwdnr(r -> WWterm4fn(r, n))
                 @test WWterm4op ≈ WWterm4analytical rtol=1e-7
             end
