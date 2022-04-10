@@ -606,12 +606,12 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators)
     H_ddrηρ = H .* ddr_ηρ.(r_chebyshev_lobatto)'
     H_ηρbyr = H .* ηρ_by_r.(r_chebyshev_lobatto)'
     H_ηρbyr2 = H .* ηρ_by_r2.(r_chebyshev_lobatto)'
+    H_ηρbyr3 = H .* ηρ_by_r3.(r_chebyshev_lobatto)'
     H_ddrηρbyr2 = H .* ddr_ηρbyr2.(r_chebyshev_lobatto)'
     H_ddrηρ_by_r = H_ddrηρ .* onebyr_cheby.(r_chebyshev_lobatto)'
     H_ddrηρ_by_r2 = H_ddrηρ .* onebyr2_cheby.(r_chebyshev_lobatto)'
     H_d2dr2ηρ_by_r = H .* (d2dr2_ηρ.(r_chebyshev_lobatto) .* onebyr_cheby.(r_chebyshev_lobatto))'
-    H_4ηρbyr3 = H .* 4 .* ηρ_by_r3.(r_chebyshev_lobatto)'
-    H_ddrηρbyr2_plus_4ηρ_by_r3 = H_ddrηρbyr2 + H_4ηρbyr3
+    H_ddrηρbyr2_plus_4ηρ_by_r3 = @. H_ddrηρbyr2 + 4 * H_ηρbyr3
     Hηρ2_by_r2 = H .* ηρ2_by_r2.(r_chebyshev_lobatto)'
     T = (r -> ηρ_cheby(r) * (ηρ_cheby(r) - 2onebyr_cheby(r))).(r_chebyshev_lobatto)
     H_ηρ²_min_2ηρbyr = H .* T'
@@ -642,7 +642,8 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators)
     J_ηρbyr = lobattochebyshevtransform(H_ηρbyr)
     J_ηρ2byr2 = lobattochebyshevtransform(Hηρ2_by_r2)
     J_ηρbyr2 = lobattochebyshevtransform(H_ηρbyr2)
-    J_4ηρbyr3 = lobattochebyshevtransform(H_4ηρbyr3)
+    J_ηρbyr3 = lobattochebyshevtransform(H_ηρbyr3)
+    J_4ηρbyr3 = 4 * J_ηρbyr3
     J_ddrηρ = lobattochebyshevtransform(H_ddrηρ)
     J_ddrηρ_by_r = lobattochebyshevtransform(H_ddrηρ_by_r)
     J_ddrηρ_by_r2 = lobattochebyshevtransform(H_ddrηρ_by_r2)
@@ -650,6 +651,7 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators)
     J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2 = @. J_d2dr2ηρ_by_r - 2J_ddrηρ_by_r2
     J_ddrηρbyr2_plus_4ηρbyr3 = lobattochebyshevtransform(H_ddrηρbyr2_plus_4ηρ_by_r3)
     J_ddrηρ_by_r_min_ηρbyr2 = @. J_ddrηρ_by_r - J_ηρbyr2
+    J_ddrηρ_by_r2_min_4ηρbyr3 = @. J_ddrηρ_by_r2 - J_4ηρbyr3
     J_g = lobattochebyshevtransform(H_g)
     J_ηρ²_min_2ηρbyr = lobattochebyshevtransform(H_ηρ²_min_2ηρbyr)
     J_ηρ_min_2byr_ddrηρ = lobattochebyshevtransform(H_ηρ_min_2byr_ddrηρ)
@@ -661,7 +663,8 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators)
         J_ηρ²_min_2ηρbyr, J_ηρ_min_2byr_ddrηρ, J_ddrηρ,
         J_ddrηρbyr2_plus_4ηρbyr3, J_ηρ2byr2,
         J_ηρbyr2, J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2,
-        J_ddrηρ_by_r, J_ddrηρ_by_r_min_ηρbyr2)
+        J_ddrηρ_by_r, J_ddrηρ_by_r_min_ηρbyr2,
+        J_ddrηρ_by_r2_min_4ηρbyr3)
 
     unirot_terms = (; J, J_by_r, J_g, J_ηρbyr)
 
@@ -842,12 +845,12 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     twoηρ_by_r = 2ηρ_by_r
 
     ηρ_by_r2 = onebyr2_cheby * ηρ_cheby
+    ηρ_by_r3 = onebyr_cheby * ηρ_by_r2
     ddr_ηρ = ddr * ηρ_cheby
     ddr_ηρbyr = ddr * ηρ_by_r
     d2dr2_ηρ = (d2dr2 * ηρ_cheby)::typeof(ddr_ηρbyr)
     ddr_ηρbyr2 = ddr * ηρ_by_r2
     ηρ2_by_r2 = ApproxFun.chop(ηρ_by_r2 * ηρ_cheby, 1e-3)
-    ηρ_by_r3 = onebyr_cheby * ηρ_by_r2
 
     g = sg.(r)
     g_cheby = Fun(sg ∘ r_cheby, Chebyshev())::TFunSpline
@@ -1174,22 +1177,24 @@ function viscosity_terms!(M, nr, nℓ, m; operators, _greenfn = true)
         (; J_ηρ2byr2, J_ηρbyr2, J_ddrηρ, J_ηρ, J_ηρ²_min_2ηρbyr, J_4ηρbyr3,
             J_ddrηρbyr2_plus_4ηρbyr3, J_ηρ_min_2byr_ddrηρ,
             J_c1, J_c2_1, J_c2_2,
-            J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2, J_ddrηρ_by_r_min_ηρbyr2) = G.viscosity_terms;
+            J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2, J_ddrηρ_by_r_min_ηρbyr2,
+            J_ddrηρ_by_r2_min_4ηρbyr3) = G.viscosity_terms;
 
         ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
         @. d2dr2_min_ℓℓp1_by_r2_squaredM = d4dr4M + ℓpre * onebyr4_chebyM - 2ℓℓp1*onebyr2_d2dr2M + 4ℓℓp1*onebyr3_ddrM;
 
-        @. T1_1 = ddr_minus_2byr_r_d2dr2_ηρ_by_rM - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2M
+        @. T1_1 = ddr_minus_2byr_r_d2dr2_ηρ_by_rM
         @. T1_2 = d2dr2_min_ℓℓp1_by_r2_squaredM
 
         @. T1 = T1_1 + T1_2
 
         if _greenfn
             mul!(WWop, J, T1)
+            WWop .-= ℓℓp1 .* (J_ηρbyr2 * ddrM .+ J_ddrηρ_by_r2_min_4ηρbyr3)
             WWop .+= 4 .* (J_ηρbyr * d2dr2M .+ 2 .* J_ddrηρ_by_r_min_ηρbyr2 * ddrM .+ J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2)
             @. WWop -= (ℓℓp1-2) * J_4ηρbyr3
         else
-            @. WWop = T1 + d2dr2_4ηρ_by_rM - 4ℓℓp1 * ηρ_by_r3M
+            @. WWop = T1  - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2M + d2dr2_4ηρ_by_rM - 4ℓℓp1 * ηρ_by_r3M
         end
 
         if _greenfn

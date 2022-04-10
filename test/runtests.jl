@@ -172,7 +172,8 @@ end
                 J_ddrηρbyr2_plus_4ηρbyr3, J_ddrηρ, J_ηρ,
                 J_4ηρbyr3,
                 J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2,
-                J_ddrηρ_by_r_min_ηρbyr2) = Tv;
+                J_ddrηρ_by_r_min_ηρbyr2,
+                J_ddrηρ_by_r2_min_4ηρbyr3) = Tv;
 
             J_splines = [Spline1D(r_chebyshev_lobatto, @view Jrr′[r_ind, :]) for r_ind in axes(Jrr′, 1)];
             intJ_rp_r = [pi/Nquad .* sqrt.(1 .- nodesquad.^2) .* Jsp(nodesquad) for Jsp in J_splines];
@@ -481,6 +482,24 @@ end
                 end
             end
 
+            @testset "J * ηρ/r^2 * ddr" begin
+                J_ηρbyr2_ddr = J_ηρbyr2 * ddrM;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> ηρ_by_r2(x) * df(T, x) * (2/Δr)
+
+                    intres = intJ_quadgc(f);
+                    intresc = TfGL_nr * intres
+
+                    Xn = @view J_ηρbyr2_ddr[:, n+1]
+                    if n <= 25
+                        @test Xn ≈ intresc rtol=1e-3
+                    else
+                        @test Xn ≈ intresc rtol=5e-3
+                    end
+                end
+            end
+
             @testset "J * (∂rηρ/r - ηρ/r^2) * ddr" begin
                 J_ddrηρ_by_r_min_ηρbyr2_ddr = J_ddrηρ_by_r_min_ηρbyr2 * ddrM;
                 @testset for n = 0:5:nr-1
@@ -492,6 +511,19 @@ end
 
                     Xn = @view J_ddrηρ_by_r_min_ηρbyr2_ddr[:, n+1]
                     @test Xn ≈ intresc rtol=2e-2
+                end
+            end
+
+            @testset "J * (∂rηρ/r^2 - 4ηρ/r^3)" begin
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> (ddr_ηρ(x)/r_cheby(x)^2 - 4ηρ_cheby(x)/r_cheby(x)^3) * T(x)
+
+                    intres = intJ_quadgc(f);
+                    intresc = TfGL_nr * intres;
+
+                    Xn = @view J_ddrηρ_by_r2_min_4ηρbyr3[:, n+1]
+                    @test Xn ≈ intresc rtol=1e-3
                 end
             end
 
