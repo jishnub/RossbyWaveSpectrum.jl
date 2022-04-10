@@ -482,6 +482,24 @@ end
                 end
             end
 
+            @testset "J * ηρ * d3dr3" begin
+                J_ηρ_d3dr3 = J_ηρ * d3dr3M;
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> ηρ_cheby(x) * d3f(T, x) * (2/Δr)^3
+
+                    intres = intJ_quadgc(f);
+                    intresc = TfGL_nr * intres
+
+                    Xn = @view J_ηρ_d3dr3[:, n+1]
+                    if n < 20
+                        @test Xn ≈ intresc rtol=1e-4
+                    else
+                        @test Xn ≈ intresc rtol=1e-3
+                    end
+                end
+            end
+
             @testset "J * ηρ/r^2 * ddr" begin
                 J_ηρbyr2_ddr = J_ηρbyr2 * ddrM;
                 @testset for n = 0:5:nr-1
@@ -1217,7 +1235,7 @@ end
             end
             @testset "imag" begin
                 if rowind == colind == 2
-                    @test imag(M2_ssv) ≈ imag(M1v) rtol=15e-2
+                    @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-3
                 else
                     @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
                 end
@@ -1233,7 +1251,7 @@ end
             end
             @testset "imag" begin
                 if rowind == colind == 2
-                    @test imag(M3_ssv) ≈ imag(M1v) rtol=15e-2
+                    @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-3
                 else
                     @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
                 end

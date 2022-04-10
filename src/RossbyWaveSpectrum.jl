@@ -592,7 +592,8 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators)
     (; lobattochebyshevtransform) = operators.transforms
     (; ddr_lobatto) = operators.diff_operator_matrices
     (; ηρ_cheby, ηρ_by_r, ηρ2_by_r2, ηρ_by_r2, g_cheby, ddr_ηρbyr2, ddr_ηρbyr,
-            ηρ_by_r3, ddr_ηρ, d2dr2_ηρ, onebyr_cheby, onebyr2_cheby) = operators.rad_terms;
+            ηρ_by_r3, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ,
+            onebyr_cheby, onebyr2_cheby, onebyr3_cheby) = operators.rad_terms;
     (; d2dr2, ddr) = operators.diff_operators;
 
     H = greenfn_radial_lobatto(ℓ, operators)
@@ -631,6 +632,14 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators)
     T = (r -> (-2*ddr_ηρbyr(r) + d2dr2_ηρ(r))*ηρ_cheby(r)).(r_chebyshev_lobatto)
     H_c2_2 = H .* T'
 
+    T = (r -> 3ddr_ηρ(r) - 4ηρ_by_r(r)).(r_chebyshev_lobatto)
+    H_a1_1 = H .* T'
+    T = (r -> 3d2dr2_ηρ(r) - 8ddr_ηρ(r)*onebyr_cheby(r) + 8ηρ_cheby(r)*onebyr2_cheby(r)).(r_chebyshev_lobatto)
+    H_a1_2 = H .* T'
+    T = (r -> d3dr3_ηρ(r) - 4d2dr2_ηρ(r)*onebyr_cheby(r) +
+            8ddr_ηρ(r)*onebyr2_cheby(r) - 8ηρ_cheby(r)*onebyr3_cheby(r) ).(r_chebyshev_lobatto)
+    H_a1_3 = H .* T'
+
     H_g = H .* g_cheby.(r_chebyshev_lobatto)'
 
     rad_terms = (; H, twoddr_plus_3ηρr_H, H_times_2byr_min_ηρ,
@@ -658,8 +667,12 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators)
     J_c1 = lobattochebyshevtransform(H_c1)
     J_c2_1 = lobattochebyshevtransform(H_c2_1)
     J_c2_2 = lobattochebyshevtransform(H_c2_2)
+    J_a1_1 = lobattochebyshevtransform(H_a1_1)
+    J_a1_2 = lobattochebyshevtransform(H_a1_2)
+    J_a1_3 = lobattochebyshevtransform(H_a1_3)
 
-    viscosity_terms = (; J_c1, J_c2_1, J_c2_2, J_4ηρbyr3, J_ηρ,
+    viscosity_terms = (; J_c1, J_c2_1, J_c2_2, J_a1_1, J_a1_2, J_a1_3,
+        J_4ηρbyr3, J_ηρ,
         J_ηρ²_min_2ηρbyr, J_ηρ_min_2byr_ddrηρ, J_ddrηρ,
         J_ddrηρbyr2_plus_4ηρbyr3, J_ηρ2byr2,
         J_ηρbyr2, J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2,
@@ -778,7 +791,6 @@ end
 const Tmul = TimesOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}}}
 const Tplus = PlusOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}}}
 const TFunSpline = Fun{Chebyshev{ChebyshevInterval{Float64},Float64},Float64,Vector{Float64}}
-const TFunDeriv = ApproxFunBase.Fun{ApproxFunOrthogonalPolynomials.Ultraspherical{Int64, ApproxFun.DomainSets.ChebyshevInterval{Float64}, Float64}, Float64, Vector{Float64}}
 
 struct LobattoChebyshev
     TfGL_nr :: Matrix{Float64}
@@ -849,6 +861,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     ddr_ηρ = ddr * ηρ_cheby
     ddr_ηρbyr = ddr * ηρ_by_r
     d2dr2_ηρ = (d2dr2 * ηρ_cheby)::typeof(ddr_ηρbyr)
+    d3dr3_ηρ = (d3dr3 * ηρ_cheby)::typeof(ddr_ηρbyr)
     ddr_ηρbyr2 = ddr * ηρ_by_r2
     ηρ2_by_r2 = ApproxFun.chop(ηρ_by_r2 * ηρ_cheby, 1e-3)
 
@@ -930,7 +943,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
         onebyr2_cheby, onebyr3_cheby, onebyr4_cheby,
         ddr_lnρT, ddr_S0_by_cp, g, g_cheby, r_cheby, r2_cheby, κ, twoηρ_by_r, sρ,
         ηρ_by_r, ηρ_by_r2, ηρ2_by_r2, ddr_ηρbyr, ddr_ηρbyr2, ηρ_by_r3,
-        ddr_ηρ, d2dr2_ηρ)
+        ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ)
 
     diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr,
         ddr, d2dr2, d3dr3, d4dr4, r2d2dr2, ddrDDr, ddr_plus_2byr)
@@ -1152,10 +1165,6 @@ function viscosity_terms!(M, nr, nℓ, m; operators, _greenfn = true)
     d2dr2_min_ℓℓp1_by_r2_squaredM = zeros(nr, nr);
 
     # caches for the WW term
-    T1 = zeros(nr, nr);
-    T1_1 = zeros(nr, nr);
-    T1_2 = zeros(nr, nr);
-    T2 = zeros(nr, nr);
     T3_1 = zeros(nr, nr);
     T3_2 = zeros(nr, nr);
     T3_ℓterms = zeros(nr, nr);
@@ -1178,29 +1187,27 @@ function viscosity_terms!(M, nr, nℓ, m; operators, _greenfn = true)
             J_ddrηρbyr2_plus_4ηρbyr3, J_ηρ_min_2byr_ddrηρ,
             J_c1, J_c2_1, J_c2_2,
             J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2, J_ddrηρ_by_r_min_ηρbyr2,
-            J_ddrηρ_by_r2_min_4ηρbyr3) = G.viscosity_terms;
+            J_ddrηρ_by_r2_min_4ηρbyr3,
+            J_a1_1, J_a1_2, J_a1_3) = G.viscosity_terms;
 
         ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
         @. d2dr2_min_ℓℓp1_by_r2_squaredM = d4dr4M + ℓpre * onebyr4_chebyM - 2ℓℓp1*onebyr2_d2dr2M + 4ℓℓp1*onebyr3_ddrM;
 
-        @. T1_1 = ddr_minus_2byr_r_d2dr2_ηρ_by_rM
-        @. T1_2 = d2dr2_min_ℓℓp1_by_r2_squaredM
-
-        @. T1 = T1_1 + T1_2
-
         if _greenfn
-            mul!(WWop, J, T1)
+            mul!(WWop, J, d2dr2_min_ℓℓp1_by_r2_squaredM)
+            WWop .+= J_ηρ * d3dr3M .+ J_a1_1 * d2dr2M .+ J_a1_2 * ddrM .+ J_a1_3
             WWop .-= ℓℓp1 .* (J_ηρbyr2 * ddrM .+ J_ddrηρ_by_r2_min_4ηρbyr3)
             WWop .+= 4 .* (J_ηρbyr * d2dr2M .+ 2 .* J_ddrηρ_by_r_min_ηρbyr2 * ddrM .+ J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2)
             @. WWop -= (ℓℓp1-2) * J_4ηρbyr3
         else
-            @. WWop = T1  - ℓℓp1 * ddr_minus_2byr_ηρ_by_r2M + d2dr2_4ηρ_by_rM - 4ℓℓp1 * ηρ_by_r3M
+            @. WWop = d2dr2_min_ℓℓp1_by_r2_squaredM + ddr_minus_2byr_r_d2dr2_ηρ_by_rM -
+                ℓℓp1 * ddr_minus_2byr_ηρ_by_r2M + d2dr2_4ηρ_by_rM - 4ℓℓp1 * ηρ_by_r3M
         end
 
         if _greenfn
-            T3_1 .= J_ddrηρ * d2dr2M + J_ηρ_min_2byr_ddrηρ * ddrM + J_c1;
-            T3_2 .= J_ηρ * d3dr3M + J_ηρ²_min_2ηρbyr * d2dr2M + J_c2_1 * ddrM + J_c2_2;
-            T3_ℓterms .= ℓℓp1 * (-J_ηρbyr2 * ddrM .+ J_ddrηρbyr2_plus_4ηρbyr3)
+            T3_1 .= J_ddrηρ * d2dr2M .+ J_ηρ_min_2byr_ddrηρ * ddrM .+ J_c1;
+            T3_2 .= J_ηρ * d3dr3M .+ J_ηρ²_min_2ηρbyr * d2dr2M .+ J_c2_1 * ddrM .+ J_c2_2;
+            T3_ℓterms .= ℓℓp1 .* (-J_ηρbyr2 * ddrM .+ J_ddrηρbyr2_plus_4ηρbyr3)
 
             @. T4 = neg2by3_ℓℓp1 * J_ηρ2byr2
         else
