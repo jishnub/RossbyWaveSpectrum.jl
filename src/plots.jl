@@ -437,3 +437,14 @@ function plot_diffrot_radial(operators, smoothing_param = 1e-5)
     axlist[3].plot(r_frac, d2rΔΩ_real, "o-")
     f.tight_layout()
 end
+
+function compare_terms(terms...)
+    n = length(terms)
+    f = figure()
+    for (ind, term) in enumerate(terms)
+        ax = subplot(1, n, ind)
+        p = ax.pcolormesh(term)
+        colorbar(mappable = p)
+    end
+    f.tight_layout()
+end

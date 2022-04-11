@@ -294,6 +294,26 @@ end
                 end
             end
 
+            @testset "J((d²dr² - ℓℓp1/r²)² - d⁴dr⁴)" begin
+                ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
+                Jopc2 = J * mat(ℓpre*onebyr4_cheby - 2ℓℓp1*onebyr2_cheby*d2dr2 + 4ℓℓp1*onebyr3_cheby*ddr);
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> - 2ℓℓp1* d2f(T, x) * (2/Δr)^2 / r_cheby(x)^2  + ℓpre/r_cheby(x)^4 * T(x) +
+                        4ℓℓp1* df(T, x) * (2/Δr) / r_cheby(x)^3
+
+                    intres = intJ_quadgc(f);
+                    intresc = TfGL_nr * intres;
+
+                    Xn = @view Jopc2[:, n+1];
+                    if n <= 35
+                        @test Xn ≈ intresc rtol=1e-3 atol=1e-12/Rsun^4
+                    else
+                        @test Xn ≈ intresc rtol=2e-3 atol=1e-12/Rsun^4
+                    end
+                end
+            end
+
             @testset "J*ηρ/r" begin
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
@@ -1228,14 +1248,18 @@ end
         @test matrix_subsample(M1, nr, nr, nℓ, nfields) == M1;
         M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nfields);
         @testset for rowind in 1:nfields, colind in 1:nfields
-            M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields)
-            M1v = matrix_block(M1, rowind, colind, nfields)
+            M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields);
+            M1v = matrix_block(M1, rowind, colind, nfields);
             @testset "real" begin
-                @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
+                if rowind == 3 && colind == 2
+                    @test real(M2_ssv) ≈ real(M1v) rtol=3e-3
+                else
+                    @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
+                end
             end
             @testset "imag" begin
                 if rowind == colind == 2
-                    @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-3
+                    @test imag(M2_ssv) ≈ imag(M1v) rtol=2e-3
                 else
                     @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
                 end
@@ -1247,11 +1271,15 @@ end
             M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
             M1v = matrix_block(M1, rowind, colind, nfields)
             @testset "real" begin
-                @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
+                if rowind == 3 && colind == 2
+                    @test real(M3_ssv) ≈ real(M1v) rtol=3e-3
+                else
+                    @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
+                end
             end
             @testset "imag" begin
                 if rowind == colind == 2
-                    @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-3
+                    @test imag(M3_ssv) ≈ imag(M1v) rtol=2e-3
                 else
                     @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
                 end

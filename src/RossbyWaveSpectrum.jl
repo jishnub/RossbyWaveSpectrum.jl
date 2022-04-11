@@ -1191,7 +1191,8 @@ function viscosity_terms!(M, nr, nℓ, m; operators, _greenfn = true)
             J_a1_1, J_a1_2, J_a1_3) = G.viscosity_terms;
 
         ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
-        @. d2dr2_min_ℓℓp1_by_r2_squaredM = d4dr4M + ℓpre * onebyr4_chebyM - 2ℓℓp1*onebyr2_d2dr2M + 4ℓℓp1*onebyr3_ddrM;
+        @. d2dr2_min_ℓℓp1_by_r2_squaredM = ℓpre * onebyr4_chebyM - 2ℓℓp1*onebyr2_d2dr2M + 4ℓℓp1*onebyr3_ddrM;
+        # @. d2dr2_min_ℓℓp1_by_r2_squaredM = d4dr4M + ℓpre * onebyr4_chebyM - 2ℓℓp1*onebyr2_d2dr2M + 4ℓℓp1*onebyr3_ddrM;
 
         if _greenfn
             mul!(WWop, J, d2dr2_min_ℓℓp1_by_r2_squaredM)
