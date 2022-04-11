@@ -878,7 +878,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
 
     γ = 1.64
     cp = 1.7e8
-    δ_superadiabatic = superadiabaticity.(r; r_out)
+    δ_superadiabatic = superadiabaticity.(r)
     ddr_S0_by_cp = ApproxFun.chop(Fun(ApproxFun.Chebyshev(),
         Tcrfwd * @. γ * δ_superadiabatic * ηρ / cp), 1e-3)
 
@@ -1543,18 +1543,18 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
                         ∇²_sinθdθ_ℓℓ′ * J_twoΔΩ_by_r
                     ) * Wscaling
 
-            if nfields == 3
-                @. SV[inds_ℓℓ′] -= (Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM * Sscaling;
-            end
+            # if nfields == 3
+            #     @. SV[inds_ℓℓ′] -= (Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM * Sscaling;
+            # end
         end
 
-        for ℓ′ in intersect(ℓs, ℓ-2:2:ℓ+2)
-            inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
+        # for ℓ′ in intersect(ℓs, ℓ-2:2:ℓ+2)
+        #     inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
-            if nfields == 3
-                @. SW[inds_ℓℓ′] += (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM * Sscaling/Wscaling;
-            end
-        end
+        #     if nfields == 3
+        #         @. SW[inds_ℓℓ′] += (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM * Sscaling/Wscaling;
+        #     end
+        # end
     end
     return M
 end

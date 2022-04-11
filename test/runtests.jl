@@ -46,6 +46,12 @@ function chebyfwd(f, r_in, r_out, nr, scalefactor = 5)
     v[1:nr]
 end
 
+function chebyfwd(f, nr, scalefactor = 5)
+    w = FastTransforms.chebyshevpoints(scalefactor * nr)
+    v = FastTransforms.chebyshevtransform(f.(w))
+    v[1:nr]
+end
+
 const P11norm = -2/√3
 
 @testset "chebyshev" begin
@@ -1643,7 +1649,7 @@ end
                     T = chebyshevT(n)
                     f = x -> ddrΔΩ(x)/g_cheby(x) * T(x)
 
-                    fc = Tcrfwd * f.(r_chebyshev);
+                    fc = chebyfwd(f, nr);
 
                     @test fc ≈ @view(ddrΔΩ_over_gM[:, n+1]) rtol=5e-4
                 end
@@ -1652,11 +1658,11 @@ end
             @testset "ddrΔΩ_over_g * DDr" begin
                 @testset for n in 0:5:nr-1
                     T = chebyshevT(n)
-                    f = x -> ddrΔΩ(x)/g_cheby(x) * (df(T, x) * (2/Δr) + ηρ_cheby(x) * T(x))
+                    f = x -> ddrΔΩ_over_g(x) * (df(T, x) * (2/Δr) + ηρ_cheby(x) * T(x))
 
-                    fc = Tcrfwd * f.(r_chebyshev);
+                    fc = chebyfwd(f, nr);
 
-                    @test fc ≈ @view(ddrΔΩ_over_g_DDrM[:, n+1]) rtol=6e-2
+                    @test fc ≈ @view(ddrΔΩ_over_g_DDrM[:, n+1]) rtol=1e-4
                 end
             end
         end
