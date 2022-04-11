@@ -585,7 +585,7 @@ function greenfn_radial_lobatto(ℓ, operators)
 end
 
 struct UniformRotGfn end
-struct RadRiffRotGfn end
+struct RadDiffRotGfn end
 
 function greenfn_cheby(::UniformRotGfn, ℓ, operators)
     (; r_chebyshev_lobatto, r_lobatto) = operators.coordinates
@@ -684,7 +684,7 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators)
     return (; rad_terms, unirot_terms, viscosity_terms)
 end
 
-function greenfn_cheby(::RadRiffRotGfn, ℓ, operators, ΔΩprofile_deriv,
+function greenfn_cheby(::RadDiffRotGfn, ℓ, operators, ΔΩprofile_deriv,
         G = greenfn_cheby(UniformRotGfn(), ℓ, operators))
 
     (; r_chebyshev_lobatto, r_lobatto) = operators.coordinates
@@ -799,10 +799,10 @@ struct LobattoChebyshev
 end
 (L::LobattoChebyshev)(A::Matrix) = L.TfGL_nr * (A .* L.normr') * L.TiGL_nr
 
-function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true, nfields = 3)
-    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields)
+function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true, nfields = 3, ν = 1e10)
+    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields, ν)
 end
-function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields)
+function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields, ν)
     r_in = r_in_frac * Rsun
     r_out = r_out_frac * Rsun
     radial_params = parameters(nr, nℓ; r_in, r_out)
@@ -870,8 +870,10 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
 
     Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out_frac)
 
-    κ = 1e10
-    κ /= Ω0*Rsun^2
+    # viscosity
+    ν /= Ω0*Rsun^2
+
+    κ = ν
     ddr_lnρT = ηρ_cheby + ηT_cheby
 
     γ = 1.64
@@ -882,10 +884,6 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
 
     Ir = I(nchebyr)
     Iℓ = I(nℓ)
-
-    # viscosity
-    ν = 1e10
-    ν /= Ω0*Rsun^2
 
     mat = x -> chebyshevmatrix(x, nr)
 
@@ -930,7 +928,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
 
     # scalings = (; Sscaling = 1, Wscaling = 1)
-    scalings = (; Sscaling = 1e5, Wscaling = 1e2)
+    scalings = (; Sscaling = 1e6, Wscaling = 5e2)
 
     constants = (; κ, ν, nfields, Ω0, scalings)
     identities = (; Ir, Iℓ)
@@ -1438,13 +1436,13 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     operators = radial_operators(nr, nℓ),
     rotation_profile = :constant)
 
-    (; nfields, scalings) = operators.constants
-    (; r) = operators.coordinates
-    (; DDr, ddr, ddrDDr) = operators.diff_operators
-    (; twoηρ_by_rM, onebyr_chebyM, ddrM) = operators.diff_operator_matrices
-    (; onebyr_cheby, onebyr2_cheby, ηρ_cheby, g_cheby, r_cheby) = operators.rad_terms
-    (; mat) = operators
-    (; Sscaling, Wscaling) = scalings
+    (; nfields, scalings) = operators.constants;
+    (; r) = operators.coordinates;
+    (; DDr, ddr, ddrDDr) = operators.diff_operators;
+    (; twoηρ_by_rM, onebyr_chebyM, ddrM) = operators.diff_operator_matrices;
+    (; onebyr_cheby, onebyr2_cheby, ηρ_cheby, g_cheby, r_cheby) = operators.rad_terms;
+    (; mat) = operators;
+    (; Sscaling, Wscaling) = scalings;
 
     VV = matrix_block(M, 1, 1, nfields)
     VW = matrix_block(M, 1, 2, nfields)
@@ -1455,63 +1453,63 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
         SW = matrix_block(M, 3, 2, nfields)
     end
 
-    ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(m; operators, rotation_profile)
+    ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(m; operators, rotation_profile);
 
-    (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv
+    (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv;
 
-    ΔΩM = mat(ΔΩ)
-    ddrΔΩM = mat(ddrΔΩ)
+    ΔΩM = mat(ΔΩ);
+    ddrΔΩM = mat(ddrΔΩ);
 
-    ddrΔΩ_over_g = ddrΔΩ / g_cheby
-    ddrΔΩ_over_gM = mat(ddrΔΩ_over_g)
-    ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr)::Tmul
-    ddrΔΩ_over_g_DDrM = mat(ddrΔΩ_over_g_DDr)
-    ddrΔΩ_plus_ΔΩddr = (ddrΔΩ + (ΔΩ * ddr)::Tmul)::Tplus
-    twoΔΩ_by_r = 2ΔΩ / r_cheby
-    two_ΔΩbyr_ηρ = twoΔΩ_by_r * ηρ_cheby
-    ΔΩ_ddrDDr = (ΔΩ * ddrDDr)::Tmul
-    ΔΩ_by_r2 = ΔΩ * onebyr2_cheby
-    ddrΔΩ_ddr_plus_2byr = (ddrΔΩ * (ddr + 2onebyr_cheby)::Tplus)::Tmul
-    ddrΔΩ_DDr = (ddrΔΩ * DDr)::Tmul
+    ddrΔΩ_over_g = ddrΔΩ / g_cheby;
+    ddrΔΩ_over_gM = mat(ddrΔΩ_over_g);
+    ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr)::Tmul;
+    ddrΔΩ_over_g_DDrM = mat(ddrΔΩ_over_g_DDr);
+    ddrΔΩ_plus_ΔΩddr = (ddrΔΩ + (ΔΩ * ddr)::Tmul)::Tplus;
+    twoΔΩ_by_r = 2ΔΩ * onebyr_cheby;
+    two_ΔΩbyr_ηρ = twoΔΩ_by_r * ηρ_cheby;
+    ΔΩ_ddrDDr = (ΔΩ * ddrDDr)::Tmul;
+    ΔΩ_by_r2 = ΔΩ * onebyr2_cheby;
+    ddrΔΩ_ddr_plus_2byr = (ddrΔΩ * (ddr + 2onebyr_cheby)::Tplus)::Tmul;
+    ddrΔΩ_DDr = (ddrΔΩ * DDr)::Tmul;
 
-    ddrΔΩDDr_plus_d2dr2ΔΩM = mat(ddrΔΩ * DDr + d2dr2ΔΩ)
+    ddrΔΩDDr_plus_d2dr2ΔΩM = mat(ddrΔΩ * DDr + d2dr2ΔΩ);
 
-    ℓs = range(m, length = nℓ)
+    ℓs = range(m, length = nℓ);
 
-    cosθ = costheta_operator(nℓ, m)
-    cosθo = OffsetArray(cosθ, ℓs, ℓs)
-    sinθdθ = sintheta_dtheta_operator(nℓ, m)
-    sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs)
-    cosθsinθdθ = (costheta_operator(nℓ + 1, m)*sintheta_dtheta_operator(nℓ + 1, m))[1:end-1, 1:end-1]
-    cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs)
-    ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs)
+    cosθ = costheta_operator(nℓ, m);
+    cosθo = OffsetArray(cosθ, ℓs, ℓs);
+    sinθdθ = sintheta_dtheta_operator(nℓ, m);
+    sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs);
+    cosθsinθdθ = (costheta_operator(nℓ + 1, m)*sintheta_dtheta_operator(nℓ + 1, m))[1:end-1, 1:end-1];
+    cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
+    ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs);
 
-    DDr_min_2byr = (DDr - 2onebyr_cheby)::Tplus
-    ΔΩ_DDr_min_2byr = (ΔΩ * DDr_min_2byr)::Tmul
-    ΔΩ_DDr = (ΔΩ * DDr)::Tmul
-    ΔΩ_by_r = ΔΩ * onebyr_cheby
+    DDr_min_2byr = (DDr - 2onebyr_cheby)::Tplus;
+    ΔΩ_DDr_min_2byr = (ΔΩ * DDr_min_2byr)::Tmul;
+    ΔΩ_DDr = (ΔΩ * DDr)::Tmul;
+    ΔΩ_by_r = ΔΩ * onebyr_cheby;
 
-    ηρ_chebyM = mat(ηρ_cheby)
-    twobyr_min_ηρM = 2onebyr_chebyM - ηρ_chebyM
+    ηρ_chebyM = mat(ηρ_cheby);
+    twobyr_min_ηρM = 2onebyr_chebyM - ηρ_chebyM;
 
-    inner_matrices = map(mat, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r))
-    (ΔΩ_by_rM, ΔΩ_DDrM, ΔΩ_DDr_min_2byrM, ddrΔΩ_plus_ΔΩddrM, twoΔΩ_by_rM) = inner_matrices
+    inner_matrices = map(mat, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r));
+    (ΔΩ_by_rM, ΔΩ_DDrM, ΔΩ_DDr_min_2byrM, ddrΔΩ_plus_ΔΩddrM, twoΔΩ_by_rM) = inner_matrices;
 
-    VWterm, WVterm = (zeros(nr, nr) for i in 1:2)
+    VWterm, WVterm = (zeros(nr, nr) for i in 1:2);
 
     @views for ℓ in ℓs
         # numerical green function
-        G = greenfn_cheby(RadRiffRotGfn(), ℓ, operators, ΔΩprofile_deriv)
+        G = greenfn_cheby(RadDiffRotGfn(), ℓ, operators, ΔΩprofile_deriv);
 
-        (; J, J_ηρbyr) = G.unirot_terms
+        (; J, J_ηρbyr) = G.unirot_terms;
 
         (; J_ηρbyr_ΔΩ, twoddr_plus_3ηρr_J_ddrΔΩ,
             J_twoΔΩ_by_r, J_ΔΩ, J_ddrΩ, J_d2dr2ΔΩ,
             J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ,
             J_ddrΩ_ηρ, twoddr_plus_3ηρr_J,
-            J_times_2byr_min_ηρ) = G.diffrot_terms
+            J_times_2byr_min_ηρ) = G.diffrot_terms;
 
-        inds_ℓℓ = blockinds((m, nr), ℓ, ℓ)
+        inds_ℓℓ = blockinds((m, nr), ℓ, ℓ);
 
         ℓℓp1 = ℓ * (ℓ + 1)
         two_over_ℓℓp1 = 2/ℓℓp1
@@ -1519,7 +1517,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
         @. VV[inds_ℓℓ] += m * two_over_ℓℓp1_min_1 * ΔΩM
 
-        J_ddrΔΩDDr_plus_d2dr2ΔΩM = J_ddrΩ * ddrM .+ J_ddrΩ_ηρ .+ J_d2dr2ΔΩ
+        J_ddrΔΩDDr_plus_d2dr2ΔΩM = J_ddrΩ * ddrM .+ J_ddrΩ_ηρ .+ J_d2dr2ΔΩ;
 
         @. WW[inds_ℓℓ] += m * (two_over_ℓℓp1_min_1 * ΔΩM - 2Rsun^2 * J_ηρbyr_ΔΩ +
             Rsun^2 * J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ +
@@ -1546,7 +1544,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
                     ) * Wscaling
 
             if nfields == 3
-                @. SV[inds_ℓℓ′] -= (Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM * Sscaling
+                @. SV[inds_ℓℓ′] -= (Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM * Sscaling;
             end
         end
 
@@ -1554,7 +1552,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
             if nfields == 3
-                @. SW[inds_ℓℓ′] += (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM * Sscaling/Wscaling
+                @. SW[inds_ℓℓ′] += (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM * Sscaling/Wscaling;
             end
         end
     end
@@ -1820,6 +1818,15 @@ function compute_matrix_scales(M, nfields)
     blockscalesreal
 end
 
+function balance_matrix!(M, nfields)
+    scales = compute_matrix_scales(M, nfields)
+    for colind in 1:nfields, rowind in 1:nfields
+        Mv = matrix_block(M, rowind, colind, nfields)
+        Mv .*= scales[rowind, colind]
+    end
+    scales
+end
+
 function constrained_eigensystem(M, operators, constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints), timer = TimerOutput())
 
@@ -1827,12 +1834,8 @@ function constrained_eigensystem(M, operators, constraints = constraintmatrix(op
     (; ZC, nfields) = constraints
     M = _maybetrimM(M, nfields, nparams)
     (; M_constrained, MZCcache) = cache
-    # balance matrix
-    scales = compute_matrix_scales(M, nfields)
-    for colind in 1:nfields, rowind in 1:nfields
-        Mv = matrix_block(M, rowind, colind, nfields)
-        Mv .*= scales[rowind, colind]
-    end
+    scales = ones(nfields, nfields)
+    scales = balance_matrix!(M, nfields)
     #= not thread safe =#
     @timeit timer "basis" mul!(M_constrained, permutedims(ZC), mul!(MZCcache, M, ZC))
     # M_constrained = permutedims(ZC) * M * ZC # thread-safe but allocating
@@ -2066,8 +2069,19 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     eqfilter, θ, fields
 end
 
-function nodes_filter(fields, θ, nnodesmax = 5; filterfieldpowercutoff = 1e-4)
+function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
+    nℓ = operators.radial_params.nℓ,
+    Plcosθ = zeros(range(m, length=nℓ)),
+    filterfieldpowercutoff = 1e-4,
+    nnodesmax = 7)
+
     nodesfilter = true
+
+    (; nparams) = operators.radial_params
+    (; nfields) = operators.constants
+    fields = filterfields(VWSinv, v, nparams, nfields; filterfieldpowercutoff)
+
+    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators; nℓ, Plcosθ)
     eqind = argmin(abs.(θ .- pi/2))
 
     for X in fields
@@ -2125,7 +2139,8 @@ function filterfn(λ, v, m, M, operators, additional_params; kw...)
     end
 
     if get(filters, :nodes, true)
-        f7 = nodes_filter(fields, θ, nnodesmax)
+        f7 = nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
+                nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax)
         f7 || return false
     end
 
@@ -2156,7 +2171,7 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
 end
 
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
-    M::AbstractMatrix, m::Integer;
+    M::AbstractMatrix, scales::Matrix, m::Integer;
     operators,
     constraints = constraintmatrix(operators),
     filtercache = allocate_filter_caches(m; operators, constraints),
@@ -2216,8 +2231,6 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
         W = @view v[nparams .+ (1:nparams), :]
         S = @view v[2nparams .+ (1:nparams), :]
 
-        scales = compute_matrix_scales(M, operators.constants.nfields)
-
         W .*= scales[1, 2]
         S .*= scales[1, 3]
 
@@ -2259,7 +2272,8 @@ function filter_eigenvalues(λ::AbstractVector{<:AbstractVector},
             M = Ms[Threads.threadid()]
             Mfn(M, nr, nℓ, m; operators)
             _M = _maybetrimM(M, nfields, nparams)
-            filter_eigenvalues(λm, vm, _M, m; operators, constraints, kw...)
+            scales = balance_matrix!(_M, nfields)
+            filter_eigenvalues(λm, vm, _M, scales, m; operators, constraints, kw...)
         end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
     )
     first.(λv), last.(λv)
@@ -2278,8 +2292,8 @@ function filter_eigenvalues(f, mr::AbstractVector; #= inplace function =#
         Folds.map(mr) do m
             M = Ms[Threads.threadid()]
             cache = caches[Threads.threadid()]
-            λm, vm, _M = f(M, nr, nℓ, m; operators, constraints, cache, kw...)
-            filter_eigenvalues(λm, vm, _M, m; operators, constraints, kw...)
+            X = f(M, nr, nℓ, m; operators, constraints, cache, kw...)
+            filter_eigenvalues(X..., m; operators, constraints, kw...)
         end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
     )
     first.(λv), last.(λv)
@@ -2404,6 +2418,6 @@ function eigenfunction_n_theta!(VWSinv, F, v, m, operators;
 end
 
 # precompile
-precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int))
+precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64))
 
 end # module

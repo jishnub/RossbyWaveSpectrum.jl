@@ -1304,8 +1304,8 @@ end
     (; r_in, r_out, Δr) = operators.radial_params
     (; BC) = constraints;
     @testset for m in [1, 10, 20]
-        λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(nr, nℓ, m; operators, constraints);
-        λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
+        λu, vu, Mu, scales = RossbyWaveSpectrum.uniform_rotation_spectrum(nr, nℓ, m; operators, constraints);
+        λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, scales, m;
             operators, constraints, Δl_cutoff = 7, n_cutoff = 9,
             eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
             scale_eigenvectors = false);
@@ -1544,5 +1544,122 @@ end
                 end
             end
         end
+
+        @testset "matrix convergence with resolution" begin
+            nr, nℓ = 45, 2
+            m = 5
+            operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+            (; nfields) = operators.constants;
+            M1 = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m; operators, rotation_profile = :radial_linear);
+            operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
+            M2 = RossbyWaveSpectrum.differential_rotation_matrix(nr+5, nℓ, m; operators = operators2, rotation_profile = :radial_linear);
+            operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
+            M3 = RossbyWaveSpectrum.differential_rotation_matrix(nr+5, nℓ+5, m; operators = operators3, rotation_profile = :radial_linear);
+
+            function matrix_subsample(M, nr_M, nr, nℓ, nfields)
+                nparams = nr*nℓ
+                M_subsample = zeros(eltype(M), nfields*nparams, nfields*nparams)
+                for colind in 1:nfields, rowind in 1:nfields
+                    Mv = matrix_block(M, rowind, colind, nfields)
+                    M_subsample_v = matrix_block(M_subsample, rowind, colind, nfields)
+                    for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
+                        indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
+                        indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
+                        @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
+                    end
+                end
+                return M_subsample
+            end
+
+            @test matrix_subsample(M1, nr, nr, nℓ, nfields) == M1;
+            M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nfields);
+            @testset for rowind in 1:nfields, colind in 1:nfields
+                M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields);
+                M1v = matrix_block(M1, rowind, colind, nfields);
+                @testset "real" begin
+                    if rowind == 3 && colind == 2
+                        @test real(M2_ssv) ≈ real(M1v) rtol=3e-3
+                    else
+                        @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
+                    end
+                end
+                @testset "imag" begin
+                    if rowind == colind == 2
+                        @test imag(M2_ssv) ≈ imag(M1v) rtol=2e-3
+                    else
+                        @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
+                    end
+                end
+            end
+
+            M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nfields);
+            @testset for rowind in 1:nfields, colind in 1:nfields
+                M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
+                M1v = matrix_block(M1, rowind, colind, nfields)
+                @testset "real" begin
+                    if rowind == 3 && colind == 2
+                        @test real(M3_ssv) ≈ real(M1v) rtol=3e-3
+                    else
+                        @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
+                    end
+                end
+                @testset "imag" begin
+                    if rowind == colind == 2
+                        @test imag(M3_ssv) ≈ imag(M1v) rtol=2e-3
+                    else
+                        @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
+                    end
+                end
+            end
+        end
+
+        @testset "S terms" begin
+            nr, nℓ = 50, 2
+            m = 5
+
+            operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+            (; Δr) = operators.radial_params;
+            (; r_chebyshev) = operators.coordinates;
+            (; g_cheby) = operators.rad_terms;
+            (; Tcrfwd) = operators.transforms;
+            (; mat) = operators;
+
+            ΔΩprofile_deriv =
+                RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
+                    m; operators, rotation_profile = :linear);
+
+            (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv;
+
+            ΔΩM = mat(ΔΩ);
+            ddrΔΩM = mat(ddrΔΩ);
+
+            ddrΔΩ_over_g = ddrΔΩ / g_cheby;
+            ddrΔΩ_over_gM = mat(ddrΔΩ_over_g);
+            ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr);
+            ddrΔΩ_over_g_DDrM = mat(ddrΔΩ_over_g_DDr);
+
+            @testset "ddrΔΩ_over_g" begin
+                @testset for n in 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> ddrΔΩ(x)/g_cheby(x) * T(x)
+
+                    fc = Tcrfwd * f.(r_chebyshev);
+
+                    @test fc ≈ @view(ddrΔΩ_over_gM[:, n+1]) rtol=5e-4
+                end
+            end
+
+            @testset "ddrΔΩ_over_g * DDr" begin
+                @testset for n in 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> ddrΔΩ(x)/g_cheby(x) * (df(T, x) * (2/Δr) + ηρ_cheby(x) * T(x))
+
+                    fc = Tcrfwd * f.(r_chebyshev);
+
+                    @test fc ≈ @view(ddrΔΩ_over_g_DDrM[:, n+1]) rtol=6e-2
+                end
+            end
+        end
     end
 end
+
