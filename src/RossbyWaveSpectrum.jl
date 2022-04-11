@@ -1022,8 +1022,6 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     JCℓ′ = zeros(nr, nr)
     Jddr = zeros(nr, nr)
 
-    ℓs = range(m, length = nℓ)
-
     M .= 0
 
     VV = matrix_block(M, 1, 1, nfields)
@@ -1037,18 +1035,19 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         SS = matrix_block(M, 3, 3, nfields)
     end
 
-    cosθ = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs)
-    sinθdθ = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
+    ℓs = range(m, length = nℓ)
+    cosθ = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs);
+    sinθdθ = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs);
 
-    onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby)
+    onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby);
 
-    onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp)
-    ∇r2_plus_ddr_lnρT_ddr = d2dr2 + 2onebyr_cheby*ddr + ddr_lnρT * ddr
-    κ_∇r2_plus_ddr_lnρT_ddrM = κ * chebyshevmatrix(∇r2_plus_ddr_lnρT_ddr, nr, 3)
-    κ_by_r2M = κ .* onebyr2_chebyM
+    onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp);
+    ∇r2_plus_ddr_lnρT_ddr = d2dr2 + 2onebyr_cheby*ddr + ddr_lnρT * ddr;
+    κ_∇r2_plus_ddr_lnρT_ddrM = κ * chebyshevmatrix(∇r2_plus_ddr_lnρT_ddr, nr, 3);
+    κ_by_r2M = κ .* onebyr2_chebyM;
 
-    SWterm = zeros(nr, nr)
-    SSterm = zeros(nr, nr)
+    SWterm = zeros(nr, nr);
+    SSterm = zeros(nr, nr);
 
     @views for ℓ in ℓs
         # numerical green function
@@ -1067,7 +1066,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         uniform_rotation_matrix_terms_outer!((SWterm, SSterm),
                 (ℓ, m), nchebyr,
                 (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
-                    onebyr2_cheby_ddr_S0_by_cpM), Ω0)
+                    onebyr2_cheby_ddr_S0_by_cpM), Ω0);
 
         diagterm = 2m/ℓℓp1
 
@@ -1789,6 +1788,38 @@ end
 
 _maybetrimM(M, nfields, nparams) = nfields == 3 ? M : M[1:(nfields*nparams), 1:(nfields*nparams)]
 
+function compute_matrix_scales(M, nfields)
+    blockscalesreal = ones(nfields, nfields)
+
+    Mrmax = zeros(nfields, nfields)
+    for colind in 1:nfields, rowind in 1:nfields
+        Mv = matrix_block(M, rowind, colind, nfields)
+        Mrmax_i = maximum(abs∘real, Mv)
+        Mrmax[rowind, colind] = Mrmax_i
+    end
+    VW_WV_min, VW_WV_max = minmax(Mrmax[1, 2], Mrmax[2, 1])
+    Wscale = sqrt(VW_WV_max / VW_WV_min)
+    if Mrmax[1, 2] == VW_WV_max
+        blockscalesreal[1, 2] = 1/Wscale
+        blockscalesreal[2, 1] = Wscale
+    else
+        blockscalesreal[1, 2] = Wscale
+        blockscalesreal[2, 1] = 1/Wscale
+    end
+
+    SW_WS_min, SW_WS_max = minmax(Mrmax[3, 2], Mrmax[2, 3])
+    Sscale = sqrt(SW_WS_max / SW_WS_min)
+    if Mrmax[2, 3] == SW_WS_max
+        blockscalesreal[2, 3] = 1/Sscale
+        blockscalesreal[3, 2] = Sscale
+    else
+        blockscalesreal[2, 3] = Sscale
+        blockscalesreal[3, 2] = 1/Sscale
+    end
+
+    blockscalesreal
+end
+
 function constrained_eigensystem(M, operators, constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints), timer = TimerOutput())
 
@@ -1796,12 +1827,18 @@ function constrained_eigensystem(M, operators, constraints = constraintmatrix(op
     (; ZC, nfields) = constraints
     M = _maybetrimM(M, nfields, nparams)
     (; M_constrained, MZCcache) = cache
+    # balance matrix
+    scales = compute_matrix_scales(M, nfields)
+    for colind in 1:nfields, rowind in 1:nfields
+        Mv = matrix_block(M, rowind, colind, nfields)
+        Mv .*= scales[rowind, colind]
+    end
     #= not thread safe =#
     @timeit timer "basis" mul!(M_constrained, permutedims(ZC), mul!(MZCcache, M, ZC))
     # M_constrained = permutedims(ZC) * M * ZC # thread-safe but allocating
     @timeit timer "eigen" λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(M_constrained)
     @timeit timer "projectback" v = ZC * w
-    λ, v, M
+    λ, v, M, scales
 end
 
 function uniform_rotation_spectrum(nr, nℓ, m; operators,
@@ -2175,10 +2212,19 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
 
     # re-apply scalings
     if get(kw, :scale_eigenvectors, true)
-        v[1:nparams, :] .*= Rsun
+        V = @view v[1:nparams, :]
+        W = @view v[nparams .+ (1:nparams), :]
+        S = @view v[2nparams .+ (1:nparams), :]
+
+        scales = compute_matrix_scales(M, operators.constants.nfields)
+
+        W .*= scales[1, 2]
+        S .*= scales[1, 3]
+
+        V .*= Rsun
         (; Wscaling, Sscaling) = operators.constants.scalings
-        v[nparams .+ (1:nparams), :] .*= -im * Rsun^2 / Wscaling
-        v[2nparams .+ (1:nparams), :] ./= operators.constants.Ω0 * Rsun * Sscaling
+        W .*= -im * Rsun^2 / Wscaling
+        S ./= operators.constants.Ω0 * Rsun * Sscaling
     end
 
     λ, v
