@@ -416,13 +416,6 @@ function constraintnullspacematrix(M)
     return collect(Q)[:, end-(n-m)+1:end]
 end
 
-function constrained_matmul_cache(constraints)
-    (; ZC) = constraints
-    MZCcache = zeros(ComplexF64, size(ZC))
-    M_constrained = zeros(ComplexF64, size(ZC, 2), size(ZC, 2))
-    return (; MZCcache, M_constrained)
-end
-
 function parameters(nr, nℓ; r_in = 0.7Rsun, r_out = 0.98Rsun)
     nchebyr = nr
     r_mid = (r_in + r_out) / 2
@@ -1786,6 +1779,46 @@ end
 
 _maybetrimM(M, nfields, nparams) = nfields == 3 ? M : M[1:(nfields*nparams), 1:(nfields*nparams)]
 
+function constrained_matmul_cache(constraints)
+    (; ZC) = constraints
+    MZCcache = zeros(size(ZC))
+    Mreimtemp = zeros(size(ZC, 1), size(ZC, 1))
+    M_constrained_reim = zeros(size(ZC, 2), size(ZC, 2))
+    M_constrained = zeros(ComplexF64, size(ZC, 2), size(ZC, 2))
+    return (; MZCcache, M_constrained, Mreimtemp, M_constrained_reim)
+end
+
+function compute_constrained_matrix(M, constraints,
+        cache = constrained_matmul_cache(constraints),
+        timer = TimerOutput())
+
+    (; M_constrained, MZCcache, Mreimtemp, M_constrained_reim) = cache
+    (; ZC, nfields) = constraints
+    #= not thread-safe if cache is preallocated =#
+    @timeit timer "basis" begin
+        for i in eachindex(M)
+            Mr = real(M[i])
+            Mreimtemp[i] = Mr
+        end
+        mul!(M_constrained_reim, ZC', mul!(MZCcache, Mreimtemp, ZC))
+        for i in eachindex(M_constrained)
+            M_constrained[i] = M_constrained_reim[i]
+        end
+        for i in eachindex(M)
+            Mr = imag(M[i])
+            Mreimtemp[i] = Mr
+        end
+        mul!(M_constrained_reim, ZC', mul!(MZCcache, Mreimtemp, ZC))
+        for i in eachindex(M_constrained)
+            M_constrained[i] += im*M_constrained_reim[i]
+        end
+        M_constrained
+    end
+    # thread-safe version but allocating
+    # M_constrained = Complex.(ZC' * real(M) * ZC, ZC' * imag(M) * ZC)
+    return M_constrained
+end
+
 function compute_matrix_scales(M, nfields)
     blockscalesreal = ones(nfields, nfields)
 
@@ -1827,20 +1860,25 @@ function balance_matrix!(M, nfields)
     scales
 end
 
+function realmatcomplexmatmul(A, B)
+    temp = real(B)
+    R = A * temp
+    temp .= imag.(B)
+    I = A * temp
+    Complex.(R, I)
+end
+
 function constrained_eigensystem(M, operators, constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints), timer = TimerOutput())
 
     (; nparams) = operators.radial_params
     (; ZC, nfields) = constraints
     M = _maybetrimM(M, nfields, nparams)
-    (; M_constrained, MZCcache) = cache
     scales = ones(nfields, nfields)
     scales = balance_matrix!(M, nfields)
-    #= not thread safe =#
-    @timeit timer "basis" mul!(M_constrained, permutedims(ZC), mul!(MZCcache, M, ZC))
-    # M_constrained = permutedims(ZC) * M * ZC # thread-safe but allocating
+    M_constrained = compute_constrained_matrix(M, constraints, cache, timer)
     @timeit timer "eigen" λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(M_constrained)
-    @timeit timer "projectback" v = ZC * w
+    @timeit timer "projectback" v = realmatcomplexmatmul(ZC, w)
     λ, v, M, scales
 end
 
@@ -2188,7 +2226,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     ΔΩ_by_Ω_high = ΔΩ_by_Ω_low,
     θ_cutoff = deg2rad(75),
     equator_power_cutoff_frac = 0.3,
-    nnodesmax = 5,
+    nnodesmax = 10,
     filterfieldpowercutoff = 1e-4,
     eigenvalue_filter = true,
     sphericalharmonic_filter = true,
