@@ -1,6 +1,7 @@
 module RossbyWaveSpectrum
 
 using ApproxFun
+using BitFlags
 using Dierckx
 using FastGaussQuadrature
 using FastTransforms
@@ -19,6 +20,13 @@ using SimpleDelimitedFiles: readdlm
 using TimerOutputs
 
 export datadir
+export F_Eigenvalue
+export F_Eigensystem
+export F_SphHarm
+export F_Chebyshev
+export F_BC
+export F_Spatial
+export F_Nodes
 
 const SCRATCH = Ref("")
 const DATADIR = Ref("")
@@ -351,8 +359,8 @@ function constraintmatrix(operators; entropy_outer_boundary = :neumann)
     MSn = zero(MWn)
     MSno = OffsetArray(MSn, :, 0:nr-1)
 
-    (; nfields) = operators.constants
-    BC = zeros(nfields * nconstraints, nfields * nparams)
+    (; nvariables) = operators.constants
+    BC = zeros(nvariables * nconstraints, nvariables * nparams)
 
     # constraints on V, Robin
     for n = 0:nr-1
@@ -385,7 +393,7 @@ function constraintmatrix(operators; entropy_outer_boundary = :neumann)
         MSno[2, n] = n^2
     end
 
-    fieldmatrices = [MVn, MWn, MSn][1:nfields]
+    fieldmatrices = [MVn, MWn, MSn][1:nvariables]
     for ℓind = 1:nℓ
         indstart = (ℓind - 1)*nr + 1
         indend = (ℓind - 1)*nr + nr
@@ -399,7 +407,7 @@ function constraintmatrix(operators; entropy_outer_boundary = :neumann)
     # ZC = constraintnullspacematrix(BC)
     ZC = nullspace(BC)
 
-    (; BC, ZC, nfields)
+    (; BC, ZC, nvariables)
 end
 
 """
@@ -791,10 +799,10 @@ struct LobattoChebyshev
 end
 (L::LobattoChebyshev)(A::Matrix) = L.TfGL_nr * (A .* L.normr') * L.TiGL_nr
 
-function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true, nfields = 3, ν = 1e10)
-    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields, ν)
+function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true, nvariables = 3, ν = 1e10)
+    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν)
 end
-function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields, ν)
+function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν)
     r_in = r_in_frac * Rsun
     r_out = r_out_frac * Rsun
     radial_params = parameters(nr, nℓ; r_in, r_out)
@@ -922,7 +930,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nfields
     # scalings = (; Sscaling = 1, Wscaling = 1)
     scalings = (; Sscaling = 1e6, Wscaling = 5e2)
 
-    constants = (; κ, ν, nfields, Ω0, scalings)
+    constants = (; κ, ν, nvariables, Ω0, scalings)
     identities = (; Ir, Iℓ)
     coordinates = (; r, r_chebyshev, r_chebyshev_lobatto, r_lobatto)
 
@@ -972,8 +980,8 @@ end
 
 function uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
     nparams = nr * nℓ
-    nfields = operators.constants.nfields
-    M = zeros(ComplexF64, nfields * nparams, nfields * nparams)
+    nvariables = operators.constants.nvariables
+    M = zeros(ComplexF64, nvariables * nparams, nvariables * nparams)
     uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     return M
 end
@@ -992,7 +1000,7 @@ function uniform_rotation_matrix_terms_outer!((SWterm, SSterm),
 end
 
 function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
-    (; nfields, Ω0, scalings) = operators.constants;
+    (; nvariables, Ω0, scalings) = operators.constants;
     (; nchebyr, r_out) = operators.radial_params;
     (; ddr, d2dr2) = operators.diff_operators;
     (; onebyr2_cheby, onebyr_cheby, ddr_lnρT, κ,
@@ -1014,15 +1022,15 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
 
     M .= 0
 
-    VV = matrix_block(M, 1, 1, nfields)
-    VW = matrix_block(M, 1, 2, nfields)
-    WV = matrix_block(M, 2, 1, nfields)
-    WW = matrix_block(M, 2, 2, nfields)
+    VV = matrix_block(M, 1, 1, nvariables)
+    VW = matrix_block(M, 1, 2, nvariables)
+    WV = matrix_block(M, 2, 1, nvariables)
+    WW = matrix_block(M, 2, 2, nvariables)
     # the following are only valid if S is included
-    if nfields === 3
-        WS = matrix_block(M, 2, 3, nfields)
-        SW = matrix_block(M, 3, 2, nfields)
-        SS = matrix_block(M, 3, 3, nfields)
+    if nvariables === 3
+        WS = matrix_block(M, 2, 3, nvariables)
+        SW = matrix_block(M, 3, 2, nvariables)
+        SS = matrix_block(M, 3, 3, nvariables)
     end
 
     ℓs = range(m, length = nℓ)
@@ -1069,7 +1077,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
         WWblockdiag_diag .= diagterm
         @. WW[blockdiaginds_ℓ] -= Rsun^2 * 2m * (_greenfn ? J_ηρbyr : ηρ_by_rM)
 
-        if nfields == 3
+        if nvariables == 3
             @. WS[blockdiaginds_ℓ] = -(_greenfn ? gM : J_g) / (Ω0^2 * Rsun)  * Wscaling/Sscaling
             @. SW[blockdiaginds_ℓ] = SWterm * Sscaling/Wscaling
             @. SS[blockdiaginds_ℓ] = -im * SSterm
@@ -1107,10 +1115,10 @@ function viscosity_terms!(M, nr, nℓ, m; operators, _greenfn = true)
     (; onebyr_cheby, onebyr2_cheby, onebyr3_cheby, ηρ_cheby, r_cheby,
         ηρ_by_r, ηρ_by_r2, ηρ_by_r3, ηρ2_by_r2) = operators.rad_terms;
     (; mat) = operators;
-    (; ν, nfields) = operators.constants;
+    (; ν, nvariables) = operators.constants;
 
-    VV = matrix_block(M, 1, 1, nfields)
-    WW = matrix_block(M, 2, 2, nfields)
+    VV = matrix_block(M, 1, 1, nvariables)
+    WW = matrix_block(M, 2, 2, nvariables)
 
     ℓs = range(m, length = nℓ)
 
@@ -1285,18 +1293,18 @@ function laplacian_operator(nℓ, m)
     Diagonal(@. -ℓs * (ℓs + 1))
 end
 
-function matrix_block(M, rowind, colind, nfields = 3)
-    nparams = div(size(M, 1), nfields)
+function matrix_block(M, rowind, colind, nvariables = 3)
+    nparams = div(size(M, 1), nvariables)
     inds1 = (rowind - 1) * nparams .+ (1:nparams)
     inds2 = (colind - 1) * nparams .+ (1:nparams)
     inds = CartesianIndices((inds1, inds2))
     @view M[inds]
 end
 
-matrix_block_maximum(f, M, nfields = 3) = [maximum(f, matrix_block(M, i, j)) for i in 1:nfields, j in 1:nfields]
+matrix_block_maximum(f, M, nvariables = 3) = [maximum(f, matrix_block(M, i, j)) for i in 1:nvariables, j in 1:nvariables]
 
 function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radial_operators(nr, nℓ))
-    (; nfields, scalings) = operators.constants
+    (; nvariables, scalings) = operators.constants
     (; ddrDDrM, ddrM, DDrM, onebyr_chebyM,
         onebyr2_chebyM, twoηρ_by_rM, ddr_plus_2byrM) = operators.diff_operator_matrices
 
@@ -1305,10 +1313,10 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m; operators = radia
     (; mat) = operators
     (; Wscaling) = scalings
 
-    VV = matrix_block(M, 1, 1, nfields)
-    VW = matrix_block(M, 1, 2, nfields)
-    WV = matrix_block(M, 2, 1, nfields)
-    WW = matrix_block(M, 2, 2, nfields)
+    VV = matrix_block(M, 1, 1, nvariables)
+    VW = matrix_block(M, 1, 2, nvariables)
+    WV = matrix_block(M, 2, 1, nvariables)
+    WW = matrix_block(M, 2, 2, nvariables)
 
     ΔΩ_by_Ω0 = 0.02
 
@@ -1428,7 +1436,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     operators = radial_operators(nr, nℓ),
     rotation_profile = :constant)
 
-    (; nfields, scalings) = operators.constants;
+    (; nvariables, scalings) = operators.constants;
     (; r) = operators.coordinates;
     (; DDr, ddr, ddrDDr) = operators.diff_operators;
     (; twoηρ_by_rM, onebyr_chebyM, ddrM) = operators.diff_operator_matrices;
@@ -1436,13 +1444,13 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     (; mat) = operators;
     (; Sscaling, Wscaling) = scalings;
 
-    VV = matrix_block(M, 1, 1, nfields)
-    VW = matrix_block(M, 1, 2, nfields)
-    WV = matrix_block(M, 2, 1, nfields)
-    WW = matrix_block(M, 2, 2, nfields)
-    if nfields === 3
-        SV = matrix_block(M, 3, 1, nfields)
-        SW = matrix_block(M, 3, 2, nfields)
+    VV = matrix_block(M, 1, 1, nvariables)
+    VW = matrix_block(M, 1, 2, nvariables)
+    WV = matrix_block(M, 2, 1, nvariables)
+    WW = matrix_block(M, 2, 2, nvariables)
+    if nvariables === 3
+        SV = matrix_block(M, 3, 1, nvariables)
+        SW = matrix_block(M, 3, 2, nvariables)
     end
 
     ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(m; operators, rotation_profile);
@@ -1535,7 +1543,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
                         ∇²_sinθdθ_ℓℓ′ * J_twoΔΩ_by_r
                     ) * Wscaling
 
-            # if nfields == 3
+            # if nvariables == 3
             #     @. SV[inds_ℓℓ′] -= (Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM * Sscaling;
             # end
         end
@@ -1543,7 +1551,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
         # for ℓ′ in intersect(ℓs, ℓ-2:2:ℓ+2)
         #     inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
-        #     if nfields == 3
+        #     if nvariables == 3
         #         @. SW[inds_ℓℓ′] += (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM * Sscaling/Wscaling;
         #     end
         # end
@@ -1594,7 +1602,7 @@ function solar_differential_rotation_terms!(M, nr, nℓ, m;
     operators = radial_operators(nr, nℓ),
     rotation_profile = :constant)
 
-    (; nfields) = operators.constants
+    (; nvariables) = operators.constants
     (; Iℓ, Ir) = operators.identities
     (; ddr, DDr, d2dr2, rddr, r2d2dr2, DDr_minus_2byr) = operators.diff_operators
     (; Tcrfwd, Tcrinv) = operators.transforms
@@ -1610,12 +1618,12 @@ function solar_differential_rotation_terms!(M, nr, nℓ, m;
     invbig_SF = kron(PLMinv, Tcrinv)
     spectralop = SpectralOperatorForm(fwdbig_SF, invbig_SF)
 
-    VV = matrix_block(M, 1, 1, nfields)
-    VW = matrix_block(M, 1, 2, nfields)
-    WV = matrix_block(M, 2, 1, nfields)
-    WW = matrix_block(M, 2, 2, nfields)
-    SV = matrix_block(M, 3, 1, nfields)
-    SW = matrix_block(M, 3, 2, nfields)
+    VV = matrix_block(M, 1, 1, nvariables)
+    VW = matrix_block(M, 1, 2, nvariables)
+    WV = matrix_block(M, 2, 1, nvariables)
+    WW = matrix_block(M, 2, 2, nvariables)
+    SV = matrix_block(M, 3, 1, nvariables)
+    SW = matrix_block(M, 3, 2, nvariables)
 
     # this is somewhat arbitrary, as we don't know the maximum ℓ of Ω before reading it in
     ntheta = ntheta_ℓmax(nℓ, m)
@@ -1776,7 +1784,7 @@ function differential_rotation_matrix!(M, nr, nℓ, m; rotation_profile, operato
     return M
 end
 
-_maybetrimM(M, nfields, nparams) = nfields == 3 ? M : M[1:(nfields*nparams), 1:(nfields*nparams)]
+_maybetrimM(M, nvariables, nparams) = nvariables == 3 ? M : M[1:(nvariables*nparams), 1:(nvariables*nparams)]
 
 function constrained_matmul_cache(constraints)
     (; ZC) = constraints
@@ -1792,7 +1800,7 @@ function compute_constrained_matrix(M, constraints,
         timer = TimerOutput())
 
     (; M_constrained, MZCcache, Mreimtemp, M_constrained_reim) = cache
-    (; ZC, nfields) = constraints
+    (; ZC, nvariables) = constraints
     #= not thread-safe if cache is preallocated =#
     @timeit timer "basis" begin
         for i in eachindex(M)
@@ -1818,12 +1826,12 @@ function compute_constrained_matrix(M, constraints,
     return M_constrained
 end
 
-function compute_matrix_scales(M, nfields)
-    blockscalesreal = ones(nfields, nfields)
+function compute_matrix_scales(M, nvariables)
+    blockscalesreal = ones(nvariables, nvariables)
 
-    Mrmax = zeros(nfields, nfields)
-    for colind in 1:nfields, rowind in 1:nfields
-        Mv = matrix_block(M, rowind, colind, nfields)
+    Mrmax = zeros(nvariables, nvariables)
+    for colind in 1:nvariables, rowind in 1:nvariables
+        Mv = matrix_block(M, rowind, colind, nvariables)
         Mrmax_i = maximum(abs∘real, Mv)
         Mrmax[rowind, colind] = Mrmax_i
     end
@@ -1847,16 +1855,15 @@ function compute_matrix_scales(M, nfields)
         blockscalesreal[3, 2] = 1/Sscale
     end
 
-    blockscalesreal
+    (; Wscaling = blockscalesreal[2, 1], Sscaling = blockscalesreal[3, 1])
 end
 
-function balance_matrix!(M, nfields)
-    scales = compute_matrix_scales(M, nfields)
-    for colind in 1:nfields, rowind in 1:nfields
-        Mv = matrix_block(M, rowind, colind, nfields)
+function balance_matrix!(M, nvariables, scales)
+    for colind in 1:nvariables, rowind in 1:nvariables
+        Mv = matrix_block(M, rowind, colind, nvariables)
         Mv .*= scales[rowind, colind]
     end
-    scales
+    return nothing
 end
 
 function realmatcomplexmatmul(A, B)
@@ -1868,22 +1875,34 @@ function realmatcomplexmatmul(A, B)
 end
 
 function constrained_eigensystem(M, operators, constraints = constraintmatrix(operators),
-    cache = constrained_matmul_cache(constraints), timer = TimerOutput())
+    cache = constrained_matmul_cache(constraints), timer = TimerOutput();
+    rebalance_matrix = false,
+    scalings = (; Wscaling = 1, Sscaling = 1),
+    )
 
     (; nparams) = operators.radial_params
-    (; ZC, nfields) = constraints
-    M = _maybetrimM(M, nfields, nparams)
-    scales = ones(nfields, nfields)
-    scales = balance_matrix!(M, nfields)
+    (; ZC, nvariables) = constraints
+    M = _maybetrimM(M, nvariables, nparams)
+    (; Wscaling, Sscaling) = scalings
+    scales = [
+        1               1/Wscaling              1/Sscaling
+        Wscaling        1                       Wscaling/Sscaling
+        Sscaling        Sscaling/Wscaling           1
+    ]
+    if rebalance_matrix
+        balance_matrix!(M, nvariables, scales)
+    end
     M_constrained = compute_constrained_matrix(M, constraints, cache, timer)
     @timeit timer "eigen" λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(M_constrained)
     @timeit timer "projectback" v = realmatcomplexmatmul(ZC, w)
-    λ, v, M, scales
+    λ, v, M
 end
 
 function uniform_rotation_spectrum(nr, nℓ, m; operators,
     constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints),
+    rebalance_matrix = false,
+    scalings = (; Wscaling = 1, Sscaling = 1),
     kw...)
 
     rp = operators.radial_params
@@ -1892,7 +1911,7 @@ function uniform_rotation_spectrum(nr, nℓ, m; operators,
     to = TimerOutput()
 
     @timeit to "matrix" M = uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; rebalance_matrix, scalings)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -1901,6 +1920,8 @@ end
 function uniform_rotation_spectrum!(M, nr, nℓ, m; operators,
     constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints),
+    rebalance_matrix = false,
+    scalings = (; Wscaling = 1, Sscaling = 1),
     kw...)
 
     rp = operators.radial_params
@@ -1909,7 +1930,7 @@ function uniform_rotation_spectrum!(M, nr, nℓ, m; operators,
     to = TimerOutput()
 
     @timeit to "matrix" uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; rebalance_matrix, scalings)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -1938,6 +1959,8 @@ function differential_rotation_spectrum(nr, nℓ, m;
     rotation_profile, operators,
     constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints),
+    rebalance_matrix = false,
+    scalings = (; Wscaling = 1, Sscaling = 1),
     kw...)
 
     rp = operators.radial_params
@@ -1946,7 +1969,7 @@ function differential_rotation_spectrum(nr, nℓ, m;
     to = TimerOutput()
 
     @timeit to "matrix" M = differential_rotation_matrix(nr, nℓ, m; operators, rotation_profile, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; rebalance_matrix, scalings)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -1957,6 +1980,8 @@ function differential_rotation_spectrum!(M, nr, nℓ, m;
     operators,
     constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints),
+    rebalance_matrix = false,
+    scalings = (; Wscaling = 1, Sscaling = 1),
     kw...)
 
     rp = operators.radial_params
@@ -1965,7 +1990,7 @@ function differential_rotation_spectrum!(M, nr, nℓ, m;
     to = TimerOutput()
 
     @timeit to "matrix" differential_rotation_matrix!(M, nr, nℓ, m; operators, rotation_profile, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; rebalance_matrix, scalings)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -2008,10 +2033,10 @@ function eigensystem_satisfy_filter(λ, v, M, MVcache, rtol = 1e-1)
     isapprox2(MVcache, v; rtol)
 end
 
-function filterfields(coll, v, nparams, nfields; filterfieldpowercutoff = 1e-4)
+function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = 1e-4)
     Vpow = sum(abs2, @view v[1:nparams])
     Wpow = sum(abs2, @view v[nparams .+ (1:nparams)])
-    Spow = nfields == 3 ? sum(abs2, @view(v[2nparams .+ (1:nparams)])) : 0.0
+    Spow = nvariables == 3 ? sum(abs2, @view(v[2nparams .+ (1:nparams)])) : 0.0
 
     filterfields = typeof(coll.V)[]
 
@@ -2036,8 +2061,8 @@ function sphericalharmonic_filter!(VWSinvsh, F, v, operators,
     flag = true
 
     (; nparams) = operators.radial_params
-    (; nfields) = operators.constants
-    fields = filterfields(VWSinvsh, v, nparams, nfields; filterfieldpowercutoff)
+    (; nvariables) = operators.constants
+    fields = filterfields(VWSinvsh, v, nparams, nvariables; filterfieldpowercutoff)
 
     for X in fields
         PV_frac = sum(abs2, @view X[:, 1:l_cutoff_ind]) / sum(abs2, X)
@@ -2066,8 +2091,8 @@ function chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff = 7, n_power_cut
     flag = true
 
     (; nparams) = operators.radial_params
-    (; nfields) = operators.constants
-    fields = filterfields(VWSinv, v, nparams, nfields; filterfieldpowercutoff)
+    (; nvariables) = operators.constants
+    fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     for X in fields
         Xrange = view(X, :, rangescan)
@@ -2090,8 +2115,8 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     eqfilter = true
 
     (; nparams) = operators.radial_params
-    (; nfields) = operators.constants
-    fields = filterfields(VWSinv, v, nparams, nfields; filterfieldpowercutoff)
+    (; nvariables) = operators.constants
+    fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     for X in fields
         peak_latprofile = @view X[end, :]
@@ -2115,8 +2140,8 @@ function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
     nodesfilter = true
 
     (; nparams) = operators.radial_params
-    (; nfields) = operators.constants
-    fields = filterfields(VWSinv, v, nparams, nfields; filterfieldpowercutoff)
+    (; nvariables) = operators.constants
+    fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators; nℓ, Plcosθ)
     eqind = argmin(abs.(θ .- pi/2))
@@ -2130,52 +2155,66 @@ function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
     nodesfilter
 end
 
-function filterfn(λ, v, m, M, operators, additional_params; kw...)
+@bitflag FilterFlag::UInt8 begin
+    F_NONE=0
+    F_Eigenvalue
+    F_Eigensystem
+    F_SphHarm
+    F_Chebyshev
+    F_BC
+    F_Spatial
+    F_Nodes
+end
+Base.:(!)(F::FilterFlag) = FilterFlag(127 - Int(F))
+Base.in(t::FilterFlag, F::FilterFlag) = (t & F) != F_NONE
+Base.broadcastable(x::FilterFlag) = Ref(x)
+
+function filterfn(λ, v, m, M, operators, additional_params, filterflags::FilterFlag; kw...)
 
     (; eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
         ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff,
         Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
         VWSinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
         θ_cutoff, equator_power_cutoff_frac, MVcache, eigen_rtol, VWSinvsh, F,
-        filters, filterfieldpowercutoff, nnodesmax) = additional_params
+        filterfieldpowercutoff, nnodesmax) = additional_params
 
-    if get(filters, :eigenvalue, true)
+    if F_Eigenvalue in filterflags
         f1 = eigenvalue_filter(λ, m;
             eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
             ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff)
         f1 || return false
     end
 
-    if get(filters, :sphericalharmonic, true)
+    if F_SphHarm in filterflags
         f2 = sphericalharmonic_filter!(VWSinvsh, F, v, operators,
             Δl_cutoff, Δl_power_cutoff, filterfieldpowercutoff)
         f2 || return false
     end
 
-    if get(filters, :boundarycondition, true)
+    if F_BC in filterflags
         f3 = boundary_condition_filter(v, BC, BCVcache, atol_constraint)
         f3 || return false
     end
 
-    if get(filters, :chebyshev, true)
+    if F_Chebyshev in filterflags
         f4 = chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff,
             n_power_cutoff; nℓ, Plcosθ,filterfieldpowercutoff)
         f4 || return false
     end
 
-    if get(filters, :spatial, true)
+    if F_Spatial in filterflags
         f5, θ, fields = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
             θ_cutoff, equator_power_cutoff_frac; nℓ, Plcosθ,
             filterfieldpowercutoff)
         f5 || return false
     end
 
-    if get(filters, :eigensystem_satisfy, true)
+    if F_Eigensystem in filterflags
         f6 = eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
         f6 || return false
     end
 
-    if get(filters, :nodes, true)
+    if F_Nodes in filterflags
         f7 = nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
                 nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax)
         f7 || return false
@@ -2192,10 +2231,10 @@ function allocate_field_caches(nr, nθ, nℓ)
 end
 
 function allocate_filter_caches(m; operators, constraints = constraintmatrix(operators))
-    (; BC, nfields) = constraints
+    (; BC, nvariables) = constraints
     (; nr, nℓ, nparams) = operators.radial_params
     # temporary cache arrays
-    MVcache = Vector{ComplexF64}(undef, nfields * nparams)
+    MVcache = Vector{ComplexF64}(undef, nvariables * nparams)
     BCVcache = Vector{ComplexF64}(undef, size(BC, 1))
 
     nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
@@ -2208,14 +2247,14 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
 end
 
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
-    M::AbstractMatrix, scales::Matrix, m::Integer;
+    M::AbstractMatrix, m::Integer;
     operators,
     constraints = constraintmatrix(operators),
     filtercache = allocate_filter_caches(m; operators, constraints),
     atol_constraint = 1e-5,
     Δl_cutoff = 7,
     Δl_power_cutoff = 0.9,
-    eigen_rtol = 0.3,
+    eigen_rtol = 0.1, # = relative tolerance till which the full eigensystem is satisfied =#
     n_cutoff = 7,
     n_power_cutoff = 0.9,
     eig_imag_unstable_cutoff = -1e-3,
@@ -2227,38 +2266,24 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     equator_power_cutoff_frac = 0.3,
     nnodesmax = 10,
     filterfieldpowercutoff = 1e-4,
-    eigenvalue_filter = true,
-    sphericalharmonic_filter = true,
-    chebyshev_filter = true,
-    boundarycondition_filter = true,
-    spatial_filter = true,
-    eigensystem_satisfy_filter = true,
-    nodes_filter = true,
+    filterflags = F_Eigenvalue | F_Eigensystem | F_SphHarm | F_Chebyshev | F_BC | F_Spatial,
+    nodes_filter = false,
+    scalings = (; Wscaling = 1, Sscaling = 1),
     kw...)
 
-    filters = (;
-        eigenvalue = eigenvalue_filter,
-        sphericalharmonic = sphericalharmonic_filter,
-        chebyshev = chebyshev_filter,
-        boundarycondition = boundarycondition_filter,
-        spatial = spatial_filter,
-        eigensystem_satisfy = eigensystem_satisfy_filter,
-        nodes = nodes_filter,
-    )
-
-    (; BC) = constraints
-    (; nℓ, nparams) = operators.radial_params
-    (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache
+    (; BC) = constraints;
+    (; nℓ, nparams) = operators.radial_params;
+    (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache;
 
     additional_params = (; eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
         ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff,
         Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
         VWSinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
         θ_cutoff, equator_power_cutoff_frac, MVcache,
-        eigen_rtol, VWSinvsh, F, filters, filterfieldpowercutoff, nnodesmax,
-    )
+        eigen_rtol, VWSinvsh, F, filterfieldpowercutoff, nnodesmax,
+    );
 
-    inds_bool = filterfn.(λ, eachcol(v), m, (M,), (operators,), (additional_params,))
+    inds_bool = filterfn.(λ, eachcol(v), m, (M,), (operators,), (additional_params,), filterflags)
     filtinds = axes(λ, 1)[inds_bool]
     λ, v = λ[filtinds], v[:, filtinds]
 
@@ -2268,8 +2293,8 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
         W = @view v[nparams .+ (1:nparams), :]
         S = @view v[2nparams .+ (1:nparams), :]
 
-        W .*= scales[1, 2]
-        S .*= scales[1, 3]
+        W ./= scalings.Wscaling
+        S ./= scalings.Sscaling
 
         V .*= Rsun
         (; Wscaling, Sscaling) = operators.constants.scalings
@@ -2302,15 +2327,14 @@ function filter_eigenvalues(λ::AbstractVector{<:AbstractVector},
 
     (; nr, nℓ, nparams) = operators.radial_params
     nparams = nr * nℓ
-    (; nfields) = constraints
+    (; nvariables) = constraints
     Ms = [zeros(ComplexF64, 3nparams, 3nparams) for _ in 1:Threads.nthreads()]
     λv = @maybe_reduce_blas_threads(
         Folds.map(zip(λ, v, mr)) do (λm, vm, m)
             M = Ms[Threads.threadid()]
             Mfn(M, nr, nℓ, m; operators)
-            _M = _maybetrimM(M, nfields, nparams)
-            scales = balance_matrix!(_M, nfields)
-            filter_eigenvalues(λm, vm, _M, scales, m; operators, constraints, kw...)
+            _M = _maybetrimM(M, nvariables, nparams)
+            filter_eigenvalues(λm, vm, _M, m; operators, constraints, kw...)
         end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
     )
     first.(λv), last.(λv)
@@ -2356,11 +2380,11 @@ end
 function eigenfunction_cheby_ℓm_spectrum!(F, v, operators)
     (; radial_params) = operators
     (; nparams, nr, nℓ) = radial_params
-    (; nfields) = operators.constants
+    (; nvariables) = operators.constants
 
     F.V .= @view v[1:nparams]
     F.W .= @view v[nparams.+(1:nparams)]
-    F.S .= nfields == 3 ? @view(v[2nparams.+(1:nparams)]) : 0.0
+    F.S .= nvariables == 3 ? @view(v[2nparams.+(1:nparams)]) : 0.0
 
     V = reshape(F.V, nr, nℓ)
     W = reshape(F.W, nr, nℓ)

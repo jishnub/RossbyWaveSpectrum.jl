@@ -636,7 +636,7 @@ end
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
     (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators
     (; r, r_chebyshev) = coordinates
-    (; nfields, ν, Ω0) = operators.constants
+    (; nvariables, ν, Ω0) = operators.constants
     r_mid = radial_params.r_mid::Float64
     Δr = radial_params.Δr::Float64
     a = 1 / (Δr / 2)
@@ -754,7 +754,7 @@ end
                 -2√(1/15) * (Drρ_fn(r, n) - 2/r * Tn) * Rsun / Wscaling
             end
 
-            VW = RossbyWaveSpectrum.matrix_block(M, 1, 2, nfields)
+            VW = RossbyWaveSpectrum.matrix_block(M, 1, 2, nvariables)
 
             W1_inds = nr .+ (1:nr)
 
@@ -904,7 +904,7 @@ end
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
     (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators;
     (; r, r_chebyshev) = coordinates;
-    (; nfields, ν) = operators.constants;
+    (; nvariables, ν) = operators.constants;
     r_mid = radial_params.r_mid::Float64;
     Δr = radial_params.Δr::Float64;
     a = 1 / (Δr / 2);
@@ -940,11 +940,11 @@ end
 
         VVtermfn(r, n) = VVterm1fn(r, n) + VVterm3fn(r, n)
 
-        M = zeros(ComplexF64, nfields * nparams, nfields * nparams)
+        M = zeros(ComplexF64, nvariables * nparams, nvariables * nparams)
         RossbyWaveSpectrum.viscosity_terms!(M, nr, nℓ, m; operators)
 
         @testset "VV terms" begin
-            VV = RossbyWaveSpectrum.matrix_block(M, 1, 1, nfields)
+            VV = RossbyWaveSpectrum.matrix_block(M, 1, 1, nvariables)
             V1_inds = 1:nr
             @testset for n in 1:nr-1
                 V_op = Vn1 * real(VV[V1_inds, n + 1] ./ (-im * ν))
@@ -1168,7 +1168,7 @@ end
         nr, nℓ = 45, 2
         m = 5
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-        (; nfields) = operators.constants;
+        (; nvariables) = operators.constants;
         M1 = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m;
                 operators, _greenfn = false);
         operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
@@ -1178,12 +1178,12 @@ end
         M3 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ+5, m;
                 operators = operators3, _greenfn = false);
 
-        function matrix_subsample(M, nr_M, nr, nℓ, nfields)
+        function matrix_subsample(M, nr_M, nr, nℓ, nvariables)
             nparams = nr*nℓ
-            M_subsample = zeros(eltype(M), nfields*nparams, nfields*nparams)
-            for colind in 1:nfields, rowind in 1:nfields
-                Mv = matrix_block(M, rowind, colind, nfields)
-                M_subsample_v = matrix_block(M_subsample, rowind, colind, nfields)
+            M_subsample = zeros(eltype(M), nvariables*nparams, nvariables*nparams)
+            for colind in 1:nvariables, rowind in 1:nvariables
+                Mv = matrix_block(M, rowind, colind, nvariables)
+                M_subsample_v = matrix_block(M_subsample, rowind, colind, nvariables)
                 for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
                     indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
                     indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
@@ -1193,11 +1193,11 @@ end
             return M_subsample
         end
 
-        @test matrix_subsample(M1, nr, nr, nℓ, nfields) == M1;
-        M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nfields);
-        @testset for rowind in 1:nfields, colind in 1:nfields
-            M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields)
-            M1v = matrix_block(M1, rowind, colind, nfields)
+        @test matrix_subsample(M1, nr, nr, nℓ, nvariables) == M1;
+        M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nvariables);
+        @testset for rowind in 1:nvariables, colind in 1:nvariables
+            M2_ssv = matrix_block(M2_subsampled, rowind, colind, nvariables)
+            M1v = matrix_block(M1, rowind, colind, nvariables)
             @testset "real" begin
                 if rowind == 3 && colind == 2
                     @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
@@ -1210,10 +1210,10 @@ end
             end
         end
 
-        M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nfields);
-        @testset for rowind in 1:nfields, colind in 1:nfields
-            M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
-            M1v = matrix_block(M1, rowind, colind, nfields)
+        M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nvariables);
+        @testset for rowind in 1:nvariables, colind in 1:nvariables
+            M3_ssv = matrix_block(M3_subsampled, rowind, colind, nvariables)
+            M1v = matrix_block(M1, rowind, colind, nvariables)
             @testset "real" begin
                 if rowind == 3 && colind == 2
                     @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
@@ -1230,19 +1230,19 @@ end
         nr, nℓ = 45, 2
         m = 5
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-        (; nfields) = operators.constants;
+        (; nvariables) = operators.constants;
         M1 = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m; operators);
         operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
         M2 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ, m; operators = operators2);
         operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
         M3 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ+5, m; operators = operators3);
 
-        function matrix_subsample(M, nr_M, nr, nℓ, nfields)
+        function matrix_subsample(M, nr_M, nr, nℓ, nvariables)
             nparams = nr*nℓ
-            M_subsample = zeros(eltype(M), nfields*nparams, nfields*nparams)
-            for colind in 1:nfields, rowind in 1:nfields
-                Mv = matrix_block(M, rowind, colind, nfields)
-                M_subsample_v = matrix_block(M_subsample, rowind, colind, nfields)
+            M_subsample = zeros(eltype(M), nvariables*nparams, nvariables*nparams)
+            for colind in 1:nvariables, rowind in 1:nvariables
+                Mv = matrix_block(M, rowind, colind, nvariables)
+                M_subsample_v = matrix_block(M_subsample, rowind, colind, nvariables)
                 for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
                     indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
                     indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
@@ -1252,11 +1252,11 @@ end
             return M_subsample
         end
 
-        @test matrix_subsample(M1, nr, nr, nℓ, nfields) == M1;
-        M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nfields);
-        @testset for rowind in 1:nfields, colind in 1:nfields
-            M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields);
-            M1v = matrix_block(M1, rowind, colind, nfields);
+        @test matrix_subsample(M1, nr, nr, nℓ, nvariables) == M1;
+        M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nvariables);
+        @testset for rowind in 1:nvariables, colind in 1:nvariables
+            M2_ssv = matrix_block(M2_subsampled, rowind, colind, nvariables);
+            M1v = matrix_block(M1, rowind, colind, nvariables);
             @testset "real" begin
                 if rowind == 3 && colind == 2
                     @test real(M2_ssv) ≈ real(M1v) rtol=3e-3
@@ -1273,10 +1273,10 @@ end
             end
         end
 
-        M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nfields);
-        @testset for rowind in 1:nfields, colind in 1:nfields
-            M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
-            M1v = matrix_block(M1, rowind, colind, nfields)
+        M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nvariables);
+        @testset for rowind in 1:nvariables, colind in 1:nvariables
+            M3_ssv = matrix_block(M3_subsampled, rowind, colind, nvariables)
+            M1v = matrix_block(M1, rowind, colind, nvariables)
             @testset "real" begin
                 if rowind == 3 && colind == 2
                     @test real(M3_ssv) ≈ real(M1v) rtol=3e-3
@@ -1311,8 +1311,8 @@ end
     (; r_in, r_out, Δr) = operators.radial_params
     (; BC) = constraints;
     @testset for m in [1, 10, 20]
-        λu, vu, Mu, scales = RossbyWaveSpectrum.uniform_rotation_spectrum(nr, nℓ, m; operators, constraints);
-        λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, scales, m;
+        λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(nr, nℓ, m; operators, constraints);
+        λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
             operators, constraints, Δl_cutoff = 7, n_cutoff = 9,
             eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
             scale_eigenvectors = false);
@@ -1372,7 +1372,7 @@ end
     @testset "compare with constant" begin
         nr, nℓ = 30, 2
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-        (; nfields) = operators.constants
+        (; nvariables) = operators.constants
 
         m = 1
 
@@ -1383,20 +1383,20 @@ end
             Mr = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m,
                 rotation_profile = :radial_constant; operators)
 
-            @testset for colind in 1:nfields, rowind in 1:nfields
-                @test matrix_block(Mr, rowind, colind, nfields) ≈ matrix_block(Mc, rowind, colind, nfields) atol = 1e-10 rtol = 1e-3
+            @testset for colind in 1:nvariables, rowind in 1:nvariables
+                @test matrix_block(Mr, rowind, colind, nvariables) ≈ matrix_block(Mc, rowind, colind, nvariables) atol = 1e-10 rtol = 1e-3
             end
         end
     end
 
     @testset "radial differential rotation" begin
-        nr, nℓ = 50, 2
+        nr, nℓ = 50, 10
         nparams = nr * nℓ
         m = 1
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
         (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators;
         (; r, r_chebyshev) = coordinates;
-        (; nfields, ν) = operators.constants;
+        (; nvariables, ν) = operators.constants;
         r_mid = radial_params.r_mid::Float64;
         Δr = radial_params.Δr::Float64;
         a = 1 / (Δr / 2);
@@ -1553,7 +1553,7 @@ end
         end
 
         @testset "convergence of diff rot profile" begin
-            nr, nℓ = 50, 2
+            nr, nℓ = 50, 10
             m = 5
             operators1 = RossbyWaveSpectrum.radial_operators(nr, nℓ);
             operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
@@ -1591,10 +1591,10 @@ end
         end
 
         @testset "matrix convergence with resolution" begin
-            nr, nℓ = 50, 2
+            nr, nℓ = 50, 10
             m = 5
             operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-            (; nfields) = operators.constants;
+            (; nvariables) = operators.constants;
             operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
             operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
             @testset for rotation_profile in [:radial_linear, :radial]
@@ -1602,12 +1602,12 @@ end
                 M2 = RossbyWaveSpectrum.differential_rotation_matrix(nr+5, nℓ, m; operators = operators2, rotation_profile);
                 M3 = RossbyWaveSpectrum.differential_rotation_matrix(nr+5, nℓ+5, m; operators = operators3, rotation_profile);
 
-                function matrix_subsample(M, nr_M, nr, nℓ, nfields)
+                function matrix_subsample(M, nr_M, nr, nℓ, nvariables)
                     nparams = nr*nℓ
-                    M_subsample = zeros(eltype(M), nfields*nparams, nfields*nparams)
-                    for colind in 1:nfields, rowind in 1:nfields
-                        Mv = matrix_block(M, rowind, colind, nfields)
-                        M_subsample_v = matrix_block(M_subsample, rowind, colind, nfields)
+                    M_subsample = zeros(eltype(M), nvariables*nparams, nvariables*nparams)
+                    for colind in 1:nvariables, rowind in 1:nvariables
+                        Mv = matrix_block(M, rowind, colind, nvariables)
+                        M_subsample_v = matrix_block(M_subsample, rowind, colind, nvariables)
                         for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
                             indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
                             indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
@@ -1617,12 +1617,12 @@ end
                     return M_subsample
                 end
 
-                @test matrix_subsample(M1, nr, nr, nℓ, nfields) == M1;
+                @test matrix_subsample(M1, nr, nr, nℓ, nvariables) == M1;
                 @testset "nr+5, nℓ" begin
-                    M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nfields);
-                    @testset for rowind in 1:nfields, colind in 1:nfields
-                        M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields);
-                        M1v = matrix_block(M1, rowind, colind, nfields);
+                    M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nvariables);
+                    @testset for rowind in 1:nvariables, colind in 1:nvariables
+                        M2_ssv = matrix_block(M2_subsampled, rowind, colind, nvariables);
+                        M1v = matrix_block(M1, rowind, colind, nvariables);
                         @testset "real" begin
                             if rowind == 3 && colind == 2
                                 @test real(M2_ssv) ≈ real(M1v) rtol=3e-3
@@ -1641,10 +1641,10 @@ end
                 end
 
                 @testset "nr+5, nℓ+5" begin
-                    M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nfields);
-                    @testset for rowind in 1:nfields, colind in 1:nfields
-                        M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
-                        M1v = matrix_block(M1, rowind, colind, nfields)
+                    M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nvariables);
+                    @testset for rowind in 1:nvariables, colind in 1:nvariables
+                        M3_ssv = matrix_block(M3_subsampled, rowind, colind, nvariables)
+                        M1v = matrix_block(M1, rowind, colind, nvariables)
                         @testset "real" begin
                             if rowind == 3 && colind == 2
                                 @test real(M3_ssv) ≈ real(M1v) rtol=3e-3
@@ -1665,7 +1665,7 @@ end
         end
 
         @testset "S terms" begin
-            nr, nℓ = 50, 2
+            nr, nℓ = 50, 10
             m = 5
 
             operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);

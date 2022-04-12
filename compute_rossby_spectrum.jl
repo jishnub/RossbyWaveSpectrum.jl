@@ -1,7 +1,7 @@
 @time using RossbyWaveSpectrum
 
-nr = 50;
-nℓ = 25;
+nr = 70;
+nℓ = 35;
 mrange = 1:20;
 
 # test
@@ -21,8 +21,8 @@ n_cutoff = 10
 n_power_cutoff = 0.9
 
 # used for filtering, zero for uniform rotation
-ΔΩ_by_Ω_low = -0.05
-ΔΩ_by_Ω_high = 0.05
+ΔΩ_by_Ω_low = -1
+ΔΩ_by_Ω_high = 1
 # ΔΩ_by_Ω_low = 0
 # ΔΩ_by_Ω_high = 0
 
@@ -31,9 +31,9 @@ r_out_frac = 1
 
 operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac)
 
-# f = RossbyWaveSpectrum.uniform_rotation_spectrum!
 f = (x...; kw...) -> RossbyWaveSpectrum.differential_rotation_spectrum!(x...;
     rotation_profile = :radial_linear, kw...)
+# f = RossbyWaveSpectrum.uniform_rotation_spectrum!
 @show nr nℓ mrange Δl_cutoff Δl_power_cutoff eigen_rtol ΔΩ_by_Ω_low ΔΩ_by_Ω_high
 @show Threads.nthreads()
 
