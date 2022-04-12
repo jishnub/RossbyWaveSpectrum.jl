@@ -728,8 +728,7 @@ function greenfn_cheby(::RadDiffRotGfn, ℓ, operators, ΔΩprofile_deriv,
     (; unirot_terms, diffrot_terms)
 end
 
-splderiv(v::Vector, r::Vector, rout = r; nu = 1) = splderiv(Spline1D(r, v), rout; nu = 1)
-splderiv(spl::Spline1D, rout::Vector; nu = 1) = derivative(spl, rout; nu = 1)
+splderiv(v::Vector, r::Vector, rout = r; nu = 1) = Dierckx.derivative(Spline1D(r, v), rout; nu = 1)
 
 smoothed_spline(r, v; s) = Spline1D(r, v, s = sum(abs2, v) * s)
 
@@ -1252,10 +1251,9 @@ function equatorial_rotation_angular_velocity(r_frac, r_ΔΩ_raw, Ω_raw)
     Ω_raw[r_frac_ind, θind_equator]
 end
 
-function read_angular_velocity(operators, thetaGL)
-    (; coordinates, radial_params) = operators;
-    (; r) = coordinates;
-    (; r_out) = radial_params;
+function read_angular_velocity(operators, thetaGL; smoothing_param = 1e-3)
+    (; r) = operators.coordinates;
+    (; r_out) = operators.radial_params;
 
     parentdir = dirname(@__DIR__)
     r_ΔΩ_raw = read_angular_velocity_radii(parentdir)
@@ -1266,7 +1264,10 @@ function read_angular_velocity(operators, thetaGL)
     nθ = size(ΔΩ_raw, 2)
     lats_raw = LinRange(0, pi, nθ)
 
-    (interp2d(r_ΔΩ_raw, lats_raw, ΔΩ_raw, r ./ Rsun, thetaGL), Ω0)
+    splΔΩ2D = Spline2D(r_ΔΩ_raw * Rsun, lats_raw, ΔΩ_raw; s = sum(abs2, ΔΩ_raw)*smoothing_param)
+    ΔΩ2D_grid = evalgrid(splΔΩ2D, r, thetaGL);
+
+    (; ΔΩ2D_grid, Ω0)
 end
 
 function legendre_to_associatedlegendre(vℓ, ℓ1, ℓ2, m)
@@ -1364,13 +1365,10 @@ function radial_differential_rotation_profile(operators, thetaGL, model = :solar
     (; r_out, nr, r_in) = operators.radial_params
 
     if model == :solar_equator
-        ΔΩ_rθ, Ω0 = read_angular_velocity(operators, thetaGL)
-        θind_equator = findmin(abs.(thetaGL .- pi / 2))[2]
-        ΔΩ_r = ΔΩ_rθ[:, θind_equator];
-        # smooth the profile in r
-        s = sum(abs2, ΔΩ_r) * smoothing_param
-        ΔΩ_r = Spline1D(r, ΔΩ_r, s = s)(r)
-    elseif model == :linear
+        ΔΩ_rθ, Ω0 = read_angular_velocity(operators, thetaGL; smoothing_param)
+        s = Spline2D(r, thetaGL, ΔΩ_rθ)
+        ΔΩ_r = reshape(evalgrid(s, r, [pi/2]), Val(1))
+    elseif model == :linear # for testing
         Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
         f = 0.02 / (r_in / Rsun - 1)
         ΔΩ_r = @. Ω0 * f * (r / Rsun - 1)
@@ -1394,14 +1392,15 @@ function radial_differential_rotation_profile_derivatives(m; operators, rotation
     (; thetaGL) = gausslegendre_theta_grid(ntheta);
 
     ΔΩ_r, Ω0 = radial_differential_rotation_profile(operators, thetaGL, rotation_profile);
+
     ΔΩ_spl = Spline1D(r, ΔΩ_r);
     ΔΩ = chop(Fun(ΔΩ_spl ∘ r_cheby, Chebyshev()), 1e-3) / Ω0;
 
     ddrΔΩ = ddr * ΔΩ
-    drΔΩ_real = ddrΔΩ.(r_chebyshev)
+    ddrΔΩ_real = ddrΔΩ.(r_chebyshev)
     d2dr2ΔΩ = ddr * ddrΔΩ
     d2dr2ΔΩ_real = d2dr2ΔΩ.(r_chebyshev)
-    (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, drΔΩ_real, d2dr2ΔΩ_real, ddrΔΩ, d2dr2ΔΩ)
+    (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, ddrΔΩ, d2dr2ΔΩ, ddrΔΩ_real, d2dr2ΔΩ_real)
 end
 
 function radial_differential_rotation_terms_inner!((VWterm, WVterm), (ℓ, ℓ′),

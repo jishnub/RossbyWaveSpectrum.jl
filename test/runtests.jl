@@ -8,6 +8,7 @@ using ForwardDiff
 using FastTransforms
 using Dierckx
 using FastGaussQuadrature
+import ApproxFun
 
 @testset "project quality" begin
     Aqua.test_all(RossbyWaveSpectrum,
@@ -1551,69 +1552,113 @@ end
             end
         end
 
+        @testset "convergence of diff rot profile" begin
+            nr, nℓ = 50, 2
+            m = 5
+            operators1 = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+            operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
+            operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
+
+            T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
+                m, operators = operators1, rotation_profile = :solar_equator);
+            ΔΩ1, ddrΔΩ1, d2dr2ΔΩ1 = T.ΔΩ, T.ddrΔΩ, T.d2dr2ΔΩ;
+
+            T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
+                m, operators = operators2, rotation_profile = :solar_equator);
+            ΔΩ2, ddrΔΩ2, d2dr2ΔΩ2 = T.ΔΩ, T.ddrΔΩ, T.d2dr2ΔΩ;
+
+            T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
+                m, operators = operators3, rotation_profile = :solar_equator);
+            ΔΩ3, ddrΔΩ3, d2dr2ΔΩ3 = T.ΔΩ, T.ddrΔΩ, T.d2dr2ΔΩ;
+
+            @testset "nr+5, nℓ" begin
+                @test ApproxFun.ncoefficients(ΔΩ1) ≈ ApproxFun.ncoefficients(ΔΩ2)
+                @test ApproxFun.coefficients(ΔΩ1) ≈ ApproxFun.coefficients(ΔΩ2) rtol=1e-3
+                @test ApproxFun.ncoefficients(ddrΔΩ1) ≈ ApproxFun.ncoefficients(ddrΔΩ2)
+                @test ApproxFun.coefficients(ddrΔΩ1) ≈ ApproxFun.coefficients(ddrΔΩ2) rtol=1e-3
+                @test ApproxFun.ncoefficients(d2dr2ΔΩ1) ≈ ApproxFun.ncoefficients(d2dr2ΔΩ2)
+                @test ApproxFun.coefficients(d2dr2ΔΩ1) ≈ ApproxFun.coefficients(d2dr2ΔΩ2) rtol=1e-3
+            end
+
+            @testset "nr+5, nℓ+5" begin
+                @test ApproxFun.ncoefficients(ΔΩ1) ≈ ApproxFun.ncoefficients(ΔΩ3)
+                @test ApproxFun.coefficients(ΔΩ1) ≈ ApproxFun.coefficients(ΔΩ3) rtol=5e-3
+                @test ApproxFun.ncoefficients(ddrΔΩ1) ≈ ApproxFun.ncoefficients(ddrΔΩ3)
+                @test ApproxFun.coefficients(ddrΔΩ1) ≈ ApproxFun.coefficients(ddrΔΩ3) rtol=5e-3
+                @test ApproxFun.ncoefficients(d2dr2ΔΩ1) ≈ ApproxFun.ncoefficients(d2dr2ΔΩ3)
+                @test ApproxFun.coefficients(d2dr2ΔΩ1) ≈ ApproxFun.coefficients(d2dr2ΔΩ3) rtol=5e-3
+            end
+        end
+
         @testset "matrix convergence with resolution" begin
-            nr, nℓ = 45, 2
+            nr, nℓ = 50, 2
             m = 5
             operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
             (; nfields) = operators.constants;
-            M1 = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m; operators, rotation_profile = :radial_linear);
             operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
-            M2 = RossbyWaveSpectrum.differential_rotation_matrix(nr+5, nℓ, m; operators = operators2, rotation_profile = :radial_linear);
             operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
-            M3 = RossbyWaveSpectrum.differential_rotation_matrix(nr+5, nℓ+5, m; operators = operators3, rotation_profile = :radial_linear);
+            @testset for rotation_profile in [:radial_linear, :radial]
+                M1 = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m; operators, rotation_profile);
+                M2 = RossbyWaveSpectrum.differential_rotation_matrix(nr+5, nℓ, m; operators = operators2, rotation_profile);
+                M3 = RossbyWaveSpectrum.differential_rotation_matrix(nr+5, nℓ+5, m; operators = operators3, rotation_profile);
 
-            function matrix_subsample(M, nr_M, nr, nℓ, nfields)
-                nparams = nr*nℓ
-                M_subsample = zeros(eltype(M), nfields*nparams, nfields*nparams)
-                for colind in 1:nfields, rowind in 1:nfields
-                    Mv = matrix_block(M, rowind, colind, nfields)
-                    M_subsample_v = matrix_block(M_subsample, rowind, colind, nfields)
-                    for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
-                        indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
-                        indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
-                        @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
+                function matrix_subsample(M, nr_M, nr, nℓ, nfields)
+                    nparams = nr*nℓ
+                    M_subsample = zeros(eltype(M), nfields*nparams, nfields*nparams)
+                    for colind in 1:nfields, rowind in 1:nfields
+                        Mv = matrix_block(M, rowind, colind, nfields)
+                        M_subsample_v = matrix_block(M_subsample, rowind, colind, nfields)
+                        for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
+                            indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
+                            indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
+                            @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
+                        end
                     end
+                    return M_subsample
                 end
-                return M_subsample
-            end
 
-            @test matrix_subsample(M1, nr, nr, nℓ, nfields) == M1;
-            M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nfields);
-            @testset for rowind in 1:nfields, colind in 1:nfields
-                M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields);
-                M1v = matrix_block(M1, rowind, colind, nfields);
-                @testset "real" begin
-                    if rowind == 3 && colind == 2
-                        @test real(M2_ssv) ≈ real(M1v) rtol=3e-3
-                    else
-                        @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
+                @test matrix_subsample(M1, nr, nr, nℓ, nfields) == M1;
+                @testset "nr+5, nℓ" begin
+                    M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nfields);
+                    @testset for rowind in 1:nfields, colind in 1:nfields
+                        M2_ssv = matrix_block(M2_subsampled, rowind, colind, nfields);
+                        M1v = matrix_block(M1, rowind, colind, nfields);
+                        @testset "real" begin
+                            if rowind == 3 && colind == 2
+                                @test real(M2_ssv) ≈ real(M1v) rtol=3e-3
+                            else
+                                @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
+                            end
+                        end
+                        @testset "imag" begin
+                            if rowind == colind == 2
+                                @test imag(M2_ssv) ≈ imag(M1v) rtol=2e-3
+                            else
+                                @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
+                            end
+                        end
                     end
                 end
-                @testset "imag" begin
-                    if rowind == colind == 2
-                        @test imag(M2_ssv) ≈ imag(M1v) rtol=2e-3
-                    else
-                        @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
-                    end
-                end
-            end
 
-            M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nfields);
-            @testset for rowind in 1:nfields, colind in 1:nfields
-                M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
-                M1v = matrix_block(M1, rowind, colind, nfields)
-                @testset "real" begin
-                    if rowind == 3 && colind == 2
-                        @test real(M3_ssv) ≈ real(M1v) rtol=3e-3
-                    else
-                        @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
-                    end
-                end
-                @testset "imag" begin
-                    if rowind == colind == 2
-                        @test imag(M3_ssv) ≈ imag(M1v) rtol=2e-3
-                    else
-                        @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
+                @testset "nr+5, nℓ+5" begin
+                    M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nfields);
+                    @testset for rowind in 1:nfields, colind in 1:nfields
+                        M3_ssv = matrix_block(M3_subsampled, rowind, colind, nfields)
+                        M1v = matrix_block(M1, rowind, colind, nfields)
+                        @testset "real" begin
+                            if rowind == 3 && colind == 2
+                                @test real(M3_ssv) ≈ real(M1v) rtol=3e-3
+                            else
+                                @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
+                            end
+                        end
+                        @testset "imag" begin
+                            if rowind == colind == 2
+                                @test imag(M3_ssv) ≈ imag(M1v) rtol=2e-3
+                            else
+                                @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
+                            end
+                        end
                     end
                 end
             end
@@ -1630,39 +1675,41 @@ end
             (; Tcrfwd) = operators.transforms;
             (; mat) = operators;
 
-            ΔΩprofile_deriv =
-                RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
-                    m; operators, rotation_profile = :linear);
+            @testset for rotation_profile in [:linear, :solar_equator]
+                ΔΩprofile_deriv =
+                    RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
+                        m; operators, rotation_profile);
 
-            (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv;
+                (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv;
 
-            ΔΩM = mat(ΔΩ);
-            ddrΔΩM = mat(ddrΔΩ);
+                ΔΩM = mat(ΔΩ);
+                ddrΔΩM = mat(ddrΔΩ);
 
-            ddrΔΩ_over_g = ddrΔΩ / g_cheby;
-            ddrΔΩ_over_gM = mat(ddrΔΩ_over_g);
-            ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr);
-            ddrΔΩ_over_g_DDrM = mat(ddrΔΩ_over_g_DDr);
+                ddrΔΩ_over_g = ddrΔΩ / g_cheby;
+                ddrΔΩ_over_gM = mat(ddrΔΩ_over_g);
+                ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr);
+                ddrΔΩ_over_g_DDrM = mat(ddrΔΩ_over_g_DDr);
 
-            @testset "ddrΔΩ_over_g" begin
-                @testset for n in 0:5:nr-1
-                    T = chebyshevT(n)
-                    f = x -> ddrΔΩ(x)/g_cheby(x) * T(x)
+                @testset "ddrΔΩ_over_g" begin
+                    @testset for n in 0:5:nr-1
+                        T = chebyshevT(n)
+                        f = x -> ddrΔΩ(x)/g_cheby(x) * T(x)
 
-                    fc = chebyfwd(f, nr);
+                        fc = chebyfwd(f, nr);
 
-                    @test fc ≈ @view(ddrΔΩ_over_gM[:, n+1]) rtol=5e-4
+                        @test fc ≈ @view(ddrΔΩ_over_gM[:, n+1]) rtol=5e-4
+                    end
                 end
-            end
 
-            @testset "ddrΔΩ_over_g * DDr" begin
-                @testset for n in 0:5:nr-1
-                    T = chebyshevT(n)
-                    f = x -> ddrΔΩ_over_g(x) * (df(T, x) * (2/Δr) + ηρ_cheby(x) * T(x))
+                @testset "ddrΔΩ_over_g * DDr" begin
+                    @testset for n in 0:5:nr-1
+                        T = chebyshevT(n)
+                        f = x -> ddrΔΩ_over_g(x) * (df(T, x) * (2/Δr) + ηρ_cheby(x) * T(x))
 
-                    fc = chebyfwd(f, nr);
+                        fc = chebyfwd(f, nr);
 
-                    @test fc ≈ @view(ddrΔΩ_over_g_DDrM[:, n+1]) rtol=1e-4
+                        @test fc ≈ @view(ddrΔΩ_over_g_DDrM[:, n+1]) rtol=1e-4
+                    end
                 end
             end
         end
