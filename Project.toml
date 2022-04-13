@@ -25,6 +25,7 @@ PyCall = "438e738f-606a-5dbb-bf0a-cddfbfd45ab0"
 PyPlot = "d330b81b-6aea-500a-939a-2ce795aea3ee"
 SimpleDelimitedFiles = "44ac6da9-39e0-40c2-8ac2-dc1cb273e973"
 TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
+UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
 
 [compat]
 ApproxFun = "0.13"
@@ -47,6 +48,7 @@ PyPlot = "2.10"
 SimpleDelimitedFiles = "0.1"
 SpecialPolynomials = "0.3"
 TimerOutputs = "0.5"
+UnPack = "1"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"

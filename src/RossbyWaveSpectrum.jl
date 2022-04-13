@@ -18,15 +18,16 @@ using MKL
 using OffsetArrays
 using SimpleDelimitedFiles: readdlm
 using TimerOutputs
+using UnPack
 
 export datadir
-export F_Eigenvalue
-export F_Eigensystem
-export F_SphHarm
-export F_Chebyshev
+export F_EIGVAL
+export F_EIGEN
+export F_SPHARM
+export F_CHEBY
 export F_BC
-export F_Spatial
-export F_Nodes
+export F_SPATIAL
+export F_NODES
 
 const SCRATCH = Ref("")
 const DATADIR = Ref("")
@@ -2157,64 +2158,84 @@ end
 
 @bitflag FilterFlag::UInt8 begin
     F_NONE=0
-    F_Eigenvalue
-    F_Eigensystem
-    F_SphHarm
-    F_Chebyshev
+    F_EIGVAL
+    F_EIGEN
+    F_SPHARM
+    F_CHEBY
     F_BC
-    F_Spatial
-    F_Nodes
+    F_SPATIAL
+    F_NODES
 end
+FilterFlag(F::FilterFlag) = F
 Base.:(!)(F::FilterFlag) = FilterFlag(127 - Int(F))
 Base.in(t::FilterFlag, F::FilterFlag) = (t & F) != F_NONE
 Base.broadcastable(x::FilterFlag) = Ref(x)
 
-function filterfn(λ, v, m, M, operators, additional_params, filterflags::FilterFlag; kw...)
+function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any})
 
-    (; eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
-        ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff,
-        Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
-        VWSinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
-        θ_cutoff, equator_power_cutoff_frac, MVcache, eigen_rtol, VWSinvsh, F,
-        filterfieldpowercutoff, nnodesmax) = additional_params
+    (; BC) = constraints
+    (; nℓ) = operators.radial_params;
 
-    if F_Eigenvalue in filterflags
+    @unpack eig_imag_unstable_cutoff = kw
+    @unpack eig_imag_to_real_ratio_cutoff = kw
+    @unpack ΔΩ_by_Ω_low = kw
+    @unpack ΔΩ_by_Ω_high = kw
+    @unpack eig_imag_damped_cutoff = kw
+    @unpack Δl_cutoff = kw
+    @unpack Δl_power_cutoff = kw
+    @unpack atol_constraint = kw
+    @unpack n_cutoff = kw
+    @unpack n_power_cutoff = kw
+    @unpack θ_cutoff = kw
+    @unpack equator_power_cutoff_frac = kw
+    @unpack eigen_rtol = kw
+    @unpack filterfieldpowercutoff = kw
+    @unpack nnodesmax = kw
+    @unpack filterflags = kw
+    @unpack scalings = kw
+    @unpack filterflags = kw
+
+    (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache;
+
+    FILTERS = FilterFlag(filterflags)
+
+    if F_EIGEN in FILTERS
         f1 = eigenvalue_filter(λ, m;
             eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
             ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff)
         f1 || return false
     end
 
-    if F_SphHarm in filterflags
+    if F_SPHARM in FILTERS
         f2 = sphericalharmonic_filter!(VWSinvsh, F, v, operators,
             Δl_cutoff, Δl_power_cutoff, filterfieldpowercutoff)
         f2 || return false
     end
 
-    if F_BC in filterflags
+    if F_BC in FILTERS
         f3 = boundary_condition_filter(v, BC, BCVcache, atol_constraint)
         f3 || return false
     end
 
-    if F_Chebyshev in filterflags
+    if F_CHEBY in FILTERS
         f4 = chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff,
             n_power_cutoff; nℓ, Plcosθ,filterfieldpowercutoff)
         f4 || return false
     end
 
-    if F_Spatial in filterflags
+    if F_SPATIAL in FILTERS
         f5, θ, fields = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
             θ_cutoff, equator_power_cutoff_frac; nℓ, Plcosθ,
             filterfieldpowercutoff)
         f5 || return false
     end
 
-    if F_Eigensystem in filterflags
+    if F_EIGEN in FILTERS
         f6 = eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
         f6 || return false
     end
 
-    if F_Nodes in filterflags
+    if F_NODES in FILTERS
         f7 = nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
                 nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax)
         f7 || return false
@@ -2246,49 +2267,44 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
     return (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F)
 end
 
+const DefaultFilterParams = Dict(
+    :atol_constraint => 1e-5,
+    :Δl_cutoff => 7,
+    :Δl_power_cutoff => 0.9,
+    :eigen_rtol => 0.01,
+    :n_cutoff => 7,
+    :n_power_cutoff => 0.9,
+    :eig_imag_unstable_cutoff => -1e-3,
+    :eig_imag_to_real_ratio_cutoff => 1e-1,
+    :eig_imag_damped_cutoff => 5e-3,
+    :ΔΩ_by_Ω_low => 0,
+    :ΔΩ_by_Ω_high => 0,
+    :θ_cutoff => deg2rad(75),
+    :equator_power_cutoff_frac => 0.3,
+    :nnodesmax => 10,
+    :filterfieldpowercutoff => 1e-4,
+    :filterflags => F_EIGVAL | F_EIGEN | F_SPHARM | F_CHEBY | F_BC | F_SPATIAL,
+    :scalings => (; Wscaling = 1, Sscaling = 1),
+)
+
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     M::AbstractMatrix, m::Integer;
     operators,
     constraints = constraintmatrix(operators),
     filtercache = allocate_filter_caches(m; operators, constraints),
-    atol_constraint = 1e-5,
-    Δl_cutoff = 7,
-    Δl_power_cutoff = 0.9,
-    eigen_rtol = 0.1, # = relative tolerance till which the full eigensystem is satisfied =#
-    n_cutoff = 7,
-    n_power_cutoff = 0.9,
-    eig_imag_unstable_cutoff = -1e-3,
-    eig_imag_to_real_ratio_cutoff = 1e-1,
-    eig_imag_damped_cutoff = 5e-3,
-    ΔΩ_by_Ω_low = 0,
-    ΔΩ_by_Ω_high = ΔΩ_by_Ω_low,
-    θ_cutoff = deg2rad(75),
-    equator_power_cutoff_frac = 0.3,
-    nnodesmax = 10,
-    filterfieldpowercutoff = 1e-4,
-    filterflags = F_Eigenvalue | F_Eigensystem | F_SphHarm | F_Chebyshev | F_BC | F_Spatial,
-    nodes_filter = false,
-    scalings = (; Wscaling = 1, Sscaling = 1),
     kw...)
 
-    (; BC) = constraints;
-    (; nℓ, nparams) = operators.radial_params;
-    (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache;
+    (; nparams) = operators.radial_params;
+    kw = merge(DefaultFilterParams, kw)
+    additional_params = (operators, constraints, filtercache, kw)
 
-    additional_params = (; eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
-        ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff,
-        Δl_cutoff, Δl_power_cutoff, BC, BCVcache, atol_constraint,
-        VWSinv, n_cutoff, n_power_cutoff, nℓ, Plcosθ,
-        θ_cutoff, equator_power_cutoff_frac, MVcache,
-        eigen_rtol, VWSinvsh, F, filterfieldpowercutoff, nnodesmax,
-    );
-
-    inds_bool = filterfn.(λ, eachcol(v), m, (M,), (operators,), (additional_params,), filterflags)
+    inds_bool = filterfn.(λ, eachcol(v), m, (M,), (additional_params,))
     filtinds = axes(λ, 1)[inds_bool]
     λ, v = λ[filtinds], v[:, filtinds]
 
     # re-apply scalings
     if get(kw, :scale_eigenvectors, true)
+        @unpack scalings = kw
         V = @view v[1:nparams, :]
         W = @view v[nparams .+ (1:nparams), :]
         S = @view v[2nparams .+ (1:nparams), :]
@@ -2326,9 +2342,8 @@ function filter_eigenvalues(λ::AbstractVector{<:AbstractVector},
     kw...)
 
     (; nr, nℓ, nparams) = operators.radial_params
-    nparams = nr * nℓ
-    (; nvariables) = constraints
-    Ms = [zeros(ComplexF64, 3nparams, 3nparams) for _ in 1:Threads.nthreads()]
+    (; nvariables) = operators.constants
+    Ms = [zeros(ComplexF64, nvariables*nparams, nvariables*nparams) for _ in 1:Threads.nthreads()]
     λv = @maybe_reduce_blas_threads(
         Folds.map(zip(λ, v, mr)) do (λm, vm, m)
             M = Ms[Threads.threadid()]
@@ -2345,8 +2360,9 @@ function filter_eigenvalues(f, mr::AbstractVector; #= inplace function =#
     constraints = constraintmatrix(operators),
     kw...)
 
+    (; nvariables) = operators.constants
     (; nr, nℓ, nparams) = operators.radial_params
-    Ms = [zeros(ComplexF64, 3nparams, 3nparams) for _ in 1:Threads.nthreads()]
+    Ms = [zeros(ComplexF64, nvariables * nparams, nvariables * nparams) for _ in 1:Threads.nthreads()]
     caches = [constrained_matmul_cache(constraints) for _ in 1:Threads.nthreads()]
 
     λv = @maybe_reduce_blas_threads(
@@ -2360,21 +2376,22 @@ function filter_eigenvalues(f, mr::AbstractVector; #= inplace function =#
     first.(λv), last.(λv)
 end
 function filter_eigenvalues(filename::String; kw...)
-    λ, v, mr, nr, nℓ = load(filename, "lam", "vec", "mr", "nr", "nℓ")
+    λ, v, mr, nr, nℓ, kwold = load(filename, "lam", "vec", "mr", "nr", "nℓ", "kw");
+    kw = merge(kwold, kw)
     operators = radial_operators(nr, nℓ)
-    filter_eigenvalues(λ, v, mr; operators, kw...)
+    constraints = constraintmatrix(operators)
+    filter_eigenvalues(λ, v, mr; operators, constraints, kw...)
 end
 
 rossbyeigenfilename(nr, nℓ, tag = "ur", posttag = "") = "$(tag)_nr$(nr)_nl$(nℓ)$(posttag).jld2"
-function save_eigenvalues(f, nr, nℓ, mr;
-    operators = radial_operators(nr, nℓ), kw...)
-
+function save_eigenvalues(f, nr, nℓ, mr; operators = radial_operators(nr, nℓ), kw...)
+    kw = merge(DefaultFilterParams, kw)
     lam, vec = filter_eigenvalues(f, mr; operators, kw...)
     isdiffrot = !iszero(get(kw, :ΔΩ_by_Ω_low, 0) * get(kw, :ΔΩ_by_Ω_high, 0))
     filenametag = isdiffrot == 0 ? "ur" : "dr"
     fname = datadir(rossbyeigenfilename(nr, nℓ, filenametag))
     @info "saving to $fname"
-    jldsave(fname; lam, vec, mr, nr, nℓ)
+    jldsave(fname; lam, vec, mr, nr, nℓ, kw)
 end
 
 function eigenfunction_cheby_ℓm_spectrum!(F, v, operators)

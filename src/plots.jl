@@ -274,6 +274,7 @@ function eigenfunctions_all(VWSinv::NamedTuple, θ, m, operators; theory = false
     scale = eignorm(realview(VWSinv.V))
     kw2[:scale] = scale
     itr = Iterators.product((real, imag), (:V, :W, :S))
+    title_str = Dict(:V => "V", :W => "W", :S => "S/cp")
     for (ind, (component, field)) in zip(CartesianIndices(axes(itr)), itr)
         eigenfunction(VWSinv, θ, m, operators;
             field, theory, f = subfigs[ind],
@@ -281,7 +282,7 @@ function eigenfunctions_all(VWSinv::NamedTuple, θ, m, operators; theory = false
             setylabel = ind == 1 ? true : false,
             component,
             kw2...)
-        subfigs[ind].suptitle(string(component)*"("*string(field)*")", x = 0.8)
+        subfigs[ind].suptitle(string(component)*"("*title_str[field]*")", x = 0.8)
     end
 end
 
