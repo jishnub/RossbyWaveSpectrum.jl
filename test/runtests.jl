@@ -172,15 +172,15 @@ end
             ℓℓp1 = ℓ*(ℓ+1)
 
             Jrr′ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators);
-            T = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.UniformRotGfn(), ℓ, operators);
-            (; J, J_ηρbyr, J_by_r) = T.unirot_terms;
-            Tv = T.viscosity_terms;
+            Tu = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.UniformRotGfn(), ℓ, operators);
+            (; J, J_ηρbyr, J_by_r) = Tu.unirot_terms;
+            Tv = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.ViscosityGfn(), ℓ, operators, Tu);
             (; J_ηρ2byr2, J_ηρbyr2,
                 J_ddrηρbyr2_plus_4ηρbyr3, J_ddrηρ, J_ηρ,
                 J_4ηρbyr3,
                 J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2,
                 J_ddrηρ_by_r_min_ηρbyr2,
-                J_ddrηρ_by_r2_min_4ηρbyr3) = Tv;
+                J_ddrηρ_by_r2_min_4ηρbyr3) = Tv.viscosity_terms;
 
             J_splines = [Spline1D(r_chebyshev_lobatto, @view Jrr′[r_ind, :]) for r_ind in axes(Jrr′, 1)];
             intJ_rp_r = [pi/Nquad .* sqrt.(1 .- nodesquad.^2) .* Jsp(nodesquad) for Jsp in J_splines];
@@ -1164,68 +1164,6 @@ end
 end
 
 @testset "matrix convergence with resolution" begin
-    @testset "without green function" begin
-        nr, nℓ = 45, 2
-        m = 5
-        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-        (; nvariables) = operators.constants;
-        M1 = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m;
-                operators, _greenfn = false);
-        operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
-        M2 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ, m;
-                operators = operators2, _greenfn = false);
-        operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
-        M3 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ+5, m;
-                operators = operators3, _greenfn = false);
-
-        function matrix_subsample(M, nr_M, nr, nℓ, nvariables)
-            nparams = nr*nℓ
-            M_subsample = zeros(eltype(M), nvariables*nparams, nvariables*nparams)
-            for colind in 1:nvariables, rowind in 1:nvariables
-                Mv = matrix_block(M, rowind, colind, nvariables)
-                M_subsample_v = matrix_block(M_subsample, rowind, colind, nvariables)
-                for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
-                    indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
-                    indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
-                    @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
-                end
-            end
-            return M_subsample
-        end
-
-        @test matrix_subsample(M1, nr, nr, nℓ, nvariables) == M1;
-        M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nvariables);
-        @testset for rowind in 1:nvariables, colind in 1:nvariables
-            M2_ssv = matrix_block(M2_subsampled, rowind, colind, nvariables)
-            M1v = matrix_block(M1, rowind, colind, nvariables)
-            @testset "real" begin
-                if rowind == 3 && colind == 2
-                    @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
-                else
-                    @test real(M2_ssv) ≈ real(M1v) rtol=1e-4
-                end
-            end
-            @testset "imag" begin
-                @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
-            end
-        end
-
-        M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nvariables);
-        @testset for rowind in 1:nvariables, colind in 1:nvariables
-            M3_ssv = matrix_block(M3_subsampled, rowind, colind, nvariables)
-            M1v = matrix_block(M1, rowind, colind, nvariables)
-            @testset "real" begin
-                if rowind == 3 && colind == 2
-                    @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
-                else
-                    @test real(M3_ssv) ≈ real(M1v) rtol=1e-4
-                end
-            end
-            @testset "imag" begin
-                @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
-            end
-        end
-    end
     @testset "with green function" begin
         nr, nℓ = 45, 2
         m = 5
@@ -1438,7 +1376,7 @@ end
             RossbyWaveSpectrum.radial_differential_rotation_terms_inner!((VWterm, WVterm),
                         (ℓ, ℓ′), (cosθ21, sinθdθ21, ∇²_sinθdθ21),
                         (mat(ddrΔΩ), Ω0),
-                        map(mat, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr, twoΔΩ_by_r)))
+                        map(mat, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr)))
 
             ΔΩ_ddrDDr = ΔΩ * ddrDDr
             ddrΔΩ_DDr = ddrΔΩ * DDr
