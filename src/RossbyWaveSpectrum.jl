@@ -1,6 +1,9 @@
 module RossbyWaveSpectrum
 
+using MKL
+
 using ApproxFun
+using ApproxFun: DomainSets
 using BitFlags
 using Dierckx
 using FastGaussQuadrature
@@ -14,7 +17,6 @@ const kron2 = Kronecker.KroneckerProduct
 using LinearAlgebra
 using LinearAlgebra: BLAS
 using LegendrePolynomials
-using MKL
 using OffsetArrays
 using SimpleDelimitedFiles: readdlm
 using TimerOutputs
@@ -36,6 +38,11 @@ const DATADIR = Ref("")
 const G = 6.6743e-8
 const Msun = 1.989e+33
 const Rsun = 6.959894677e+10
+
+const Tmul = TimesOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}}}
+const Tplus = PlusOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}}}
+const TFun = Fun{Chebyshev{ChebyshevInterval{Float64},Float64},Float64,Vector{Float64}}
+const TFunDeriv = ApproxFunBase.Fun{ApproxFunOrthogonalPolynomials.Ultraspherical{Int64, DomainSets.ChebyshevInterval{Float64}, Float64}, Float64, Vector{Float64}}
 
 function __init__()
     SCRATCH[] = get(ENV, "SCRATCH", homedir())
@@ -637,8 +644,7 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators,
     tempvec = zeros(length(r_chebyshev_lobatto));
 
     @. tempvec = ηρ_cheby(r_chebyshev_lobatto)
-    tempmat .= H .* tempvec'
-    ηρrHrr = tempmat
+    ηρrHrr = H .* tempvec'
 
     twoddr_plus_3ηρr_H = @. 2*ddrHrr + 3*ηρrHrr
 
@@ -656,122 +662,175 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators,
     H_g = H .* tempvec'
     J_g = lobattochebyshevtransform(H_g)
 
-    rad_terms = (; H, twoddr_plus_3ηρr_H, H_times_2byr_min_ηρ, ηρrHrr, H_ηρbyr, H_g)
+    @. tempvec = ddr_ηρ(r_chebyshev_lobatto)
+    H_ddrηρ = H .* tempvec'
+
+    @. tempvec = ηρ_by_r3(r_chebyshev_lobatto)
+    H_4ηρbyr3 = 4 .* H .* tempvec'
+
+    rad_terms = (; H, twoddr_plus_3ηρr_H, H_times_2byr_min_ηρ, ηρrHrr, H_ηρbyr, H_g,
+        H_ddrηρ, H_4ηρbyr3)
 
     unirot_terms = (; J, J_by_r, J_g, J_ηρbyr)
 
-    return (; rad_terms, unirot_terms, lobattochebyshevtransform, tempmat, tempvec)
+    return (; rad_terms, unirot_terms)
 end
 
-function greenfn_cheby(::ViscosityGfn, ℓ, operators,
-        G = greenfn_cheby(UniformRotGfn(), ℓ, operators))
+function greenfn_cheby!(::ViscosityGfn, ℓ, operators, viscosity_terms, funs,
+        G = greenfn_cheby(UniformRotGfn(), ℓ, operators),
+        tempmat = zeros(size(G.rad_terms.H)),
+        tempvec = zeros(length(operators.coordinates.r_chebyshev_lobatto)),
+        lobattochebyshevtransform =
+            LobattoChebyshev(operators.transforms.TfGL_nr,
+                    operators.transforms.TiGL_nr,
+                    operators.transforms.normr),
+    )
 
     (; r_chebyshev_lobatto) = operators.coordinates;
     (; ηρ_cheby, ηρ_by_r, ηρ2_by_r2, ηρ_by_r2, g_cheby, ddr_ηρbyr2, ddr_ηρbyr,
             ηρ_by_r3, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ,
             onebyr_cheby, onebyr2_cheby, onebyr3_cheby) = operators.rad_terms;
 
-    (; lobattochebyshevtransform, unirot_terms, tempmat, tempvec) = G
-    (; H, ηρrHrr) = G.rad_terms
+    (; unirot_terms) = G
+    L = lobattochebyshevtransform
+    (; H, ηρrHrr, H_ddrηρ, H_4ηρbyr3) = G.rad_terms
 
-    J_ηρ = lobattochebyshevtransform(ηρrHrr)
+    (;
+        J_c1,
+        J_c2_1,
+        J_c2_2,
+        J_a1_1,
+        J_a1_2,
+        J_a1_3,
+        J_4ηρbyr3,
+        J_ηρ,
+        J_ηρ²_min_2ηρbyr,
+        J_ηρ_min_2byr_ddrηρ,
+        J_ddrηρ,
+        J_ddrηρbyr2_plus_4ηρbyr3,
+        J_ηρ2byr2,
+        J_ηρbyr2,
+        J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2,
+        J_ddrηρ_by_r,
+        J_ddrηρ_by_r_min_ηρbyr2,
+        J_ddrηρ_by_r2_min_4ηρbyr3,
+        J_ddrηρ_by_r2,
+        J_d2dr2ηρ_by_r,
+    ) = viscosity_terms
 
-    @. tempvec = ddr_ηρ(r_chebyshev_lobatto)
-    H_ddrηρ = H .* tempvec'
-    J_ddrηρ = lobattochebyshevtransform(H_ddrηρ)
+    lobattochebyshev!(J_ηρ, L, ηρrHrr)
+    lobattochebyshev!(J_ddrηρ, L, H_ddrηρ)
+    lobattochebyshev!(J_4ηρbyr3, L, H_4ηρbyr3)
 
     @. tempvec = onebyr_cheby(r_chebyshev_lobatto)
     tempmat .= H_ddrηρ .* tempvec'
-    J_ddrηρ_by_r = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_ddrηρ_by_r, L, tempmat)
 
     @. tempvec = onebyr2_cheby(r_chebyshev_lobatto)
     tempmat .= H_ddrηρ .* tempvec'
-    J_ddrηρ_by_r2 = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_ddrηρ_by_r2, L, tempmat)
 
     @. tempvec = ηρ_by_r2(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
     H_ηρbyr2 = tempmat
-    J_ηρbyr2 = lobattochebyshevtransform(H_ηρbyr2)
-
-    @. tempvec = ηρ_by_r3(r_chebyshev_lobatto)
-    H_ηρbyr3 = H .* tempvec'
-    J_4ηρbyr3 = lobattochebyshevtransform(H_ηρbyr3)
-    J_4ηρbyr3 .*= 4
+    lobattochebyshev!(J_ηρbyr2, L, H_ηρbyr2)
 
     @. tempvec = ddr_ηρbyr2(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
     H_ddrηρbyr2 = tempmat
-    tempmat .= @. H_ddrηρbyr2 + 4 * H_ηρbyr3
+    @. tempmat = H_ddrηρbyr2 + H_4ηρbyr3
     H_ddrηρbyr2_plus_4ηρ_by_r3 = tempmat
-    J_ddrηρbyr2_plus_4ηρbyr3 = lobattochebyshevtransform(H_ddrηρbyr2_plus_4ηρ_by_r3)
+    lobattochebyshev!(J_ddrηρbyr2_plus_4ηρbyr3, L, H_ddrηρbyr2_plus_4ηρ_by_r3)
 
     @. tempvec = d2dr2_ηρ(r_chebyshev_lobatto) * onebyr_cheby(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
     H_d2dr2ηρ_by_r = tempmat
-    J_d2dr2ηρ_by_r = lobattochebyshevtransform(H_d2dr2ηρ_by_r)
+    lobattochebyshev!(J_d2dr2ηρ_by_r, L, H_d2dr2ηρ_by_r)
 
     @. tempvec = ηρ2_by_r2(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
     Hηρ2_by_r2 = tempmat
-    J_ηρ2byr2 = lobattochebyshevtransform(Hηρ2_by_r2)
+    lobattochebyshev!(J_ηρ2byr2, L, Hηρ2_by_r2)
 
-    tempvec .= (r -> ηρ_cheby(r) * (ηρ_cheby(r) - 2onebyr_cheby(r))).(r_chebyshev_lobatto)
+    # funs = (ηρ_cheby * (ηρ_cheby - 2onebyr_cheby)::TFun,
+    #     (ddr_ηρ * (ηρ_cheby - 2onebyr_cheby))::TFun,
+    #     ((ddr_ηρ - 2ηρ_by_r)*ddr_ηρ) ::TFun,
+    #     (2(ddr_ηρ - ηρ_by_r + onebyr2_cheby)*ηρ_cheby) ::TFun,
+    #     ((-2*ddr_ηρbyr + d2dr2_ηρ) * ηρ_cheby)::TFunDeriv,
+    #     (3ddr_ηρ - 4ηρ_by_r)::TFun,
+    #     (3d2dr2_ηρ - 8ddr_ηρ*onebyr_cheby + 8ηρ_cheby*onebyr2_cheby)::TFun,
+    #     (d3dr3_ηρ - 4d2dr2_ηρ*onebyr_cheby + 8ddr_ηρ*onebyr2_cheby - 8ηρ_cheby*onebyr3_cheby)::TFun,
+    #     )
+
+    # T::TFun = ηρ_cheby * (ηρ_cheby - 2onebyr_cheby)::TFun
+    T::TFun = funs[1]::TFun
+    @. tempvec = T(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
-    J_ηρ²_min_2ηρbyr = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_ηρ²_min_2ηρbyr, L, tempmat)
 
-    tempvec .= (r -> ddr_ηρ(r) * (ηρ_cheby(r) - 2onebyr_cheby(r))).(r_chebyshev_lobatto)
+    # T = (ddr_ηρ * (ηρ_cheby - 2onebyr_cheby))::TFun
+    T = funs[2]::TFun
+    @. tempvec = T(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
-    J_ηρ_min_2byr_ddrηρ = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_ηρ_min_2byr_ddrηρ, L, tempmat)
 
-    tempvec .= (r -> (ddr_ηρ(r) - 2ηρ_by_r(r))*ddr_ηρ(r)).(r_chebyshev_lobatto)
+    # T = ((ddr_ηρ - 2ηρ_by_r)*ddr_ηρ) ::TFun
+    T = funs[3]::TFun
+    @. tempvec = T(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
-    J_c1 = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_c1, L, tempmat)
 
-    tempvec .= (r -> 2(ddr_ηρ(r) - ηρ_by_r(r) + onebyr2_cheby(r))*ηρ_cheby(r)).(r_chebyshev_lobatto)
+    # T = (2(ddr_ηρ - ηρ_by_r + onebyr2_cheby)*ηρ_cheby) ::TFun
+    T = funs[4] ::TFun
+    @. tempvec = T(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
-    J_c2_1 = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_c2_1, L, tempmat)
 
-    tempvec .= (r -> (-2*ddr_ηρbyr(r) + d2dr2_ηρ(r))*ηρ_cheby(r)).(r_chebyshev_lobatto)
+    # T2 = ((-2*ddr_ηρbyr + d2dr2_ηρ) * ηρ_cheby)::TFunDeriv
+    T2 = funs[5]::TFunDeriv
+    @. tempvec = T2(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
-    J_c2_2 = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_c2_2, L, tempmat)
 
-    tempvec .= (r -> 3ddr_ηρ(r) - 4ηρ_by_r(r)).(r_chebyshev_lobatto)
+    # T = (3ddr_ηρ - 4ηρ_by_r)::TFun
+    T = funs[6]::TFun
+    @. tempvec = T(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
-    J_a1_1 = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_a1_1, L, tempmat)
 
-    tempvec .= (r -> 3d2dr2_ηρ(r) - 8ddr_ηρ(r)*onebyr_cheby(r) + 8ηρ_cheby(r)*onebyr2_cheby(r)).(r_chebyshev_lobatto)
+    # T = (3d2dr2_ηρ - 8ddr_ηρ*onebyr_cheby + 8ηρ_cheby*onebyr2_cheby)::TFun
+    T = funs[7]::TFun
+    @. tempvec = T(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
-    J_a1_2 = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_a1_2, L, tempmat)
 
-    tempvec .= (r -> d3dr3_ηρ(r) - 4d2dr2_ηρ(r)*onebyr_cheby(r) +
-            8ddr_ηρ(r)*onebyr2_cheby(r) - 8ηρ_cheby(r)*onebyr3_cheby(r) ).(r_chebyshev_lobatto)
+    # T = (d3dr3_ηρ - 4d2dr2_ηρ*onebyr_cheby + 8ddr_ηρ*onebyr2_cheby - 8ηρ_cheby*onebyr3_cheby)::TFun
+    T = funs[8]::TFun
+    @. tempvec = T(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
-    J_a1_3 = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_a1_3, L, tempmat)
 
-    J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2 = @. J_d2dr2ηρ_by_r - 2 * J_ddrηρ_by_r2
-    J_ddrηρ_by_r_min_ηρbyr2 = @. J_ddrηρ_by_r - J_ηρbyr2
-    J_ddrηρ_by_r2_min_4ηρbyr3 = @. J_ddrηρ_by_r2 - J_4ηρbyr3
-
-    viscosity_terms = (; J_c1, J_c2_1, J_c2_2, J_a1_1, J_a1_2, J_a1_3,
-        J_4ηρbyr3, J_ηρ,
-        J_ηρ²_min_2ηρbyr, J_ηρ_min_2byr_ddrηρ, J_ddrηρ,
-        J_ddrηρbyr2_plus_4ηρbyr3, J_ηρ2byr2,
-        J_ηρbyr2, J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2,
-        J_ddrηρ_by_r, J_ddrηρ_by_r_min_ηρbyr2,
-        J_ddrηρ_by_r2_min_4ηρbyr3)
+    @. J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2 = J_d2dr2ηρ_by_r - 2 * J_ddrηρ_by_r2
+    @. J_ddrηρ_by_r_min_ηρbyr2 = J_ddrηρ_by_r - J_ηρbyr2
+    @. J_ddrηρ_by_r2_min_4ηρbyr3 = J_ddrηρ_by_r2 - J_4ηρbyr3
 
     return (; unirot_terms, viscosity_terms)
 end
 
 function greenfn_cheby(::RadDiffRotGfn, ℓ, operators, ΔΩprofile_deriv,
-        G = greenfn_cheby(UniformRotGfn(), ℓ, operators))
+        G = greenfn_cheby(UniformRotGfn(), ℓ, operators),
+        tempmat = zeros(size(G.rad_terms.H)),
+        tempvec = zeros(length(operators.coordinates.r_chebyshev_lobatto)),
+        lobattochebyshevtransform =
+            LobattoChebyshev(operators.transforms.TfGL_nr,
+                    operators.transforms.TiGL_nr,
+                    operators.transforms.normr),
+        )
 
     (; r_chebyshev_lobatto, r_lobatto) = operators.coordinates
     (; ηρ_cheby) = operators.rad_terms
 
-    (; lobattochebyshevtransform) = G
     (; rad_terms, unirot_terms) = G
-    (; tempmat, tempvec) = G
 
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv
 
@@ -784,8 +843,7 @@ function greenfn_cheby(::RadDiffRotGfn, ℓ, operators, ΔΩprofile_deriv,
     J_ΔΩ = lobattochebyshevtransform(tempmat)
 
     @. tempvec = ddrΔΩ(r_chebyshev_lobatto)
-    tempmat .= H .* tempvec'
-    H_ddrΩ = tempmat
+    H_ddrΩ = H .* tempvec'
     J_ddrΩ = lobattochebyshevtransform(H_ddrΩ)
 
     @. tempmat = H_times_2byr_min_ηρ - twoddr_plus_3ηρr_H
@@ -872,10 +930,6 @@ function (op::SpectralOperatorForm)(A::AbstractVector)
     op(Diagonal(A))
 end
 
-const Tmul = TimesOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}}}
-const Tplus = PlusOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}}}
-const TFunSpline = Fun{Chebyshev{ChebyshevInterval{Float64},Float64},Float64,Vector{Float64}}
-
 function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true, nvariables = 3, ν = 1e10)
     _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν)
 end
@@ -906,14 +960,14 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     # density stratification
     ρ = sρ.(r)
     ηρ = sηρ.(r)
-    ηρ_cheby = ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev()), 1e-3)::TFunSpline
+    ηρ_cheby = ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev()), 1e-3)::TFun
     if ncoefficients(ηρ_cheby) == 0
-        ηρ_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFunSpline
+        ηρ_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFun
     end
     ηT = sηT.(r)
-    ηT_cheby = ApproxFun.chop(Fun(sηT ∘ r_cheby, ApproxFun.Chebyshev()), 1e-2)::TFunSpline
+    ηT_cheby = ApproxFun.chop(Fun(sηT ∘ r_cheby, ApproxFun.Chebyshev()), 1e-2)::TFun
     if ncoefficients(ηT_cheby) == 0
-        ηT_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFunSpline
+        ηT_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFun
     end
 
     DDr = (ddr + ηρ_cheby)::Tplus
@@ -943,7 +997,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     ηρ2_by_r2 = ApproxFun.chop(ηρ_by_r2 * ηρ_cheby, 1e-3)
 
     g = sg.(r)
-    g_cheby = Fun(sg ∘ r_cheby, Chebyshev())::TFunSpline
+    g_cheby = Fun(sg ∘ r_cheby, Chebyshev())::TFun
 
     Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out_frac)
 
@@ -1198,6 +1252,22 @@ function uniform_rotation_matrix!(M, nr, nℓ, m;
     return M
 end
 
+function viscosity_functions(operators)
+    (; onebyr_cheby, onebyr2_cheby, onebyr3_cheby, ηρ_cheby, r_cheby,
+        ηρ_by_r, ηρ_by_r2, ηρ_by_r3, ηρ2_by_r2,
+        g_cheby, ddr_ηρbyr2, ddr_ηρbyr, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ) = operators.rad_terms;
+
+    (ηρ_cheby * (ηρ_cheby - 2onebyr_cheby)::TFun,
+        (ddr_ηρ * (ηρ_cheby - 2onebyr_cheby))::TFun,
+        ((ddr_ηρ - 2ηρ_by_r)*ddr_ηρ) ::TFun,
+        (2(ddr_ηρ - ηρ_by_r + onebyr2_cheby)*ηρ_cheby) ::TFun,
+        ((-2*ddr_ηρbyr + d2dr2_ηρ) * ηρ_cheby)::TFunDeriv,
+        (3ddr_ηρ - 4ηρ_by_r)::TFun,
+        (3d2dr2_ηρ - 8ddr_ηρ*onebyr_cheby + 8ηρ_cheby*onebyr2_cheby)::TFun,
+        (d3dr3_ηρ - 4d2dr2_ηρ*onebyr_cheby + 8ddr_ηρ*onebyr2_cheby - 8ηρ_cheby*onebyr3_cheby)::TFun,
+        )
+end
+
 function viscosity_terms!(M, nr, nℓ, m; operators,
         ℓs = range(m, length = nℓ),
         Jtermsunirot = begin
@@ -1212,13 +1282,19 @@ function viscosity_terms!(M, nr, nℓ, m; operators,
         )
 
     (; nchebyr) = operators.radial_params;
+
     (; DDr, ddr, d2dr2) = operators.diff_operators;
+
     (; ddrM, d2dr2M, d3dr3M, d4dr4M, onebyr2_chebyM, ηρ2_by_r2M,
         ηρ_ddr_minus_2byrM, onebyr2_d2dr2M,
         onebyr3_ddrM, onebyr4_chebyM) = operators.diff_operator_matrices;
+
     (; onebyr_cheby, onebyr2_cheby, onebyr3_cheby, ηρ_cheby, r_cheby,
-        ηρ_by_r, ηρ_by_r2, ηρ_by_r3, ηρ2_by_r2) = operators.rad_terms;
+        ηρ_by_r, ηρ_by_r2, ηρ_by_r3, ηρ2_by_r2,
+        g_cheby, ddr_ηρbyr2, ddr_ηρbyr, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ) = operators.rad_terms;
+
     (; mat) = operators;
+
     (; ν, nvariables) = operators.constants;
 
     VV = matrix_block(M, 1, 1, nvariables)
@@ -1237,6 +1313,60 @@ function viscosity_terms!(M, nr, nℓ, m; operators,
     Mcache2 = zeros(nr, nr)
     Mcache3 = zeros(nr, nr)
 
+    J_c1 = zeros(nr, nr);
+    J_c2_1 = zeros(nr, nr);
+    J_c2_2 = zeros(nr, nr);
+    J_a1_1 = zeros(nr, nr);
+    J_a1_2 = zeros(nr, nr);
+    J_a1_3 = zeros(nr, nr);
+    J_4ηρbyr3 = zeros(nr, nr);
+    J_ηρ = zeros(nr, nr);
+    J_ηρ²_min_2ηρbyr = zeros(nr, nr);
+    J_ηρ_min_2byr_ddrηρ = zeros(nr, nr);
+    J_ddrηρ = zeros(nr, nr);
+    J_ddrηρbyr2_plus_4ηρbyr3 = zeros(nr, nr);
+    J_ηρ2byr2 = zeros(nr, nr);
+    J_ηρbyr2 = zeros(nr, nr);
+    J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2 = zeros(nr, nr);
+    J_ddrηρ_by_r = zeros(nr, nr);
+    J_ddrηρ_by_r_min_ηρbyr2 = zeros(nr, nr);
+    J_ddrηρ_by_r2_min_4ηρbyr3 = zeros(nr, nr);
+    J_ddrηρ_by_r2 = zeros(nr, nr);
+    J_d2dr2ηρ_by_r = zeros(nr, nr);
+
+    viscosity_terms = (;
+        J_c1,
+        J_c2_1,
+        J_c2_2,
+        J_a1_1,
+        J_a1_2,
+        J_a1_3,
+        J_4ηρbyr3,
+        J_ηρ,
+        J_ηρ²_min_2ηρbyr,
+        J_ηρ_min_2byr_ddrηρ,
+        J_ddrηρ,
+        J_ddrηρbyr2_plus_4ηρbyr3,
+        J_ηρ2byr2,
+        J_ηρbyr2,
+        J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2,
+        J_ddrηρ_by_r,
+        J_ddrηρ_by_r_min_ηρbyr2,
+        J_ddrηρ_by_r2_min_4ηρbyr3,
+        J_ddrηρ_by_r2,
+        J_d2dr2ηρ_by_r,
+    );
+
+    funs = viscosity_functions(operators)
+
+    Nlobatto = length(operators.coordinates.r_chebyshev_lobatto)
+    tempmatGfn = zeros(Nlobatto, Nlobatto);
+    tempvecGfn = zeros(Nlobatto);
+    lobattochebyshevtransform =
+        LobattoChebyshev(operators.transforms.TfGL_nr,
+                operators.transforms.TiGL_nr,
+                operators.transforms.normr);
+
     for ℓ in ℓs
         blockdiaginds_ℓ = blockinds((m, nr), ℓ)
 
@@ -1245,16 +1375,10 @@ function viscosity_terms!(M, nr, nℓ, m; operators,
 
         @views @. VV[blockdiaginds_ℓ] -= im * ν * (d2dr2M - ℓℓp1 * onebyr2_chebyM + ηρ_ddr_minus_2byrM) * Rsun^2
 
-        G = greenfn_cheby(ViscosityGfn(), ℓ, operators, Jtermsunirot[ℓ]);
+        G = greenfn_cheby!(ViscosityGfn(), ℓ, operators, viscosity_terms, funs, Jtermsunirot[ℓ],
+            tempmatGfn, tempvecGfn, lobattochebyshevtransform);
 
         (; J, J_ηρbyr) = G.unirot_terms;
-
-        (; J_ηρ2byr2, J_ηρbyr2, J_ddrηρ, J_ηρ, J_ηρ²_min_2ηρbyr, J_4ηρbyr3,
-            J_ddrηρbyr2_plus_4ηρbyr3, J_ηρ_min_2byr_ddrηρ,
-            J_c1, J_c2_1, J_c2_2,
-            J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2, J_ddrηρ_by_r_min_ηρbyr2,
-            J_ddrηρ_by_r2_min_4ηρbyr3,
-            J_a1_1, J_a1_2, J_a1_3) = G.viscosity_terms;
 
         ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
         @. d2dr2_min_ℓℓp1_by_r2_squaredM = ℓpre * onebyr4_chebyM - 2ℓℓp1*onebyr2_d2dr2M + 4ℓℓp1*onebyr3_ddrM;
@@ -1579,9 +1703,18 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
     VWterm, WVterm = (zeros(nr, nr) for i in 1:2);
 
+    Nlobatto = length(operators.coordinates.r_chebyshev_lobatto)
+    tempmatGfn = zeros(Nlobatto, Nlobatto);
+    tempvecGfn = zeros(Nlobatto);
+    lobattochebyshevtransform =
+        LobattoChebyshev(operators.transforms.TfGL_nr,
+                operators.transforms.TiGL_nr,
+                operators.transforms.normr);
+
     @views for ℓ in ℓs
         # numerical green function
-        G = greenfn_cheby(RadDiffRotGfn(), ℓ, operators, ΔΩprofile_deriv, Jtermsunirot[ℓ]);
+        G = greenfn_cheby(RadDiffRotGfn(), ℓ, operators, ΔΩprofile_deriv, Jtermsunirot[ℓ],
+            tempmatGfn, tempvecGfn, lobattochebyshevtransform);
 
         (; J, J_ηρbyr) = G.unirot_terms;
 
@@ -1890,31 +2023,29 @@ function constrained_matmul_cache(constraints)
 end
 
 function compute_constrained_matrix(M, constraints,
-        cache = constrained_matmul_cache(constraints),
-        timer = TimerOutput())
+        cache = constrained_matmul_cache(constraints))
 
     (; M_constrained, MZCcache, Mreimtemp, M_constrained_reim) = cache
     (; ZC, nvariables) = constraints
+
     #= not thread-safe if cache is preallocated =#
-    @timeit timer "basis" begin
-        for i in eachindex(M)
-            Mr = real(M[i])
-            Mreimtemp[i] = Mr
-        end
-        mul!(M_constrained_reim, ZC', mul!(MZCcache, Mreimtemp, ZC))
-        for i in eachindex(M_constrained)
-            M_constrained[i] = M_constrained_reim[i]
-        end
-        for i in eachindex(M)
-            Mr = imag(M[i])
-            Mreimtemp[i] = Mr
-        end
-        mul!(M_constrained_reim, ZC', mul!(MZCcache, Mreimtemp, ZC))
-        for i in eachindex(M_constrained)
-            M_constrained[i] += im*M_constrained_reim[i]
-        end
-        M_constrained
+    for i in eachindex(M)
+        Mr = real(M[i])
+        Mreimtemp[i] = Mr
     end
+    mul!(M_constrained_reim, ZC', mul!(MZCcache, Mreimtemp, ZC))
+    for i in eachindex(M_constrained)
+        M_constrained[i] = M_constrained_reim[i]
+    end
+    for i in eachindex(M)
+        Mr = imag(M[i])
+        Mreimtemp[i] = Mr
+    end
+    mul!(M_constrained_reim, ZC', mul!(MZCcache, Mreimtemp, ZC))
+    for i in eachindex(M_constrained)
+        M_constrained[i] += im*M_constrained_reim[i]
+    end
+
     # thread-safe version but allocating
     # M_constrained = Complex.(ZC' * real(M) * ZC, ZC' * imag(M) * ZC)
     return M_constrained
@@ -1960,18 +2091,27 @@ function balance_matrix!(M, nvariables, scales)
     return nothing
 end
 
-function realmatcomplexmatmul(A, B)
-    temp = real(B)
-    R = A * temp
-    temp .= imag.(B)
-    I = A * temp
-    Complex.(R, I)
+function realmatcomplexmatmul(A, B, (vr, vi, temp)::NTuple{3,Matrix})
+    @. temp = real(B)
+    mul!(vr, A, temp)
+    @. temp = imag(B)
+    mul!(vi, A, temp)
+    Complex.(vr, vi)
+end
+
+function allocate_projectback_temp_matrices(sz)
+    vr = zeros(sz)
+    vi = zeros(sz)
+    temp = zeros(sz[2], sz[2])
+    vr, vi, temp
 end
 
 function constrained_eigensystem(M, operators, constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints), timer = TimerOutput();
     rebalance_matrix = false,
     scalings = (; Wscaling = 1, Sscaling = 1),
+    temp_projectback = allocate_projectback_temp_matrices(size(constraints.ZC)),
+    kw...
     )
 
     (; nparams) = operators.radial_params
@@ -1986,17 +2126,15 @@ function constrained_eigensystem(M, operators, constraints = constraintmatrix(op
     if rebalance_matrix
         balance_matrix!(M, nvariables, scales)
     end
-    M_constrained = compute_constrained_matrix(M, constraints, cache, timer)
+    @timeit timer "basis" M_constrained = compute_constrained_matrix(M, constraints, cache)
     @timeit timer "eigen" λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(M_constrained)
-    @timeit timer "projectback" v = realmatcomplexmatmul(ZC, w)
+    @timeit timer "projectback" v = realmatcomplexmatmul(ZC, w, temp_projectback)
     λ, v, M
 end
 
 function uniform_rotation_spectrum(nr, nℓ, m; operators,
     constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints),
-    rebalance_matrix = false,
-    scalings = (; Wscaling = 1, Sscaling = 1),
     kw...)
 
     rp = operators.radial_params
@@ -2005,7 +2143,7 @@ function uniform_rotation_spectrum(nr, nℓ, m; operators,
     to = TimerOutput()
 
     @timeit to "matrix" M = uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; rebalance_matrix, scalings)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; kw...)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -2014,8 +2152,6 @@ end
 function uniform_rotation_spectrum!(M, nr, nℓ, m; operators,
     constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints),
-    rebalance_matrix = false,
-    scalings = (; Wscaling = 1, Sscaling = 1),
     kw...)
 
     rp = operators.radial_params
@@ -2024,7 +2160,7 @@ function uniform_rotation_spectrum!(M, nr, nℓ, m; operators,
     to = TimerOutput()
 
     @timeit to "matrix" uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; rebalance_matrix, scalings)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; kw...)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -2053,8 +2189,6 @@ function differential_rotation_spectrum(nr, nℓ, m;
     rotation_profile, operators,
     constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints),
-    rebalance_matrix = false,
-    scalings = (; Wscaling = 1, Sscaling = 1),
     kw...)
 
     rp = operators.radial_params
@@ -2063,19 +2197,16 @@ function differential_rotation_spectrum(nr, nℓ, m;
     to = TimerOutput()
 
     @timeit to "matrix" M = differential_rotation_matrix(nr, nℓ, m; operators, rotation_profile, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; rebalance_matrix, scalings)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; kw...)
     if get(kw, :print_timer, false)
         println(to)
     end
     X
 end
 function differential_rotation_spectrum!(M, nr, nℓ, m;
-    rotation_profile,
-    operators,
+    rotation_profile, operators,
     constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints),
-    rebalance_matrix = false,
-    scalings = (; Wscaling = 1, Sscaling = 1),
     kw...)
 
     rp = operators.radial_params
@@ -2084,14 +2215,14 @@ function differential_rotation_spectrum!(M, nr, nℓ, m;
     to = TimerOutput()
 
     @timeit to "matrix" differential_rotation_matrix!(M, nr, nℓ, m; operators, rotation_profile, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; rebalance_matrix, scalings)
+    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; kw...)
     if get(kw, :print_timer, false)
         println(to)
     end
     X
 end
 
-rossby_ridge(m, ℓ = m; ΔΩ_by_Ω = 0) = 2m / (ℓ * (ℓ + 1)) * (1 + ΔΩ_by_Ω) - m * ΔΩ_by_Ω
+rossby_ridge(m; ΔΩ_by_Ω = 0) = 2 / (m + 1) * (1 + ΔΩ_by_Ω) - m * ΔΩ_by_Ω
 
 function eigenvalue_filter(x, m;
     eig_imag_unstable_cutoff = -1e-3,
@@ -2396,7 +2527,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     λ, v = λ[filtinds], v[:, filtinds]
 
     # re-apply scalings
-    if get(kw, :scale_eigenvectors, true)
+    if get(kw, :scale_eigenvectors, false)
         @unpack scalings = kw
         V = @view v[1:nparams, :]
         W = @view v[nparams .+ (1:nparams), :]
@@ -2448,21 +2579,32 @@ function filter_eigenvalues(λ::AbstractVector{<:AbstractVector},
     first.(λv), last.(λv)
 end
 
-function filter_eigenvalues(f, mr::AbstractVector; #= inplace function =#
+function filter_eigenvalues(f  #= inplace function =#, mr::AbstractVector;
     operators,
     constraints = constraintmatrix(operators),
     kw...)
 
-    (; nvariables) = operators.constants
-    (; nr, nℓ, nparams) = operators.radial_params
-    Ms = [zeros(ComplexF64, nvariables * nparams, nvariables * nparams) for _ in 1:Threads.nthreads()]
-    caches = [constrained_matmul_cache(constraints) for _ in 1:Threads.nthreads()]
+    (; nvariables) = operators.constants;
+    (; nr, nℓ, nparams) = operators.radial_params;
+    ℓs = minimum(mr):maximum(mr) + nℓ - 1
+    Ms = [zeros(ComplexF64, nvariables * nparams, nvariables * nparams) for _ in 1:Threads.nthreads()];
+    caches = [constrained_matmul_cache(constraints) for _ in 1:Threads.nthreads()];
+    temp_projectback_mats = [allocate_projectback_temp_matrices(size(constraints.ZC)) for _ in 1:Threads.nthreads()];
+    Jtermsunirot = begin
+            lobattochebyshevtransform =
+                LobattoChebyshev(operators.transforms.TfGL_nr,
+                    operators.transforms.TiGL_nr,
+                    operators.transforms.normr)
+            OffsetArray(
+                map(ℓ -> greenfn_cheby(UniformRotGfn(), ℓ, operators, lobattochebyshevtransform), ℓs), ℓs)
+        end
 
     λv = @maybe_reduce_blas_threads(
         Folds.map(mr) do m
-            M = Ms[Threads.threadid()]
-            cache = caches[Threads.threadid()]
-            X = f(M, nr, nℓ, m; operators, constraints, cache, kw...)
+            M = Ms[Threads.threadid()];
+            cache = caches[Threads.threadid()];
+            temp_projectback = temp_projectback_mats[Threads.threadid()];
+            X = f(M, nr, nℓ, m; operators, constraints, cache, temp_projectback, Jtermsunirot, kw...);
             filter_eigenvalues(X..., m; operators, constraints, kw...)
         end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
     )

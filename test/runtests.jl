@@ -80,6 +80,7 @@ end
     (; ηρ_cheby, r_cheby, ηρ_by_r, ηρ2_by_r2, ηρ_by_r2,
         onebyr2_cheby, onebyr_cheby, onebyr3_cheby, onebyr4_cheby,
         ddr_ηρ, d2dr2_ηρ) = operators.rad_terms;
+    (; g_cheby, ddr_ηρbyr2, ddr_ηρbyr, ηρ_by_r3, d3dr3_ηρ) = operators.rad_terms;
     (; TfGL_nr, TiGL_nr) = operators.transforms;
     (; mat) = operators;
     d2dr2_one_by_r2_2M = mat(d2dr2[onebyr2_cheby]);
@@ -167,6 +168,52 @@ end
 
     integral_cache = zeros(length(r_chebyshev_lobatto));
 
+    J_c1 = zeros(nr, nr);
+    J_c2_1 = zeros(nr, nr);
+    J_c2_2 = zeros(nr, nr);
+    J_a1_1 = zeros(nr, nr);
+    J_a1_2 = zeros(nr, nr);
+    J_a1_3 = zeros(nr, nr);
+    J_4ηρbyr3 = zeros(nr, nr);
+    J_ηρ = zeros(nr, nr);
+    J_ηρ²_min_2ηρbyr = zeros(nr, nr);
+    J_ηρ_min_2byr_ddrηρ = zeros(nr, nr);
+    J_ddrηρ = zeros(nr, nr);
+    J_ddrηρbyr2_plus_4ηρbyr3 = zeros(nr, nr);
+    J_ηρ2byr2 = zeros(nr, nr);
+    J_ηρbyr2 = zeros(nr, nr);
+    J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2 = zeros(nr, nr);
+    J_ddrηρ_by_r = zeros(nr, nr);
+    J_ddrηρ_by_r_min_ηρbyr2 = zeros(nr, nr);
+    J_ddrηρ_by_r2_min_4ηρbyr3 = zeros(nr, nr);
+    J_ddrηρ_by_r2 = zeros(nr, nr);
+    J_d2dr2ηρ_by_r = zeros(nr, nr);
+
+    viscosity_terms = (;
+        J_c1,
+        J_c2_1,
+        J_c2_2,
+        J_a1_1,
+        J_a1_2,
+        J_a1_3,
+        J_4ηρbyr3,
+        J_ηρ,
+        J_ηρ²_min_2ηρbyr,
+        J_ηρ_min_2byr_ddrηρ,
+        J_ddrηρ,
+        J_ddrηρbyr2_plus_4ηρbyr3,
+        J_ηρ2byr2,
+        J_ηρbyr2,
+        J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2,
+        J_ddrηρ_by_r,
+        J_ddrηρ_by_r_min_ηρbyr2,
+        J_ddrηρ_by_r2_min_4ηρbyr3,
+        J_ddrηρ_by_r2,
+        J_d2dr2ηρ_by_r,
+    );
+
+    funs = RossbyWaveSpectrum.viscosity_functions(operators);
+
     @testset "integrals" begin
         @testset for ℓ in 2:10:52
             ℓℓp1 = ℓ*(ℓ+1)
@@ -174,13 +221,8 @@ end
             Jrr′ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators);
             Tu = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.UniformRotGfn(), ℓ, operators);
             (; J, J_ηρbyr, J_by_r) = Tu.unirot_terms;
-            Tv = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.ViscosityGfn(), ℓ, operators, Tu);
-            (; J_ηρ2byr2, J_ηρbyr2,
-                J_ddrηρbyr2_plus_4ηρbyr3, J_ddrηρ, J_ηρ,
-                J_4ηρbyr3,
-                J_d2dr2ηρ_by_r_min_2ddrηρ_by_r2,
-                J_ddrηρ_by_r_min_ηρbyr2,
-                J_ddrηρ_by_r2_min_4ηρbyr3) = Tv.viscosity_terms;
+            Tv = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.ViscosityGfn(), ℓ,
+                    operators, viscosity_terms, funs, Tu);
 
             J_splines = [Spline1D(r_chebyshev_lobatto, @view Jrr′[r_ind, :]) for r_ind in axes(Jrr′, 1)];
             intJ_rp_r = [pi/Nquad .* sqrt.(1 .- nodesquad.^2) .* Jsp(nodesquad) for Jsp in J_splines];
