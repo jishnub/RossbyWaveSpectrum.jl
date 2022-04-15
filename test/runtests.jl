@@ -221,7 +221,7 @@ end
             Jrr′ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators);
             Tu = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.UniformRotGfn(), ℓ, operators);
             (; J, J_ηρbyr, J_by_r) = Tu.unirot_terms;
-            Tv = RossbyWaveSpectrum.greenfn_cheby(RossbyWaveSpectrum.ViscosityGfn(), ℓ,
+            Tv = RossbyWaveSpectrum.greenfn_cheby!(RossbyWaveSpectrum.ViscosityGfn(), ℓ,
                     operators, viscosity_terms, funs, Tu);
 
             J_splines = [Spline1D(r_chebyshev_lobatto, @view Jrr′[r_ind, :]) for r_ind in axes(Jrr′, 1)];
@@ -1696,3 +1696,128 @@ end
     end
 end
 
+@testset "constant differential rotation solution" begin
+    nr, nℓ = 45, 15
+    nparams = nr * nℓ
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
+    (; r_in, r_out, Δr) = operators.radial_params
+    (; BC) = constraints;
+    @testset for m in [1, 10, 20]
+        @testset "constant" begin
+            λu, vu, Mu = RossbyWaveSpectrum.differential_rotation_spectrum(nr, nℓ, m; operators, constraints,
+                rotation_profile = :constant, ΔΩ_by_Ω = 0.02);
+            λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
+                operators, constraints, Δl_cutoff = 7, n_cutoff = 9, ΔΩ_by_Ω_low = -0.01,
+                ΔΩ_by_Ω_high = 0.03, eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
+                scale_eigenvectors = false);
+            @info "$(length(λuf)) eigenmode$(length(λuf) > 1 ? "s" : "") found for m = $m"
+            @testset "ℓ == m" begin
+                ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_by_Ω = 0.02)
+                @test findmin(abs.(real(λuf) .- ω0))[1] < 1e-4
+            end
+            @testset "boundary condition" begin
+                @testset for n in axes(vuf, 2)
+                    vfn = @view vuf[:, n]
+                    @testset "V" begin
+                        @testset for ℓind in 1:nℓ
+                            ℓ_skip = (ℓind - 1)*nr
+                            inds_ℓ = ℓ_skip .+ (1:nr)
+                            v = vfn[inds_ℓ]
+                            @test BC[1:2, inds_ℓ] * v ≈ [0, 0] atol=1e-10
+                            pv = SpecialPolynomials.Chebyshev(v)
+                            drpv = 1/(Δr/2) * SpecialPolynomials.derivative(pv)
+                            @testset "inner boundary" begin
+                                @test (drpv(-1) - 2pv(-1)/r_in)*Rsun ≈ 0 atol=1e-10
+                            end
+                            @testset "outer boundary" begin
+                                @test (drpv(1) - 2pv(1)/r_out)*Rsun ≈ 0 atol=1e-10
+                            end
+                        end
+                    end
+                    @testset "W" begin
+                        @testset for ℓind in 1:nℓ
+                            ℓ_skip = (ℓind - 1)*nr
+                            inds_ℓ = nr*nℓ + ℓ_skip .+ (1:nr)
+                            w = vfn[inds_ℓ]
+                            @test BC[3:4, inds_ℓ] * w ≈ [0, 0] atol=1e-10
+                            pw = SpecialPolynomials.Chebyshev(w)
+                            @testset "inner boundary" begin
+                                @test sum(i -> (-1)^i * w[i], axes(w, 1)) ≈ 0 atol=1e-10
+                                @test pw(-1) ≈ 0 atol=1e-10
+                            end
+                            @testset "outer boundary" begin
+                                @test sum(w) ≈ 0 atol=1e-10
+                                @test pw(1) ≈ 0 atol=1e-10
+                            end
+                        end
+                    end
+                end
+            end
+            @testset "full eigenvalue problem solution" begin
+                v = rossby_ridge_eignorm(λuf, vuf, Mu, m, nparams)
+                # these improve with resolution
+                @test v[1] < 2e-2
+                @test v[2] < 0.5
+                @test v[3] < 0.8
+            end
+        end
+        @testset "radial constant" begin
+            λu, vu, Mu = RossbyWaveSpectrum.differential_rotation_spectrum(nr, nℓ, m; operators, constraints,
+                rotation_profile = :radial_constant);
+            λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
+                operators, constraints, Δl_cutoff = 7, n_cutoff = 9, ΔΩ_by_Ω_low = -0.01,
+                ΔΩ_by_Ω_high = 0.03, eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
+                scale_eigenvectors = false);
+            @info "$(length(λuf)) eigenmode$(length(λuf) > 1 ? "s" : "") found for m = $m"
+            @testset "ℓ == m" begin
+                ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_by_Ω = 0.02)
+                @test findmin(abs.(real(λuf) .- ω0))[1] < 1e-4
+            end
+            @testset "boundary condition" begin
+                @testset for n in axes(vuf, 2)
+                    vfn = @view vuf[:, n]
+                    @testset "V" begin
+                        @testset for ℓind in 1:nℓ
+                            ℓ_skip = (ℓind - 1)*nr
+                            inds_ℓ = ℓ_skip .+ (1:nr)
+                            v = vfn[inds_ℓ]
+                            @test BC[1:2, inds_ℓ] * v ≈ [0, 0] atol=1e-10
+                            pv = SpecialPolynomials.Chebyshev(v)
+                            drpv = 1/(Δr/2) * SpecialPolynomials.derivative(pv)
+                            @testset "inner boundary" begin
+                                @test (drpv(-1) - 2pv(-1)/r_in)*Rsun ≈ 0 atol=1e-10
+                            end
+                            @testset "outer boundary" begin
+                                @test (drpv(1) - 2pv(1)/r_out)*Rsun ≈ 0 atol=1e-10
+                            end
+                        end
+                    end
+                    @testset "W" begin
+                        @testset for ℓind in 1:nℓ
+                            ℓ_skip = (ℓind - 1)*nr
+                            inds_ℓ = nr*nℓ + ℓ_skip .+ (1:nr)
+                            w = vfn[inds_ℓ]
+                            @test BC[3:4, inds_ℓ] * w ≈ [0, 0] atol=1e-10
+                            pw = SpecialPolynomials.Chebyshev(w)
+                            @testset "inner boundary" begin
+                                @test sum(i -> (-1)^i * w[i], axes(w, 1)) ≈ 0 atol=1e-10
+                                @test pw(-1) ≈ 0 atol=1e-10
+                            end
+                            @testset "outer boundary" begin
+                                @test sum(w) ≈ 0 atol=1e-10
+                                @test pw(1) ≈ 0 atol=1e-10
+                            end
+                        end
+                    end
+                end
+            end
+            @testset "full eigenvalue problem solution" begin
+                v = rossby_ridge_eignorm(λuf, vuf, Mu, m, nparams)
+                # these improve with resolution
+                @test v[1] < 2e-2
+                @test v[2] < 0.5
+                @test v[3] < 0.8
+            end
+        end
+    end
+end

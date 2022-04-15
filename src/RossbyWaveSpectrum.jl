@@ -817,7 +817,7 @@ function greenfn_cheby!(::ViscosityGfn, ℓ, operators, viscosity_terms, funs,
     return (; unirot_terms, viscosity_terms)
 end
 
-function greenfn_cheby(::RadDiffRotGfn, ℓ, operators, ΔΩprofile_deriv,
+function greenfn_cheby!(::RadDiffRotGfn, ℓ, operators, ΔΩprofile_deriv, diffrot_terms,
         G = greenfn_cheby(UniformRotGfn(), ℓ, operators),
         tempmat = zeros(size(G.rad_terms.H)),
         tempvec = zeros(length(operators.coordinates.r_chebyshev_lobatto)),
@@ -829,8 +829,21 @@ function greenfn_cheby(::RadDiffRotGfn, ℓ, operators, ΔΩprofile_deriv,
 
     (; r_chebyshev_lobatto, r_lobatto) = operators.coordinates
     (; ηρ_cheby) = operators.rad_terms
-
+    L = lobattochebyshevtransform
     (; rad_terms, unirot_terms) = G
+
+    (;
+        J_ηρbyr_ΔΩ,
+        J_ddrΩ,
+        J_twoΔΩ_by_r,
+        J_d2dr2ΔΩ,
+        J_ddrΩ_ηρ,
+        J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ,
+        twoddr_plus_3ηρr_J_ddrΔΩ,
+        J_ΔΩ,
+        twoddr_plus_3ηρr_J,
+        J_times_2byr_min_ηρ,
+    ) = diffrot_terms
 
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv
 
@@ -838,36 +851,36 @@ function greenfn_cheby(::RadDiffRotGfn, ℓ, operators, ΔΩprofile_deriv,
 
     @. tempvec = ΔΩ(r_chebyshev_lobatto)
     tempmat .= H_ηρbyr .* tempvec'
-    J_ηρbyr_ΔΩ = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_ηρbyr_ΔΩ, L, tempmat)
     tempmat .= H .* tempvec'
-    J_ΔΩ = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_ΔΩ, L, tempmat)
 
     @. tempvec = ddrΔΩ(r_chebyshev_lobatto)
     H_ddrΩ = H .* tempvec'
-    J_ddrΩ = lobattochebyshevtransform(H_ddrΩ)
+    lobattochebyshev!(J_ddrΩ, L, H_ddrΩ)
 
     @. tempmat = H_times_2byr_min_ηρ - twoddr_plus_3ηρr_H
     tempmat .*= tempvec'
-    J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ, L, tempmat)
 
     tempmat .= twoddr_plus_3ηρr_H .* tempvec'
-    twoddr_plus_3ηρr_J_ddrΔΩ = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(twoddr_plus_3ηρr_J_ddrΔΩ, L, tempmat)
 
     @. tempvec = ηρ_cheby(r_chebyshev_lobatto)
     tempmat .= H_ddrΩ .* tempvec'
-    J_ddrΩ_ηρ = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_ddrΩ_ηρ, L, tempmat)
 
     @. tempvec = 2ΔΩ(r_chebyshev_lobatto) / r_lobatto
     tempmat .= H .*  tempvec'
-    J_twoΔΩ_by_r = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_twoΔΩ_by_r, L, tempmat)
 
     @. tempvec .= d2dr2ΔΩ(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
-    J_d2dr2ΔΩ = lobattochebyshevtransform(tempmat)
+    lobattochebyshev!(J_d2dr2ΔΩ, L, tempmat)
 
-    twoddr_plus_3ηρr_J = lobattochebyshevtransform(twoddr_plus_3ηρr_H)
+    lobattochebyshev!(twoddr_plus_3ηρr_J, L, twoddr_plus_3ηρr_H)
 
-    J_times_2byr_min_ηρ = lobattochebyshevtransform(H_times_2byr_min_ηρ)
+    lobattochebyshev!(J_times_2byr_min_ηρ, L, H_times_2byr_min_ηρ)
 
     diffrot_terms = (; J_ηρbyr_ΔΩ, J_ddrΩ,
         J_twoΔΩ_by_r, J_d2dr2ΔΩ, J_ddrΩ_ηρ,
@@ -1661,24 +1674,16 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
     ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(m; operators, rotation_profile);
 
-    (; ΔΩ, Ω0, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv;
+    (; ΔΩ, ddrΔΩ) = ΔΩprofile_deriv;
 
     ΔΩM = mat(ΔΩ);
     ddrΔΩM = mat(ddrΔΩ);
 
-    ddrΔΩ_over_g = ddrΔΩ / g_cheby;
-    ddrΔΩ_over_gM = mat(ddrΔΩ_over_g);
-    ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr)::Tmul;
-    ddrΔΩ_over_g_DDrM = mat(ddrΔΩ_over_g_DDr);
+    # ddrΔΩ_over_g = ddrΔΩ / g_cheby;
+    # ddrΔΩ_over_gM = mat(ddrΔΩ_over_g);
+    # ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr)::Tmul;
+    # ddrΔΩ_over_g_DDrM = mat(ddrΔΩ_over_g_DDr);
     ddrΔΩ_plus_ΔΩddr = (ddrΔΩ + (ΔΩ * ddr)::Tmul)::Tplus;
-    twoΔΩ_by_r = 2ΔΩ * onebyr_cheby;
-    two_ΔΩbyr_ηρ = twoΔΩ_by_r * ηρ_cheby;
-    ΔΩ_ddrDDr = (ΔΩ * ddrDDr)::Tmul;
-    ΔΩ_by_r2 = ΔΩ * onebyr2_cheby;
-    ddrΔΩ_ddr_plus_2byr = (ddrΔΩ * (ddr + 2onebyr_cheby)::Tplus)::Tmul;
-    ddrΔΩ_DDr = (ddrΔΩ * DDr)::Tmul;
-
-    ddrΔΩDDr_plus_d2dr2ΔΩM = mat(ddrΔΩ * DDr + d2dr2ΔΩ);
 
     ℓs = range(m, length = nℓ);
 
@@ -1686,8 +1691,8 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     cosθo = OffsetArray(cosθ, ℓs, ℓs);
     sinθdθ = sintheta_dtheta_operator(nℓ, m);
     sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs);
-    cosθsinθdθ = (costheta_operator(nℓ + 1, m)*sintheta_dtheta_operator(nℓ + 1, m))[1:end-1, 1:end-1];
-    cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
+    # cosθsinθdθ = (costheta_operator(nℓ + 1, m)*sintheta_dtheta_operator(nℓ + 1, m))[1:end-1, 1:end-1];
+    # cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
     ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs);
 
     DDr_min_2byr = (DDr - 2onebyr_cheby)::Tplus;
@@ -1695,13 +1700,8 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     ΔΩ_DDr = (ΔΩ * DDr)::Tmul;
     ΔΩ_by_r = ΔΩ * onebyr_cheby;
 
-    ηρ_chebyM = mat(ηρ_cheby);
-    twobyr_min_ηρM = 2onebyr_chebyM - ηρ_chebyM;
-
     inner_matrices = map(mat, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr));
     (ΔΩ_by_rM, ΔΩ_DDrM, ΔΩ_DDr_min_2byrM, ddrΔΩ_plus_ΔΩddrM) = inner_matrices;
-
-    VWterm, WVterm = (zeros(nr, nr) for i in 1:2);
 
     Nlobatto = length(operators.coordinates.r_chebyshev_lobatto)
     tempmatGfn = zeros(Nlobatto, Nlobatto);
@@ -1711,18 +1711,35 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
                 operators.transforms.TiGL_nr,
                 operators.transforms.normr);
 
+    J_ηρbyr_ΔΩ = zeros(nr, nr);
+    J_ddrΩ = zeros(nr, nr);
+    J_twoΔΩ_by_r = zeros(nr, nr);
+    J_d2dr2ΔΩ = zeros(nr, nr);
+    J_ddrΩ_ηρ = zeros(nr, nr);
+    J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ = zeros(nr, nr);
+    twoddr_plus_3ηρr_J_ddrΔΩ = zeros(nr, nr);
+    J_ΔΩ = zeros(nr, nr);
+    twoddr_plus_3ηρr_J = zeros(nr, nr);
+    J_times_2byr_min_ηρ = zeros(nr, nr);
+
+    diffrot_terms = (;
+        J_ηρbyr_ΔΩ,
+        J_ddrΩ,
+        J_twoΔΩ_by_r,
+        J_d2dr2ΔΩ,
+        J_ddrΩ_ηρ,
+        J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ,
+        twoddr_plus_3ηρr_J_ddrΔΩ,
+        J_ΔΩ,
+        twoddr_plus_3ηρr_J,
+        J_times_2byr_min_ηρ,
+    );
+
     @views for ℓ in ℓs
         # numerical green function
-        G = greenfn_cheby(RadDiffRotGfn(), ℓ, operators, ΔΩprofile_deriv, Jtermsunirot[ℓ],
+        G = greenfn_cheby!(RadDiffRotGfn(), ℓ, operators, ΔΩprofile_deriv,
+            diffrot_terms, Jtermsunirot[ℓ],
             tempmatGfn, tempvecGfn, lobattochebyshevtransform);
-
-        (; J, J_ηρbyr) = G.unirot_terms;
-
-        (; J_ηρbyr_ΔΩ, twoddr_plus_3ηρr_J_ddrΔΩ,
-            J_twoΔΩ_by_r, J_ΔΩ, J_ddrΩ, J_d2dr2ΔΩ,
-            J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ,
-            J_ddrΩ_ηρ, twoddr_plus_3ηρr_J,
-            J_times_2byr_min_ηρ) = G.diffrot_terms;
 
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ);
 
@@ -1999,13 +2016,17 @@ function differential_rotation_matrix(nr, nℓ, m; rotation_profile, operators, 
     _differential_rotation_matrix!(M, nr, nℓ, m, rotation_profile; operators, Jtermsunirot, ℓs)
     return M
 end
-function differential_rotation_matrix!(M, nr, nℓ, m; rotation_profile, operators, kw...)
-    ℓs = range(m, length = nℓ)
-    lobattochebyshevtransform = LobattoChebyshev(operators.transforms.TfGL_nr,
-                                    operators.transforms.TiGL_nr,
-                                    operators.transforms.normr)
-    Jtermsunirot = OffsetArray(
-            map(ℓ -> greenfn_cheby(UniformRotGfn(), ℓ, operators, lobattochebyshevtransform), ℓs), ℓs)
+function differential_rotation_matrix!(M, nr, nℓ, m; rotation_profile, operators,
+    ℓs = range(m, length = nℓ),
+    Jtermsunirot = begin
+        lobattochebyshevtransform = LobattoChebyshev(operators.transforms.TfGL_nr,
+                                operators.transforms.TiGL_nr,
+                                operators.transforms.normr)
+        OffsetArray(
+        map(ℓ -> greenfn_cheby(UniformRotGfn(), ℓ, operators, lobattochebyshevtransform), ℓs), ℓs)
+    end,
+    kw...)
+
     uniform_rotation_matrix!(M, nr, nℓ, m; operators, Jtermsunirot, ℓs, kw...)
     _differential_rotation_matrix!(M, nr, nℓ, m, rotation_profile; operators, Jtermsunirot, ℓs)
     return M
