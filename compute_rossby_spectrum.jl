@@ -35,14 +35,13 @@ scale_eigenvectors = false
 
 operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac);
 
-f = (x...; kw...) -> RossbyWaveSpectrum.differential_rotation_spectrum!(x...;
-    rotation_profile = :constant, kw...);
-# f = RossbyWaveSpectrum.uniform_rotation_spectrum!
+spectrumfn! = RossbyWaveSpectrum.diffrotspectrumfn!(:constant);
+# spectrumfn! = RossbyWaveSpectrum.uniform_rotation_spectrum!
 @show nr nℓ mrange Δl_cutoff Δl_power_cutoff eigen_rtol ΔΩ_by_Ω_low ΔΩ_by_Ω_high;
 @show scale_eigenvectors;
 @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads();
 
-@time RossbyWaveSpectrum.save_eigenvalues(f, nr, nℓ, mrange;
+@time RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, nr, nℓ, mrange;
     atol_constraint, Δl_cutoff, Δl_power_cutoff,
     eigen_rtol, n_cutoff, n_power_cutoff,
     ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, operators,

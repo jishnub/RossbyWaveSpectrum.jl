@@ -2555,31 +2555,40 @@ macro maybe_reduce_blas_threads(ex)
     end
 end
 
+diffrotmatrixfn!(rotation_profile) = (x...; kw...) -> differential_rotation_matrix!(x...; rotation_profile, kw..., )
+diffrotspectrumfn!(rotation_profile) = (x...; kw...) -> differential_rotation_spectrum!(x...; rotation_profile, kw..., )
+
 function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector;
-    Mfn = uniform_rotation_matrix!,
-    operators,
-    constraints = constraintmatrix(operators),
-    kw...)
+    matrixfn! = uniform_rotation_matrix!,
+    operators, constraints = constraintmatrix(operators),kw...)
 
     (; nr, nℓ, nparams) = operators.radial_params
     (; nvariables) = operators.constants
     Ms = [zeros(ComplexF64, nvariables*nparams, nvariables*nparams) for _ in 1:Threads.nthreads()]
+    ℓs = minimum(mr):maximum(mr) + nℓ - 1
+    Jtermsunirot = begin
+        lobattochebyshevtransform =
+            LobattoChebyshev(operators.transforms.TfGL_nr,
+                operators.transforms.TiGL_nr,
+                operators.transforms.normr)
+        OffsetArray(
+            map(ℓ -> greenfn_cheby(UniformRotGfn(), ℓ, operators, lobattochebyshevtransform), ℓs), ℓs)
+    end
+
     λv = @maybe_reduce_blas_threads(
         Folds.map(zip(λs, vs, mr)) do (λm, vm, m)
             M = Ms[Threads.threadid()]
-            Mfn(M, nr, nℓ, m; operators)
+            matrixfn!(M, nr, nℓ, m; operators, Jtermsunirot)
             _M = _maybetrimM(M, nvariables, nparams)
             filter_eigenvalues(λm, vm, _M, m; operators, constraints, kw...)
-        end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
+        end
     )
     first.(λv), last.(λv)
 end
 
-function filter_eigenvalues(f  #= inplace function =#, mr::AbstractVector;
-    operators,
-    constraints = constraintmatrix(operators),
-    kw...)
+function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
+    operators, constraints = constraintmatrix(operators), kw...)
 
     (; nvariables) = operators.constants;
     (; nr, nℓ, nparams) = operators.radial_params;
@@ -2601,7 +2610,7 @@ function filter_eigenvalues(f  #= inplace function =#, mr::AbstractVector;
             M = Ms[Threads.threadid()];
             cache = caches[Threads.threadid()];
             temp_projectback = temp_projectback_mats[Threads.threadid()];
-            X = f(M, nr, nℓ, m; operators, constraints, cache, temp_projectback, Jtermsunirot, kw...);
+            X = spectrumfn!(M, nr, nℓ, m; operators, constraints, cache, temp_projectback, Jtermsunirot, kw...);
             filter_eigenvalues(X..., m; operators, constraints, kw...)
         end
     )
