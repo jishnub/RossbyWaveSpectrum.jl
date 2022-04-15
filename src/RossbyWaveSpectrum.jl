@@ -1176,16 +1176,10 @@ function uniform_rotation_matrix!(M, nr, nℓ, m;
         )
 
     (; nvariables, Ω0, scalings) = operators.constants;
-    (; nchebyr, r_out) = operators.radial_params;
-    (; ddr, d2dr2) = operators.diff_operators;
-    (; onebyr2_cheby, onebyr_cheby, ddr_lnρT, κ,
-        ηρ_cheby, r_cheby, ddr_S0_by_cp) = operators.rad_terms;
-    (; ddrDDrM, ddrM, DDrM, onebyr2_chebyM,
-        onebyr_chebyM, grddrM, gM, ddr_minus_2byrM,
-        DDr_minus_2byrM, ηρ_by_rM,
+    (; nchebyr) = operators.radial_params;
+    (; ddrDDrM, ddrM, DDrM, onebyr_chebyM, gM, DDr_minus_2byrM,
         onebyr2_IplusrηρM, onebyr2_cheby_ddr_S0_by_cpM,
         κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M) = operators.diff_operator_matrices;
-    (; mat) = operators;
     (; Sscaling, Wscaling) = scalings;
 
     WVℓℓ′ = zeros(nr, nr)
@@ -1266,9 +1260,8 @@ function uniform_rotation_matrix!(M, nr, nℓ, m;
 end
 
 function viscosity_functions(operators)
-    (; onebyr_cheby, onebyr2_cheby, onebyr3_cheby, ηρ_cheby, r_cheby,
-        ηρ_by_r, ηρ_by_r2, ηρ_by_r3, ηρ2_by_r2,
-        g_cheby, ddr_ηρbyr2, ddr_ηρbyr, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ) = operators.rad_terms;
+    (; onebyr_cheby, onebyr2_cheby, onebyr3_cheby, ηρ_cheby,
+        ηρ_by_r, ddr_ηρbyr, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ) = operators.rad_terms;
 
     (ηρ_cheby * (ηρ_cheby - 2onebyr_cheby)::TFun,
         (ddr_ηρ * (ηρ_cheby - 2onebyr_cheby))::TFun,
@@ -1294,20 +1287,8 @@ function viscosity_terms!(M, nr, nℓ, m; operators,
         kw...
         )
 
-    (; nchebyr) = operators.radial_params;
-
-    (; DDr, ddr, d2dr2) = operators.diff_operators;
-
-    (; ddrM, d2dr2M, d3dr3M, d4dr4M, onebyr2_chebyM, ηρ2_by_r2M,
-        ηρ_ddr_minus_2byrM, onebyr2_d2dr2M,
+    (; ddrM, d2dr2M, d3dr3M, onebyr2_chebyM, ηρ_ddr_minus_2byrM, onebyr2_d2dr2M,
         onebyr3_ddrM, onebyr4_chebyM) = operators.diff_operator_matrices;
-
-    (; onebyr_cheby, onebyr2_cheby, onebyr3_cheby, ηρ_cheby, r_cheby,
-        ηρ_by_r, ηρ_by_r2, ηρ_by_r3, ηρ2_by_r2,
-        g_cheby, ddr_ηρbyr2, ddr_ηρbyr, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ) = operators.rad_terms;
-
-    (; mat) = operators;
-
     (; ν, nvariables) = operators.constants;
 
     VV = matrix_block(M, 1, 1, nvariables)
@@ -2112,19 +2093,23 @@ function balance_matrix!(M, nvariables, scales)
     return nothing
 end
 
-function realmatcomplexmatmul(A, B, (vr, vi, temp)::NTuple{3,Matrix})
+function realmatcomplexmatmul(A, B, (vr, vi, v, temp)::NTuple{4,Matrix})
     @. temp = real(B)
     mul!(vr, A, temp)
     @. temp = imag(B)
     mul!(vi, A, temp)
-    Complex.(vr, vi)
+    for i in eachindex(v)
+        v[i] = complex(vr[i], vi[i])
+    end
+    v
 end
 
 function allocate_projectback_temp_matrices(sz)
     vr = zeros(sz)
     vi = zeros(sz)
+    v = zeros(ComplexF64, sz)
     temp = zeros(sz[2], sz[2])
-    vr, vi, temp
+    vr, vi, v, temp
 end
 
 function constrained_eigensystem(M, operators, constraints = constraintmatrix(operators),
