@@ -19,6 +19,7 @@ using LinearAlgebra: BLAS
 using LegendrePolynomials
 using OffsetArrays
 using SimpleDelimitedFiles: readdlm
+using StructArrays
 using TimerOutputs
 using UnPack
 
@@ -2028,21 +2029,15 @@ function compute_constrained_matrix(M, constraints,
         cache = constrained_matmul_cache(constraints))
 
     (; M_constrained, MZCcache, Mreimtemp, M_constrained_reim) = cache
-    (; ZC, nvariables) = constraints
+    (; ZC) = constraints
 
     #= not thread-safe if cache is preallocated =#
-    for i in eachindex(M)
-        Mr = real(M[i])
-        Mreimtemp[i] = Mr
-    end
+    Mreimtemp .= real.(M)
     mul!(M_constrained_reim, ZC', mul!(MZCcache, Mreimtemp, ZC))
     for i in eachindex(M_constrained)
         M_constrained[i] = M_constrained_reim[i]
     end
-    for i in eachindex(M)
-        Mr = imag(M[i])
-        Mreimtemp[i] = Mr
-    end
+    Mreimtemp .= imag.(M)
     mul!(M_constrained_reim, ZC', mul!(MZCcache, Mreimtemp, ZC))
     for i in eachindex(M_constrained)
         M_constrained[i] += im*M_constrained_reim[i]
@@ -2093,23 +2088,20 @@ function balance_matrix!(M, nvariables, scales)
     return nothing
 end
 
-function realmatcomplexmatmul(A, B, (vr, vi, v, temp)::NTuple{4,Matrix})
+function realmatcomplexmatmul(A, B, (v, temp)::NTuple{2,AbstractMatrix})
     @. temp = real(B)
-    mul!(vr, A, temp)
+    mul!(v.re, A, temp)
     @. temp = imag(B)
-    mul!(vi, A, temp)
-    for i in eachindex(v)
-        v[i] = complex(vr[i], vi[i])
-    end
+    mul!(v.im, A, temp)
     v
 end
 
 function allocate_projectback_temp_matrices(sz)
     vr = zeros(sz)
     vi = zeros(sz)
-    v = zeros(ComplexF64, sz)
+    v = StructArray{ComplexF64}((vr, vi))
     temp = zeros(sz[2], sz[2])
-    vr, vi, v, temp
+    v, temp
 end
 
 function constrained_eigensystem(M, operators, constraints = constraintmatrix(operators),
@@ -2335,8 +2327,7 @@ function chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff = 7, n_power_cut
 end
 
 function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
-    θ_cutoff = deg2rad(75), equator_power_cutoff_frac = 0.3,
-    rad_cutoff = 0.15, rad_power_cutoff_frac = 0.8;
+    θ_cutoff = deg2rad(75), equator_power_cutoff_frac = 0.3;
     nℓ = operators.radial_params.nℓ,
     Plcosθ = zeros(range(m, length=nℓ)),
     filterfieldpowercutoff = 1e-4)
@@ -2359,7 +2350,7 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
         eqfilter &= powflag & peakflag
     end
 
-    eqfilter, θ, fields
+    eqfilter
 end
 
 function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
@@ -2401,7 +2392,7 @@ Base.:(!)(F::FilterFlag) = FilterFlag(127 - Int(F))
 Base.in(t::FilterFlag, F::FilterFlag) = (t & F) != F_NONE
 Base.broadcastable(x::FilterFlag) = Ref(x)
 
-function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any})
+function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any}, filterflags)
 
     (; BC) = constraints
     (; nℓ) = operators.radial_params;
@@ -2421,52 +2412,51 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
     @unpack eigen_rtol = kw
     @unpack filterfieldpowercutoff = kw
     @unpack nnodesmax = kw
-    @unpack filterflags = kw
     @unpack scalings = kw
-    @unpack filterflags = kw
 
-    (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache;
+    (; MVcache, Vcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache;
 
     FILTERS = FilterFlag(filterflags)
 
     if F_EIGEN in FILTERS
         f1 = eigenvalue_filter(λ, m;
-            eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
-            ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff)
+        eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
+        ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, eig_imag_damped_cutoff)
         f1 || return false
     end
 
+    Vcache .= v
     if F_SPHARM in FILTERS
-        f2 = sphericalharmonic_filter!(VWSinvsh, F, v, operators,
+        f2 = sphericalharmonic_filter!(VWSinvsh, F, Vcache, operators,
             Δl_cutoff, Δl_power_cutoff, filterfieldpowercutoff)
         f2 || return false
     end
 
     if F_BC in FILTERS
-        f3 = boundary_condition_filter(v, BC, BCVcache, atol_constraint)
+        f3 = boundary_condition_filter(Vcache, BC, BCVcache, atol_constraint)
         f3 || return false
     end
 
     if F_CHEBY in FILTERS
-        f4 = chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff,
+        f4 = chebyshev_filter!(VWSinv, F, Vcache, m, operators, n_cutoff,
             n_power_cutoff; nℓ, Plcosθ,filterfieldpowercutoff)
         f4 || return false
     end
 
     if F_SPATIAL in FILTERS
-        f5, θ, fields = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
+        f5 = spatial_filter!(VWSinv, VWSinvsh, F, Vcache, m, operators,
             θ_cutoff, equator_power_cutoff_frac; nℓ, Plcosθ,
             filterfieldpowercutoff)
         f5 || return false
     end
 
     if F_EIGEN in FILTERS
-        f6 = eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
+        f6 = eigensystem_satisfy_filter(λ, Vcache, M, MVcache, eigen_rtol)
         f6 || return false
     end
 
     if F_NODES in FILTERS
-        f7 = nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
+        f7 = nodes_filter(VWSinv, VWSinvsh, F, Vcache, m, operators;
                 nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax)
         f7 || return false
     end
@@ -2486,6 +2476,7 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
     (; nr, nℓ, nparams) = operators.radial_params
     # temporary cache arrays
     MVcache = Vector{ComplexF64}(undef, nvariables * nparams)
+    Vcache = Vector{ComplexF64}(undef, nvariables * nparams)
     BCVcache = Vector{ComplexF64}(undef, size(BC, 1))
 
     nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
@@ -2494,7 +2485,7 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
 
     Plcosθ = zeros(range(m, length=nℓ))
 
-    return (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F)
+    return (; MVcache, Vcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F)
 end
 
 const DefaultFilterParams = Dict(
@@ -2513,22 +2504,23 @@ const DefaultFilterParams = Dict(
     :equator_power_cutoff_frac => 0.3,
     :nnodesmax => 10,
     :filterfieldpowercutoff => 1e-4,
-    :filterflags => F_EIGVAL | F_EIGEN | F_SPHARM | F_CHEBY | F_BC | F_SPATIAL,
     :scalings => (; Wscaling = 1, Sscaling = 1),
-)
+    )
+const DefaultFilter = F_EIGVAL | F_EIGEN | F_SPHARM | F_CHEBY | F_BC | F_SPATIAL
 
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     M::AbstractMatrix, m::Integer;
     operators,
     constraints = constraintmatrix(operators),
     filtercache = allocate_filter_caches(m; operators, constraints),
+    filterflags = DefaultFilter,
     kw...)
 
     (; nparams) = operators.radial_params;
     kw = merge(DefaultFilterParams, kw)
     additional_params = (operators, constraints, filtercache, kw)
 
-    inds_bool = filterfn.(λ, eachcol(v), m, (M,), (additional_params,))
+    inds_bool = filterfn.(λ, eachcol(v), m, (M,), (additional_params,), filterflags)
     filtinds = axes(λ, 1)[inds_bool]
     λ, v = λ[filtinds], v[:, filtinds]
 
@@ -2563,9 +2555,8 @@ macro maybe_reduce_blas_threads(ex)
     end
 end
 
-function filter_eigenvalues(λ::AbstractVector{<:AbstractVector},
-    v::AbstractVector{<:AbstractMatrix},
-    mr::AbstractVector;
+function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
+    vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector;
     Mfn = uniform_rotation_matrix!,
     operators,
     constraints = constraintmatrix(operators),
@@ -2575,7 +2566,7 @@ function filter_eigenvalues(λ::AbstractVector{<:AbstractVector},
     (; nvariables) = operators.constants
     Ms = [zeros(ComplexF64, nvariables*nparams, nvariables*nparams) for _ in 1:Threads.nthreads()]
     λv = @maybe_reduce_blas_threads(
-        Folds.map(zip(λ, v, mr)) do (λm, vm, m)
+        Folds.map(zip(λs, vs, mr)) do (λm, vm, m)
             M = Ms[Threads.threadid()]
             Mfn(M, nr, nℓ, m; operators)
             _M = _maybetrimM(M, nvariables, nparams)
@@ -2612,16 +2603,16 @@ function filter_eigenvalues(f  #= inplace function =#, mr::AbstractVector;
             temp_projectback = temp_projectback_mats[Threads.threadid()];
             X = f(M, nr, nℓ, m; operators, constraints, cache, temp_projectback, Jtermsunirot, kw...);
             filter_eigenvalues(X..., m; operators, constraints, kw...)
-        end::Vector{Tuple{Vector{ComplexF64},Matrix{ComplexF64}}}
+        end
     )
     first.(λv), last.(λv)
 end
 function filter_eigenvalues(filename::String; kw...)
-    λ, v, mr, nr, nℓ, kwold = load(filename, "lam", "vec", "mr", "nr", "nℓ", "kw");
+    λs, vs, mr, nr, nℓ, kwold = load(filename, "lam", "vec", "mr", "nr", "nℓ", "kw");
     kw = merge(kwold, kw)
     operators = radial_operators(nr, nℓ)
     constraints = constraintmatrix(operators)
-    filter_eigenvalues(λ, v, mr; operators, constraints, kw...)
+    filter_eigenvalues(λs, vs, mr; operators, constraints, kw...)
 end
 
 rossbyeigenfilename(nr, nℓ, tag = "ur", posttag = "") = "$(tag)_nr$(nr)_nl$(nℓ)$(posttag).jld2"

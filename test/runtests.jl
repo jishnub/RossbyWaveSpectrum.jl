@@ -1300,9 +1300,10 @@ end
         @testset "ℓ == m" begin
             @test findmin(abs.(real(λuf) .- 2/(m+1)))[1] < 1e-4
         end
+        vfn = zeros(eltype(vuf), size(vuf, 1))
         @testset "boundary condition" begin
             @testset for n in axes(vuf, 2)
-                vfn = @view vuf[:, n]
+                vfn .= @view vuf[:, n]
                 @testset "V" begin
                     @testset for ℓind in 1:nℓ
                         ℓ_skip = (ℓind - 1)*nr
@@ -1715,9 +1716,10 @@ end
                 ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_by_Ω = 0.02)
                 @test findmin(abs.(real(λuf) .- ω0))[1] < 1e-4
             end
+            vfn = zeros(eltype(vuf), size(vuf, 1))
             @testset "boundary condition" begin
                 @testset for n in axes(vuf, 2)
-                    vfn = @view vuf[:, n]
+                    vfn .= @view vuf[:, n]
                     @testset "V" begin
                         @testset for ℓind in 1:nℓ
                             ℓ_skip = (ℓind - 1)*nr
@@ -1773,9 +1775,10 @@ end
                 ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_by_Ω = 0.02)
                 @test findmin(abs.(real(λuf) .- ω0))[1] < 1e-4
             end
+            vfn = zeros(eltype(vuf), size(vuf, 1))
             @testset "boundary condition" begin
                 @testset for n in axes(vuf, 2)
-                    vfn = @view vuf[:, n]
+                    vfn .= @view vuf[:, n]
                     @testset "V" begin
                         @testset for ℓind in 1:nℓ
                             ℓ_skip = (ℓind - 1)*nr
