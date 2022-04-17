@@ -118,7 +118,7 @@ end
     end
 
     @testset for ℓ in 2:5:42
-        (; sρ) = operators.rad_terms
+        (; sρ) = operators.rad_terms;
 
         Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators)
         @testset "boundaries" begin
@@ -130,27 +130,16 @@ end
 
         @testset "symmetry" begin
             H2 = Hℓ .* sρ.(r_lobatto)
-            @test H2 ≈ Symmetric(H2) rtol=1e-1
-            @test_broken H2 ≈ Symmetric(H2) rtol=1e-2
+            @test H2 ≈ Symmetric(H2) rtol=1e-2
         end
 
         @testset "unstratified" begin
             # in this case there's an analytical solution
             Hℓ = RossbyWaveSpectrum.greenfn_radial_lobatto(ℓ, operators_unstratified)
             J_exp = greenfn_radial_lobatto_unstratified_analytical(ℓ, operators_unstratified)
-            if ℓ < 15
-                @test Hℓ ≈ J_exp rtol=1e-2
-            else
-                @test Hℓ ≈ J_exp rtol=1e-1
-                @test_broken Hℓ ≈ J_exp rtol=1e-2
-            end
+            @test Hℓ ≈ J_exp rtol=1e-2
             @testset "symmetry" begin
-                if ℓ < 20
-                    @test Hℓ ≈ Symmetric(Hℓ) rtol=1e-2
-                else
-                    @test Hℓ ≈ Symmetric(Hℓ) rtol=1e-1
-                    @test_broken Hℓ ≈ Symmetric(Hℓ) rtol=1e-2
-                end
+                @test Hℓ ≈ Symmetric(Hℓ) rtol=1e-2
             end
             @testset "differential equation" begin
                 B, scale = RossbyWaveSpectrum.Bℓ(ℓ, operators_unstratified)

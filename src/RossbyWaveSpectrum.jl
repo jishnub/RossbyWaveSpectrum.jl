@@ -1083,7 +1083,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     normr = sqrt.(1 .- r_chebyshev_lobatto.^2) * pi/n_lobatto
 
-    deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-3)
+    deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-5)
 
     # scalings = (; Sscaling = 1, Wscaling = 1)
     scalings = (; Sscaling = 1e6, Wscaling = 5e2)
