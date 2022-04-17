@@ -439,13 +439,22 @@ function plot_diffrot_radial(operators, smoothing_param = 1e-5)
     f.tight_layout()
 end
 
-function compare_terms(terms...)
+function compare_terms(terms...; x = nothing, y = nothing, titles = ["" for _ in terms])
     n = length(terms)
     f = figure()
-    for (ind, term) in enumerate(terms)
+    for (ind, (term, title)) in enumerate(zip(terms, titles))
         ax = subplot(1, n, ind)
-        p = ax.pcolormesh(term)
-        colorbar(mappable = p)
+        ax.xaxis.set_major_locator(ticker.MaxNLocator(4))
+        ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
+        p = if isnothing(x) && isnothing(y)
+            ax.pcolormesh(term)
+        else
+            ax.pcolormesh(x, y, term, shading = "auto")
+        end
+        ax.set_title(title)
+        cb = colorbar(mappable = p)
+        cb.ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
     end
+    f.set_size_inches(4n, 4)
     f.tight_layout()
 end
