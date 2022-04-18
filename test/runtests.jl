@@ -661,52 +661,55 @@ end
 end
 
 @testset "uniform rotation" begin
-    nr, nℓ = 30, 2
+    nr, nℓ = 50, 2
     nparams = nr * nℓ
     m = 1
-    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-    (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators
-    (; r, r_chebyshev) = coordinates
-    (; nvariables, ν, Ω0) = operators.constants
-    r_mid = radial_params.r_mid::Float64
-    Δr = radial_params.Δr::Float64
-    a = 1 / (Δr / 2)
-    b = -r_mid / (Δr / 2)
-    r̄(r) = clamp(a * r + b, -1.0, 1.0)
-    (; Tcrfwd) = operators.transforms
-    (; ddr, d2dr2, DDr) = operators.diff_operators
-    (; DDrM, ddrDDrM, onebyr2_chebyM, ddrM, onebyr_chebyM, gM) = operators.diff_operator_matrices
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+    (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators;
+    (; r, r_chebyshev) = coordinates;
+    (; nvariables, ν, Ω0) = operators.constants;
+    r_mid = radial_params.r_mid::Float64;
+    Δr = radial_params.Δr::Float64;
+    a = 1 / (Δr / 2);
+    b = -r_mid / (Δr / 2);
+    r̄(r) = clamp(a * r + b, -1.0, 1.0);
+
+    (; Tcrfwd) = operators.transforms;
+
+    (; ddr, d2dr2, DDr) = operators.diff_operators;
+
+    (; DDrM, ddrDDrM, onebyr2_chebyM, ddrM, onebyr_chebyM, gM,
+        κ_∇r2_plus_ddr_lnρT_ddrM, onebyr2_cheby_ddr_S0_by_cpM,
+        onebyr2_IplusrηρM) = operators.diff_operator_matrices;
+
     (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby, ηT_cheby,
-            g_cheby, ddr_lnρT, κ, ddr_S0_by_cp) = operators.rad_terms
-    (; r_in, r_out, nchebyr) = operators.radial_params
-    (; mat) = operators
-    (; Wscaling, Sscaling) = operators.constants.scalings
+            g_cheby, ddr_lnρT, κ, ddr_S0_by_cp) = operators.rad_terms;
+
+    (; r_in, r_out, nchebyr) = operators.radial_params;
+
+    (; mat) = operators;
+    (; Wscaling, Sscaling) = operators.constants.scalings;
 
     @test isapprox(onebyr_cheby(-1), 1/r_in, rtol=1e-4)
     @test isapprox(onebyr_cheby(1), 1/r_out, rtol=1e-4)
     @test isapprox(onebyr2_cheby(-1), 1/r_in^2, rtol=1e-4)
     @test isapprox(onebyr2_cheby(1), 1/r_out^2, rtol=1e-4)
 
-    onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby)
+    κ_by_r2M = κ * onebyr2_chebyM;
 
-    ∇r2_plus_ddr_lnρT_ddr = d2dr2 + 2onebyr_cheby*ddr + ddr_lnρT * ddr
-    κ_∇r2_plus_ddr_lnρT_ddrM = RossbyWaveSpectrum.chebyshevmatrix(κ * ∇r2_plus_ddr_lnρT_ddr, nr, 3)
-    κ_by_r2M = mat(κ * onebyr2_cheby)
-    onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp)
+    ddrηρ = ddr * ηρ_cheby;
 
-    ddrηρ = ddr * ηρ_cheby
-
-    M = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m; operators)
+    M = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m; operators);
 
     chebyfwdnr(f, scalefactor = 5) = chebyfwd(f, r_in, r_out, nr, scalefactor)
 
     ℓ′ = 1
     # for these terms ℓ = ℓ′ (= 1 in this case)
-    SWterm, SSterm = (zeros(nr, nr) for i in 1:3)
+    SWterm, SSterm = (zeros(nr, nr) for i in 1:3);
     RossbyWaveSpectrum.uniform_rotation_matrix_terms_outer!((SWterm, SSterm),
                         (ℓ′, m), nchebyr,
                         (ddrDDrM, onebyr2_IplusrηρM, gM,
-                            κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M, onebyr2_cheby_ddr_S0_by_cpM), Ω0)
+                            κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M, onebyr2_cheby_ddr_S0_by_cpM), Ω0);
 
     @testset "V terms" begin
         @testset "WV term" begin
@@ -881,12 +884,12 @@ end
                 end
                 function ddr_lnρT_ddr_fn(r, n)
                     r̄_r = r̄(r)
-                    Unm1 = n >= 1 ? chebyshevU(n-1, r̄_r) : 0.0
+                    Unm1 = chebyshevU(n-1, r̄_r)
                     ηρr = ηρ_cheby(r̄_r)
                     ηTr = ηT_cheby(r̄_r)
                     (ηρr + ηTr) * a * n * Unm1
                 end
-                ddr_lnρT_ddrM = RossbyWaveSpectrum.chebyshevmatrix(ddr_lnρT * ddr, nr, 3)
+                ddr_lnρT_ddrM = RossbyWaveSpectrum.chebyshevmatrix(ddr_lnρT * ddr, nr, 4);
                 @testset for n in 1:nr-1
                     ddr_lnρT_ddr_op = @view ddr_lnρT_ddrM[:, n+1]
                     ddr_lnρT_ddr_analytical = chebyfwdnr(r -> ddr_lnρT_ddr_fn(r, n))
@@ -909,13 +912,13 @@ end
             @testset "SS term" begin
                 function SSterm_fn(r, n)
                     r̄_r = r̄(r)
-                    Tn = chebyshevT(n, r̄_r)
-                    Unm1 = n >= 1 ? chebyshevU(n-1, r̄_r) : 0.0
-                    Unm2 = n >= 2 ? chebyshevU(n-2, r̄_r) : 0.0
+                    Tn = chebyshevT(n)
+                    d2Tnr = d2f(Tn)(r̄_r) * (2/Δr)^2
+                    dTnr = df(Tn)(r̄_r) * (2/Δr)
+                    Tnr = Tn(r̄_r)
                     ηρr = ηρ_cheby(r̄_r)
                     ηTr = ηT_cheby(r̄_r)
-                    f = a^2 * n * ((n-1)*r̄_r*Unm1 - n*Unm2)/(r̄_r^2 - 1) +
-                        2/r^2 * (a*n*r*Unm1 - Tn) + a*n*Unm1*(ηρr + ηTr)
+                    f = d2Tnr + 2/r * dTnr - 2/r^2 * Tnr + (ηρr + ηTr)*dTnr
                     κ * Rsun^2 * f
                 end
                 @testset for n in 1:nr-1
@@ -929,7 +932,7 @@ end
 end
 
 @testset "viscosity" begin
-    nr, nℓ = 30, 2
+    nr, nℓ = 50, 2
     nparams = nr * nℓ
     m = 1
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
@@ -1051,7 +1054,7 @@ end
             @testset for n in 0:nr-1
                 WWterm11_op = @view ddr_minus_2byr_r_d2dr2_ηρ_by_rM[:, n+1]
                 WWterm11_analytical = chebyfwdnr(r -> WWterm11fn(r, n))
-                @test WWterm11_op ≈ WWterm11_analytical rtol=1e-4
+                @test WWterm11_op ≈ WWterm11_analytical rtol=2e-4
             end
 
             function WWterm12fn(r, n)
@@ -1194,71 +1197,69 @@ end
     end
 end
 
-@testset "matrix convergence with resolution" begin
-    @testset "with green function" begin
-        nr, nℓ = 45, 2
-        m = 5
-        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-        (; nvariables) = operators.constants;
-        M1 = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m; operators);
-        operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
-        M2 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ, m; operators = operators2);
-        operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
-        M3 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ+5, m; operators = operators3);
+@testset "matrix convergence with resolution: uniform rotation" begin
+    nr, nℓ = 50, 2
+    m = 5
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+    (; nvariables) = operators.constants;
+    M1 = RossbyWaveSpectrum.uniform_rotation_matrix(nr, nℓ, m; operators);
+    operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
+    M2 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ, m; operators = operators2);
+    operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
+    M3 = RossbyWaveSpectrum.uniform_rotation_matrix(nr+5, nℓ+5, m; operators = operators3);
 
-        function matrix_subsample(M, nr_M, nr, nℓ, nvariables)
-            nparams = nr*nℓ
-            M_subsample = zeros(eltype(M), nvariables*nparams, nvariables*nparams)
-            for colind in 1:nvariables, rowind in 1:nvariables
-                Mv = matrix_block(M, rowind, colind, nvariables)
-                M_subsample_v = matrix_block(M_subsample, rowind, colind, nvariables)
-                for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
-                    indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
-                    indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
-                    @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
-                end
-            end
-            return M_subsample
-        end
-
-        @test matrix_subsample(M1, nr, nr, nℓ, nvariables) == M1;
-        M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nvariables);
-        @testset for rowind in 1:nvariables, colind in 1:nvariables
-            M2_ssv = matrix_block(M2_subsampled, rowind, colind, nvariables);
-            M1v = matrix_block(M1, rowind, colind, nvariables);
-            @testset "real" begin
-                if rowind == 3 && colind == 2
-                    @test real(M2_ssv) ≈ real(M1v) rtol=3e-3
-                else
-                    @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
-                end
-            end
-            @testset "imag" begin
-                if rowind == colind == 2
-                    @test imag(M2_ssv) ≈ imag(M1v) rtol=2e-3
-                else
-                    @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
-                end
+    function matrix_subsample(M, nr_M, nr, nℓ, nvariables)
+        nparams = nr*nℓ
+        M_subsample = zeros(eltype(M), nvariables*nparams, nvariables*nparams)
+        for colind in 1:nvariables, rowind in 1:nvariables
+            Mv = matrix_block(M, rowind, colind, nvariables)
+            M_subsample_v = matrix_block(M_subsample, rowind, colind, nvariables)
+            for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
+                indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
+                indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
+                @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
             end
         end
+        return M_subsample
+    end
 
-        M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nvariables);
-        @testset for rowind in 1:nvariables, colind in 1:nvariables
-            M3_ssv = matrix_block(M3_subsampled, rowind, colind, nvariables)
-            M1v = matrix_block(M1, rowind, colind, nvariables)
-            @testset "real" begin
-                if rowind == 3 && colind == 2
-                    @test real(M3_ssv) ≈ real(M1v) rtol=3e-3
-                else
-                    @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
-                end
+    @test matrix_subsample(M1, nr, nr, nℓ, nvariables) == M1;
+    M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nvariables);
+    @testset for rowind in 1:nvariables, colind in 1:nvariables
+        M2_ssv = matrix_block(M2_subsampled, rowind, colind, nvariables);
+        M1v = matrix_block(M1, rowind, colind, nvariables);
+        @testset "real" begin
+            if rowind == 3 && colind == 2
+                @test real(M2_ssv) ≈ real(M1v) rtol=3e-3
+            else
+                @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
             end
-            @testset "imag" begin
-                if rowind == colind == 2
-                    @test imag(M3_ssv) ≈ imag(M1v) rtol=2e-3
-                else
-                    @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
-                end
+        end
+        @testset "imag" begin
+            if rowind == colind == 2
+                @test imag(M2_ssv) ≈ imag(M1v) rtol=2e-3
+            elseif rowind == colind == 3
+                @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
+            end
+        end
+    end
+
+    M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nvariables);
+    @testset for rowind in 1:nvariables, colind in 1:nvariables
+        M3_ssv = matrix_block(M3_subsampled, rowind, colind, nvariables)
+        M1v = matrix_block(M1, rowind, colind, nvariables)
+        @testset "real" begin
+            if rowind == 3 && colind == 2
+                @test real(M3_ssv) ≈ real(M1v) rtol=3e-3
+            else
+                @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
+            end
+        end
+        @testset "imag" begin
+            if rowind == colind == 2
+                @test imag(M3_ssv) ≈ imag(M1v) rtol=2e-3
+            else
+                @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
             end
         end
     end
@@ -1287,7 +1288,27 @@ end
             scale_eigenvectors = false);
         @info "$(length(λuf)) eigenmode$(length(λuf) > 1 ? "s" : "") found for m = $m"
         @testset "ℓ == m" begin
-            @test findmin(abs.(real(λuf) .- 2/(m+1)))[1] < 1e-4
+            res, ind = findmin(abs.(real(λuf) .- 2/(m+1)))
+            @testset "eigenvalue" begin
+                @test res < 1e-4
+            end
+            @testset "eigenvector" begin
+                vi = vuf[:, ind];
+                (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(vi, m, operators);
+                nθ = length(θ)
+                (; V) = VWSinv;
+                Vr = real(V);
+                equator_ind = argmin(abs.(θ .- pi/2))
+                Δθ_scan = div(nθ, 5)
+                rangescan = intersect(equator_ind .+ (-Δθ_scan:Δθ_scan), axes(V, 2))
+                ind_max = findmax(col -> maximum(real, col), eachcol(view(Vr, :, rangescan)))[2]
+                ind_max += first(rangescan) - 1
+                V_peak_depthprofile = @view Vr[:, ind_max];
+                r_max_ind = argmax(abs.(V_peak_depthprofile))
+                V_surf = @view Vr[r_max_ind, :];
+                V_surf ./= maximum(abs, V_surf);
+                @test abs.(V_surf) ≈ sin.(θ).^m rtol=0.15
+            end
         end
         vfn = zeros(eltype(vuf), size(vuf, 1))
         @testset "boundary condition" begin
@@ -1328,7 +1349,7 @@ end
                 end
             end
         end
-        @testset "full eigenvalue problem solution" begin
+        @testset "eigen rtol" begin
             v = rossby_ridge_eignorm(λuf, vuf, Mu, m, nparams)
             # these improve with resolution
             @test v[1] < 1e-2
@@ -1687,7 +1708,7 @@ end
 end
 
 @testset "constant differential rotation solution" begin
-    nr, nℓ = 45, 15
+    nr, nℓ = 50, 15
     nparams = nr * nℓ
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     (; r_in, r_out, Δr) = operators.radial_params

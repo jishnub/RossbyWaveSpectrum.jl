@@ -1054,7 +1054,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby);
     onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp);
     ∇r2_plus_ddr_lnρT_ddr = (d2dr2 + 2onebyr_cheby*ddr + ddr_lnρT * ddr)::Tplus;
-    κ_∇r2_plus_ddr_lnρT_ddrM = κ * chebyshevmatrix(∇r2_plus_ddr_lnρT_ddr, nr, 3);
+    κ_∇r2_plus_ddr_lnρT_ddrM = κ * chebyshevmatrix(∇r2_plus_ddr_lnρT_ddr, nr, 4);
     κ_by_r2M = κ .* onebyr2_chebyM;
 
     # terms for viscosity
@@ -2115,7 +2115,7 @@ function constrained_eigensystem(M, operators, constraints = constraintmatrix(op
     (; nparams) = operators.radial_params
     (; ZC, nvariables) = constraints
     M = _maybetrimM(M, nvariables, nparams)
-    (; Wscaling, Sscaling) = scalings
+    (; Wscaling, Sscaling) = merge((; Wscaling = 1, Sscaling = 1), scalings)
     scales = [
         1               1/Wscaling              1/Sscaling
         Wscaling        1                       Wscaling/Sscaling
@@ -2526,7 +2526,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
 
     # re-apply scalings
     if get(kw, :scale_eigenvectors, false)
-        @unpack scalings = kw
+        scalings = merge((; Wscaling = 1, Sscaling = 1), kw[:scalings])
         V = @view v[1:nparams, :]
         W = @view v[nparams .+ (1:nparams), :]
         S = @view v[2nparams .+ (1:nparams), :]
