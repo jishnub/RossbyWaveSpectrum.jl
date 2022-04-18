@@ -920,12 +920,12 @@ function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only fo
     sηρ = smoothed_spline(r_modelS, ddrlogρ, s = 1e-5)
 
     sT = Spline1D(r_modelS, T_modelS)
-    slogT = smoothed_spline(r_modelS, logT_modelS, s = 1e-5)
+    slogT = smoothed_spline(r_modelS, logT_modelS, s = 1e-7)
     ddrlogT = Dierckx.derivative(slogT, r_modelS)
     if !_stratified
         ddrlogT .= 0
     end
-    sηT = smoothed_spline(r_modelS, ddrlogT, s = 1e-5)
+    sηT = smoothed_spline(r_modelS, ddrlogT, s = 1e-7)
 
     g_modelS = @. G * Msun * q_modelS / r_modelS^2
     sg = Spline1D(r_modelS, g_modelS, s = sum(abs2, g_modelS))
@@ -974,7 +974,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     # density stratification
     ρ = sρ.(r)
     ηρ = sηρ.(r)
-    ηρ_cheby = ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev()), 1e-3)::TFun
+    ηρ_cheby = ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev()), 1e-2)::TFun
     if ncoefficients(ηρ_cheby) == 0
         ηρ_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFun
     end
