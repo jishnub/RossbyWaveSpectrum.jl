@@ -899,12 +899,14 @@ splderiv(v::Vector, r::Vector, rout = r; nu = 1) = Dierckx.derivative(Spline1D(r
 
 smoothed_spline(r, v; s) = Spline1D(r, v, s = sum(abs2, v) * s)
 
-function read_solar_model(; _stratified #= only for tests =# = true)
-    ModelS = readdlm(joinpath(@__DIR__, "ModelS.detailed"));
-    r_modelS = reverse(@view ModelS[:, 1]);
-    q_modelS = exp.(reverse(@view ModelS[:, 2]));
-    T_modelS = reverse(@view ModelS[:, 3]);
-    ρ_modelS = reverse(@view ModelS[:, 5]);
+function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only for tests =# = true)
+    ModelS = readdlm(joinpath(@__DIR__, "ModelS.detailed"))
+    r_modelS = @view ModelS[:, 1];
+    r_inds = r_in .<= r_modelS .<= r_out;
+    r_modelS = reverse(r_modelS[r_inds]);
+    q_modelS = exp.(reverse(ModelS[r_inds, 2]));
+    T_modelS = reverse(ModelS[r_inds, 3]);
+    ρ_modelS = reverse(ModelS[r_inds, 5]);
     if !_stratified
         ρ_modelS = fill(ρ_modelS[1], length(ρ_modelS));
         T_modelS = fill(T_modelS[1], length(T_modelS));
@@ -946,7 +948,7 @@ function (op::SpectralOperatorForm)(A::AbstractVector)
     op(Diagonal(A))
 end
 
-iszerofun(v) = ncoefficients(v) == 0  || (ncoefficients(v) == 1 && coefficients(v)[] == 0.0)
+iszerofun(v) = ncoefficients(v) == 0 || (ncoefficients(v) == 1 && coefficients(v)[] == 0.0)
 
 function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true, nvariables = 3, ν = 1e10)
     _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν)
@@ -964,7 +966,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     r_cheby = Fun(ApproxFun.Chebyshev(), [r_mid, Δr / 2]);
     r2_cheby = r_cheby * r_cheby;
 
-    (; sρ, sg, sηρ, sT, sηT) = read_solar_model(; _stratified);
+    (; sρ, sg, sηρ, sT, sηT) = read_solar_model(; r_in, r_out, _stratified);
 
     ddr = ApproxFun.Derivative() * (2 / Δr)
     rddr = (r_cheby * ddr)::Tmul
@@ -981,10 +983,17 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     if iszerofun(ηρ_cheby)
         ηρ_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFun
     end
+    if ncoefficients(ηρ_cheby) > 2/3*nr
+        @warn "number of coefficients in ηρ_cheby is $(ncoefficients(ηρ_cheby))"
+    end
     ηT = sηT.(r);
-    ηT_cheby = ApproxFun.chop(chebyshevgrid_to_Fun(ηT), 1e-2)::TFun
+    # ηT_cheby = ApproxFun.chop(chebyshevgrid_to_Fun(ηT), 1e-2)::TFun
+    ηT_cheby = ApproxFun.chop(Fun(sηT ∘ r_cheby, ApproxFun.Chebyshev()), 1e-2)::TFun
     if iszerofun(ηT_cheby)
         ηT_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFun
+    end
+    if ncoefficients(ηT_cheby) > 2/3*nr
+        @warn "number of coefficients in ηT_cheby is $(ncoefficients(ηT_cheby))"
     end
     ddr_lnρT = ηρ_cheby + ηT_cheby
 
@@ -1016,9 +1025,13 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     if iszerofun(ηρ2_by_r2)
         ηρ2_by_r2 = Fun(ApproxFun.Chebyshev(), [1e-100])::TFun
     end
+    if ncoefficients(ηρ2_by_r2) > 2/3*nr
+        @warn "number of coefficients in ηρ2_by_r2 is $(ncoefficients(ηρ2_by_r2))"
+    end
 
     g = sg.(r);
-    g_cheby = chop(chebyshevgrid_to_Fun(g), 1e-3)::TFun
+    g_cheby = Fun(sg ∘ r_cheby, Chebyshev())::TFun
+    # g_cheby = chop(chebyshevgrid_to_Fun(g), 1e-3)::TFun
 
     Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out_frac)
 
@@ -1029,9 +1042,12 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     γ = 1.64
     cp = 1.7e8
     δ_superadiabatic = superadiabaticity.(r)
-    ddr_S0_by_cp = ApproxFun.chop(chebyshevgrid_to_Fun(@. γ * δ_superadiabatic * ηρ / cp), 1e-3)
-    # ddr_S0_by_cp = ApproxFun.chop(Fun(ApproxFun.Chebyshev(),
-    #     Tcrfwd * @. γ * δ_superadiabatic * ηρ / cp), 1e-3)
+    # ddr_S0_by_cp = ApproxFun.chop(chebyshevgrid_to_Fun(@. γ * δ_superadiabatic * ηρ / cp), 1e-3)
+    ddr_S0_by_cp = ApproxFun.chop(Fun(ApproxFun.Chebyshev(),
+        Tcrfwd * @. γ * δ_superadiabatic * ηρ / cp), 1e-3)
+    if ncoefficients(ddr_S0_by_cp) > 2/3*nr
+        @warn "number of coefficients in ddr_S0_by_cp is $(ncoefficients(ddr_S0_by_cp))"
+    end
 
     Ir = I(nchebyr)
     Iℓ = I(nℓ)

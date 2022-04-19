@@ -776,7 +776,7 @@ end
             end
 
             @testset "Drρ" begin
-                @testset for n in 1:nr - 1
+                @testset for n in 0:nr - 1
                     Drρ_Tn_analytical = chebyfwdnr(r -> Drρ_fn(r,n))
                     @test DDrM[:, n+1] ≈ Drρ_Tn_analytical rtol=1e-8
                 end
@@ -1690,7 +1690,7 @@ end
 
                         fc = chebyfwd(f, nr);
 
-                        @test fc ≈ @view(ddrΔΩ_over_gM[:, n+1]) rtol=5e-4
+                        @test fc ≈ @view(ddrΔΩ_over_gM[:, n+1]) rtol=1e-3
                     end
                 end
 
@@ -1701,7 +1701,7 @@ end
 
                         fc = chebyfwd(f, nr);
 
-                        @test fc ≈ @view(ddrΔΩ_over_g_DDrM[:, n+1]) rtol=1e-4
+                        @test fc ≈ @view(ddrΔΩ_over_g_DDrM[:, n+1]) rtol=1e-3
                     end
                 end
             end
