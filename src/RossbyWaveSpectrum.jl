@@ -447,7 +447,7 @@ end
 function superadiabaticity(r; r_out = Rsun)
     δcz = 3e-6
     δtop = 3e-5
-    dtrans = dtop = 0.05Rsun
+    dtrans = dtop = 0.03Rsun
     r_sub = 0.8 * Rsun
     r_tran = 0.725 * Rsun
     δrad = -1e-5
@@ -899,39 +899,38 @@ splderiv(v::Vector, r::Vector, rout = r; nu = 1) = Dierckx.derivative(Spline1D(r
 
 smoothed_spline(r, v; s) = Spline1D(r, v, s = sum(abs2, v) * s)
 
-function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only for tests =# = true)
-    ModelS = readdlm(joinpath(@__DIR__, "ModelS.detailed"))
-    r_modelS = @view ModelS[:, 1]
-    r_inds = r_in .<= r_modelS .<= r_out
-    r_modelS = reverse(r_modelS[r_inds])
-    q_modelS = exp.(reverse(ModelS[r_inds, 2]))
-    T_modelS = reverse(ModelS[r_inds, 3])
-    ρ_modelS = reverse(ModelS[r_inds, 5])
+function read_solar_model(; _stratified #= only for tests =# = true)
+    ModelS = readdlm(joinpath(@__DIR__, "ModelS.detailed"));
+    r_modelS = reverse(@view ModelS[:, 1]);
+    q_modelS = exp.(reverse(@view ModelS[:, 2]));
+    T_modelS = reverse(@view ModelS[:, 3]);
+    ρ_modelS = reverse(@view ModelS[:, 5]);
     if !_stratified
-        ρ_modelS = fill(ρ_modelS[1], length(ρ_modelS))
-        T_modelS = fill(T_modelS[1], length(T_modelS))
+        ρ_modelS = fill(ρ_modelS[1], length(ρ_modelS));
+        T_modelS = fill(T_modelS[1], length(T_modelS));
     end
-    logρ_modelS = log.(ρ_modelS)
-    logT_modelS = log.(T_modelS)
+    logρ_modelS = log.(ρ_modelS);
+    logT_modelS = log.(T_modelS);
 
-    sρ = Spline1D(r_modelS, ρ_modelS)
-    slogρ = smoothed_spline(r_modelS, logρ_modelS, s = 1e-5)
-    ddrlogρ = Dierckx.derivative(slogρ, r_modelS)
+    sρ = Spline1D(r_modelS, ρ_modelS);
+    slogρ = smoothed_spline(r_modelS, logρ_modelS, s = 1e-5);
+    ddrlogρ = Dierckx.derivative(slogρ, r_modelS);
     if !_stratified
         ddrlogρ .= 0
     end
-    sηρ = smoothed_spline(r_modelS, ddrlogρ, s = 1e-5)
+    sηρ = smoothed_spline(r_modelS, ddrlogρ, s = 1e-5);
 
-    sT = Spline1D(r_modelS, T_modelS)
-    slogT = smoothed_spline(r_modelS, logT_modelS, s = 1e-7)
-    ddrlogT = Dierckx.derivative(slogT, r_modelS)
+    sT = Spline1D(r_modelS, T_modelS);
+    slogT = smoothed_spline(r_modelS, logT_modelS, s = 1e-7);
+    ddrlogT = Dierckx.derivative(slogT, r_modelS);
     if !_stratified
         ddrlogT .= 0
     end
-    sηT = smoothed_spline(r_modelS, ddrlogT, s = 1e-7)
+    sηT = smoothed_spline(r_modelS, ddrlogT, s = 1e-7);
 
-    g_modelS = @. G * Msun * q_modelS / r_modelS^2
-    sg = Spline1D(r_modelS, g_modelS, s = sum(abs2, g_modelS))
+    g_modelS = @. G * Msun * q_modelS / r_modelS^2;
+    g_modelS[1] = 0;
+    sg = smoothed_spline(r_modelS, g_modelS, s = 1e-2);
     (; sρ, sT, sg, sηρ, sηT)
 end
 
@@ -947,25 +946,25 @@ function (op::SpectralOperatorForm)(A::AbstractVector)
     op(Diagonal(A))
 end
 
+iszerofun(v) = ncoefficients(v) == 0  || (ncoefficients(v) == 1 && coefficients(v)[] == 0.0)
+
 function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true, nvariables = 3, ν = 1e10)
     _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν)
 end
 function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν)
-    r_in = r_in_frac * Rsun
-    r_out = r_out_frac * Rsun
-    radial_params = parameters(nr, nℓ; r_in, r_out)
-    (; Δr, nchebyr, r_mid) = radial_params
-    r, Tcrfwd, Tcrinv = chebyshev_forward_inverse(nr, r_in, r_out)
+    r_in = r_in_frac * Rsun;
+    r_out = r_out_frac * Rsun;
+    radial_params = parameters(nr, nℓ; r_in, r_out);
+    (; Δr, nchebyr, r_mid) = radial_params;
+    r, Tcrfwd, Tcrinv = chebyshev_forward_inverse(nr, r_in, r_out);
 
-    pseudospectralop_radial = SpectralOperatorForm(Tcrfwd, Tcrinv)
-    r_chebyshev = (r .- r_mid) ./ (Δr / 2)
-    Tcrfwdc, Tcrinvc = complex.(Tcrfwd), complex.(Tcrinv)
-    r_cheby = Fun(ApproxFun.Chebyshev(), [r_mid, Δr / 2])
-    r2_cheby = r_cheby * r_cheby
+    pseudospectralop_radial = SpectralOperatorForm(Tcrfwd, Tcrinv);
+    r_chebyshev = (r .- r_mid) ./ (Δr / 2);
+    Tcrfwdc, Tcrinvc = complex.(Tcrfwd), complex.(Tcrinv);
+    r_cheby = Fun(ApproxFun.Chebyshev(), [r_mid, Δr / 2]);
+    r2_cheby = r_cheby * r_cheby;
 
-    (; sρ, sg, sηρ, sT, sηT) = read_solar_model(; r_in, r_out, _stratified)
-
-    T = sT.(r)
+    (; sρ, sg, sηρ, sT, sηT) = read_solar_model(; _stratified);
 
     ddr = ApproxFun.Derivative() * (2 / Δr)
     rddr = (r_cheby * ddr)::Tmul
@@ -975,17 +974,19 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     r2d2dr2 = (r2_cheby * d2dr2)::Tmul
 
     # density stratification
-    ρ = sρ.(r)
-    ηρ = sηρ.(r)
+    ρ = sρ.(r);
+    ηρ = sηρ.(r);
+    # ηρ_cheby = ApproxFun.chop(chebyshevgrid_to_Fun(ηρ), 1e-2)::TFun;
     ηρ_cheby = ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev()), 1e-2)::TFun
-    if ncoefficients(ηρ_cheby) == 0
+    if iszerofun(ηρ_cheby)
         ηρ_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFun
     end
-    ηT = sηT.(r)
-    ηT_cheby = ApproxFun.chop(Fun(sηT ∘ r_cheby, ApproxFun.Chebyshev()), 1e-2)::TFun
-    if ncoefficients(ηT_cheby) == 0
+    ηT = sηT.(r);
+    ηT_cheby = ApproxFun.chop(chebyshevgrid_to_Fun(ηT), 1e-2)::TFun
+    if iszerofun(ηT_cheby)
         ηT_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFun
     end
+    ddr_lnρT = ηρ_cheby + ηT_cheby
 
     DDr = (ddr + ηρ_cheby)::Tplus
     rDDr = (r_cheby * DDr)::Tmul
@@ -1011,24 +1012,26 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     d2dr2_ηρ = (d2dr2 * ηρ_cheby)::typeof(ddr_ηρbyr)
     d3dr3_ηρ = (d3dr3 * ηρ_cheby)::typeof(ddr_ηρbyr)
     ddr_ηρbyr2 = ddr * ηρ_by_r2
-    ηρ2_by_r2 = ApproxFun.chop(ηρ_by_r2 * ηρ_cheby, 1e-3)
+    ηρ2_by_r2 = ApproxFun.chop(ηρ_by_r2 * ηρ_cheby, 1e-3)::TFun
+    if iszerofun(ηρ2_by_r2)
+        ηρ2_by_r2 = Fun(ApproxFun.Chebyshev(), [1e-100])::TFun
+    end
 
-    g = sg.(r)
-    g_cheby = Fun(sg ∘ r_cheby, Chebyshev())::TFun
+    g = sg.(r);
+    g_cheby = chop(chebyshevgrid_to_Fun(g), 1e-3)::TFun
 
     Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out_frac)
 
     # viscosity
     ν /= Ω0*Rsun^2
-
     κ = ν
-    ddr_lnρT = ηρ_cheby + ηT_cheby
 
     γ = 1.64
     cp = 1.7e8
     δ_superadiabatic = superadiabaticity.(r)
-    ddr_S0_by_cp = ApproxFun.chop(Fun(ApproxFun.Chebyshev(),
-        Tcrfwd * @. γ * δ_superadiabatic * ηρ / cp), 1e-3)
+    ddr_S0_by_cp = ApproxFun.chop(chebyshevgrid_to_Fun(@. γ * δ_superadiabatic * ηρ / cp), 1e-3)
+    # ddr_S0_by_cp = ApproxFun.chop(Fun(ApproxFun.Chebyshev(),
+    #     Tcrfwd * @. γ * δ_superadiabatic * ηρ / cp), 1e-3)
 
     Ir = I(nchebyr)
     Iℓ = I(nℓ)
@@ -1055,7 +1058,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     # uniform rotation terms
     onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby);
-    onebyr2_cheby_ddr_S0_by_cpM = mat(onebyr2_cheby * ddr_S0_by_cp);
+    onebyr2_cheby_ddr_S0_by_cpM = mat(chop(onebyr2_cheby * ddr_S0_by_cp, 1e-4));
     ∇r2_plus_ddr_lnρT_ddr = (d2dr2 + 2onebyr_cheby*ddr + ddr_lnρT * ddr)::Tplus;
     κ_∇r2_plus_ddr_lnρT_ddrM = κ * chebyshevmatrix(∇r2_plus_ddr_lnρT_ddr, nr, 4);
     κ_by_r2M = κ .* onebyr2_chebyM;
@@ -1073,7 +1076,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     HeinrichsChebyshevMatrix = heinrichs_chebyshev_matrix(nr)
 
     # gauss lobatto points
-    n_lobatto = 4nr
+    n_lobatto = 4nr # one less than the number of points
     Tcf, Tci = chebyshev_lobatto_forward_inverse(n_lobatto)
     TfGL_nr = Tcf[1:nr, :]
     TiGL_nr = Tci[:, 1:nr]
@@ -1084,7 +1087,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     ddrDDr_lobatto = d2dr2_lobatto + Diagonal(ηρ_cheby.(r_chebyshev_lobatto)) * ddr_lobatto +
                         Diagonal((ddr * ηρ_cheby).(r_chebyshev_lobatto))
 
-    normr = sqrt.(1 .- r_chebyshev_lobatto.^2) * pi/n_lobatto
+    normr = sqrt.(1 .- r_chebyshev_lobatto.^2) .* pi/n_lobatto
 
     deltafn_matrix_radial = deltafn_matrix(r_lobatto, scale = Rsun*1e-5)
 

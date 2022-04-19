@@ -130,7 +130,7 @@ end
 
         @testset "symmetry" begin
             H2 = Hℓ .* sρ.(r_lobatto)
-            @test H2 ≈ Symmetric(H2) rtol=1e-2
+            @test H2 ≈ Symmetric(H2) rtol=2.5e-2
         end
 
         @testset "unstratified" begin
@@ -432,7 +432,7 @@ end
                     intresc = TfGL_nr * intres
 
                     Xn = @view JDDrc[:, n+1]
-                    if n <= 35
+                    if n <= 30
                         @test Xn ≈ intresc rtol=1e-2
                     else
                         @test Xn ≈ intresc rtol=2e-1
@@ -1018,10 +1018,8 @@ end
         ddr_minus_2byr_DDr = ddr_minus_2byr * DDr
         ηρ_cheby_ddr_minus_2byr_DDr = ηρ_cheby * ddr_minus_2byr_DDr
         ddr_ηρ_cheby_ddr_minus_2byr_DDr = ddr * ηρ_cheby_ddr_minus_2byr_DDr
-        ηρ_cheby_ddr_minus_2byr_DDrM = mat(ηρ_cheby_ddr_minus_2byr_DDr);
-        ddr_ηρ_cheby_ddr_minus_2byr_DDrM = mat(ddr_ηρ_cheby_ddr_minus_2byr_DDr);
-        ηρ_cheby_ddr_minus_2byr_DDrM_2 = chebyshevmatrix(ηρ_cheby_ddr_minus_2byr_DDr, nr, 3);
-        ddr_ηρ_cheby_ddr_minus_2byr_DDrM_2 = chebyshevmatrix(ddr_ηρ_cheby_ddr_minus_2byr_DDr, nr, 3);
+        ηρ_cheby_ddr_minus_2byr_DDrM = chebyshevmatrix(ηρ_cheby_ddr_minus_2byr_DDr, nr, 3);
+        ddr_ηρ_cheby_ddr_minus_2byr_DDrM = chebyshevmatrix(ddr_ηρ_cheby_ddr_minus_2byr_DDr, nr, 3);
 
         ddr_ηρ_by_r2 = ddr[ηρ_by_r2];
         ηρ_by_r2_ddr_minus_2byr = ηρ_by_r2 * ddr_minus_2byr;
@@ -1143,13 +1141,12 @@ end
                 F2(r)
             end
 
-            @testset for n in 0:nr-1
-                WWterm31_1_op = @view ηρ_cheby_ddr_minus_2byr_DDrM[:, n+1]
-                WWterm31_1_analytical = chebyfwdnr(r -> WWterm31_1fn(r, n))
-                @test WWterm31_1_op ≈ WWterm31_1_analytical rtol=5e-2
-                WWterm31_1_op = @view ηρ_cheby_ddr_minus_2byr_DDrM_2[:, n+1]
-                WWterm31_1_analytical = chebyfwdnr(r -> WWterm31_1fn(r, n))
-                @test WWterm31_1_op ≈ WWterm31_1_analytical rtol=1e-4
+            @testset "WWterm31_1fn" begin
+                @testset for n in 0:nr-1
+                    WWterm31_1_op = @view ηρ_cheby_ddr_minus_2byr_DDrM[:, n+1]
+                    WWterm31_1_analytical = chebyfwdnr(r -> WWterm31_1fn(r, n))
+                    @test WWterm31_1_op ≈ WWterm31_1_analytical rtol=1e-4
+                end
             end
 
             function WWterm31_2fn(r, n)
@@ -1157,13 +1154,12 @@ end
                 df(F1, r)
             end
 
-            @testset for n in 0:nr-1
-                WWterm31_2_op = @view ddr_ηρ_cheby_ddr_minus_2byr_DDrM[:, n+1]
-                WWterm31_2_analytical = chebyfwdnr(r -> WWterm31_2fn(r, n))
-                @test WWterm31_2_op ≈ WWterm31_2_analytical rtol=5e-2
-                WWterm31_2_op = @view ddr_ηρ_cheby_ddr_minus_2byr_DDrM_2[:, n+1]
-                WWterm31_2_analytical = chebyfwdnr(r -> WWterm31_2fn(r, n))
-                @test WWterm31_2_op ≈ WWterm31_2_analytical rtol=1e-4
+            @testset "WWterm31_2fn" begin
+                @testset for n in 0:nr-1
+                    WWterm31_2_op = @view ddr_ηρ_cheby_ddr_minus_2byr_DDrM[:, n+1]
+                    WWterm31_2_analytical = chebyfwdnr(r -> WWterm31_2fn(r, n))
+                    @test WWterm31_2_op ≈ WWterm31_2_analytical rtol=1e-4
+                end
             end
 
             function WWterm32fn(r, n)
