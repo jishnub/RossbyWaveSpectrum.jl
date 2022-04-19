@@ -28,7 +28,7 @@ n_power_cutoff = 0.9
 # ΔΩ_by_Ω_high = 0
 
 r_in_frac = 0.7
-r_out_frac = 1
+r_out_frac = 0.985
 
 print_timer = false
 scale_eigenvectors = false

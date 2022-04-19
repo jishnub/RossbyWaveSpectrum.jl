@@ -931,7 +931,6 @@ function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only fo
     sηT = smoothed_spline(r_modelS, ddrlogT, s = 1e-7);
 
     g_modelS = @. G * Msun * q_modelS / r_modelS^2;
-    g_modelS[1] = 0;
     sg = smoothed_spline(r_modelS, g_modelS, s = 1e-2);
     (; sρ, sT, sg, sηρ, sηT)
 end
@@ -950,7 +949,7 @@ end
 
 iszerofun(v) = ncoefficients(v) == 0 || (ncoefficients(v) == 1 && coefficients(v)[] == 0.0)
 
-function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 1, _stratified = true, nvariables = 3, ν = 1e10)
+function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10)
     _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν)
 end
 function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν)
@@ -1610,7 +1609,7 @@ function radial_differential_rotation_profile_derivatives(m; operators, rotation
     (; r_cheby) = operators.rad_terms;
     (; r_chebyshev, r) = operators.coordinates;
     (; ddr) = operators.diff_operators;
-    (; nℓ) = operators.radial_params;
+    (; nℓ, nr) = operators.radial_params;
 
     ntheta = ntheta_ℓmax(nℓ, m);
     (; thetaGL) = gausslegendre_theta_grid(ntheta);
@@ -1619,13 +1618,22 @@ function radial_differential_rotation_profile_derivatives(m; operators, rotation
     ΔΩ_r ./= Ω0;
 
     ΔΩ = chop(chebyshevgrid_to_Fun(ΔΩ_r), 1e-3);
+    if ncoefficients(ΔΩ) > 2nr/3
+        @warn "ncoefficients(ΔΩ) = $(ncoefficients(ΔΩ))"
+    end
 
     ΔΩ_spl = Spline1D(r, ΔΩ_r);
     ddrΔΩ_r = derivative(ΔΩ_spl, r);
     d2dr2ΔΩ_r = derivative(ΔΩ_spl, r, nu=2);
 
     ddrΔΩ = chop(chebyshevgrid_to_Fun(ddrΔΩ_r), 1e-2);
+    if ncoefficients(ddrΔΩ) > 2nr/3
+        @warn "ncoefficients(ddrΔΩ) = $(ncoefficients(ddrΔΩ))"
+    end
     d2dr2ΔΩ = chop(chebyshevgrid_to_Fun(d2dr2ΔΩ_r), 1e-2);
+    if ncoefficients(d2dr2ΔΩ) > 2nr/3
+        @warn "ncoefficients(d2dr2ΔΩ) = $(ncoefficients(d2dr2ΔΩ))"
+    end
     (; Ω0, ΔΩ, ΔΩ_spl, ddrΔΩ, d2dr2ΔΩ, ddrΔΩ_r, d2dr2ΔΩ_r, ΔΩ_r)
 end
 

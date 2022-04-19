@@ -1,4 +1,4 @@
-using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun, chebyshevmatrix
+using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun, chebyshevmatrix, Msun, G
 using Test
 using LinearAlgebra
 using OffsetArrays
@@ -9,6 +9,7 @@ using FastTransforms
 using Dierckx
 using FastGaussQuadrature
 import ApproxFun
+using DelimitedFiles
 
 @testset "project quality" begin
     Aqua.test_all(RossbyWaveSpectrum,
@@ -65,6 +66,31 @@ const P11norm = -2/√3
     r_chebyshev, Tcf, Tci = RossbyWaveSpectrum.chebyshev_forward_inverse(n)
     @test Tcf * Tci ≈ Tci * Tcf ≈ I
     @test Tcf * r_chebyshev ≈ [0; 1; zeros(length(r_chebyshev)-2)]
+end
+
+@testset "read solar model" begin
+    r_in_frac = 0.5
+    r_out_frac = 0.985
+    r_in = r_in_frac * Rsun
+    r_out = r_out_frac * Rsun
+    (; sρ, sT, sg, sηρ, sηT) = RossbyWaveSpectrum.read_solar_model(; r_in, r_out);
+
+    operators = RossbyWaveSpectrum.radial_operators(50, 2; r_in_frac, r_out_frac);
+    (; r, r_chebyshev) = operators.coordinates;
+
+    ModelS = readdlm(joinpath(@__DIR__,"../src", "ModelS.detailed"))
+    r_modelS = @view ModelS[:, 1];
+    r_inds = r_in .<= r_modelS .<= r_out;
+    r_modelS = reverse(r_modelS[r_inds]);
+    q_modelS = exp.(reverse(ModelS[r_inds, 2]));
+    T_modelS = reverse(ModelS[r_inds, 3]);
+    ρ_modelS = reverse(ModelS[r_inds, 5]);
+
+    g_modelS = @. G * Msun * q_modelS / r_modelS^2;
+
+    @test sρ.(r) ≈ RossbyWaveSpectrum.interp1d(r_modelS, ρ_modelS, r) rtol=1e-2
+    @test sT.(r) ≈ RossbyWaveSpectrum.interp1d(r_modelS, T_modelS, r) rtol=1e-2
+    @test sg.(r) ≈ RossbyWaveSpectrum.interp1d(r_modelS, g_modelS, r) rtol=1e-2
 end
 
 @testset "green fn W" begin
@@ -580,13 +606,13 @@ end
                 J_ddrηρ_by_r_min_ηρbyr2_ddr = J_ddrηρ_by_r_min_ηρbyr2 * ddrM;
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
-                    f = x -> (ddr_ηρ(x)/r_cheby(x) - ηρ_by_r(x)/r_cheby(x)^2) * df(T, x) * (2/Δr)
+                    f = x -> (ddr_ηρ(x)*onebyr_cheby(x) - ηρ_by_r(x)*onebyr2_cheby(x)) * df(T, x) * (2/Δr)
 
                     intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres;
 
-                    Xn = @view J_ddrηρ_by_r_min_ηρbyr2_ddr[:, n+1]
-                    @test Xn ≈ intresc rtol=2e-2
+                    Xn = @view J_ddrηρ_by_r_min_ηρbyr2_ddr[:, n+1];
+                    @test Xn ≈ intresc rtol=5e-2
                 end
             end
 
@@ -1036,10 +1062,12 @@ end
                 F1(r)
             end
 
-            @testset for n in 0:nr-1
-                WWterm11_1_op = @view r_d2dr2_ηρ_by_rM[:, n+1]
-                WWterm11_1_analytical = chebyfwdnr(r -> WWterm11_1fn(r, n))
-                @test WWterm11_1_op ≈ WWterm11_1_analytical rtol=1e-4
+            @testset "WWterm11_1fn" begin
+                @testset for n in 0:nr-1
+                    WWterm11_1_op = @view r_d2dr2_ηρ_by_rM[:, n+1]
+                    WWterm11_1_analytical = chebyfwdnr(r -> WWterm11_1fn(r, n))
+                    @test WWterm11_1_op ≈ WWterm11_1_analytical rtol=5e-4
+                end
             end
 
             function WWterm11fn(r, n)
@@ -1049,10 +1077,12 @@ end
                 F2(r)
             end
 
-            @testset for n in 0:nr-1
-                WWterm11_op = @view ddr_minus_2byr_r_d2dr2_ηρ_by_rM[:, n+1]
-                WWterm11_analytical = chebyfwdnr(r -> WWterm11fn(r, n))
-                @test WWterm11_op ≈ WWterm11_analytical rtol=2e-4
+            @testset "WWterm11fn" begin
+                @testset for n in 0:nr-1
+                    WWterm11_op = @view ddr_minus_2byr_r_d2dr2_ηρ_by_rM[:, n+1]
+                    WWterm11_analytical = chebyfwdnr(r -> WWterm11fn(r, n))
+                    @test WWterm11_op ≈ WWterm11_analytical rtol=5e-4
+                end
             end
 
             function WWterm12fn(r, n)
@@ -1062,10 +1092,12 @@ end
                 F2(r)
             end
 
-            @testset for n in 0:nr-1
-                WWterm12_op = @view ddr_minus_2byr_ηρ_by_r2M[:, n+1]
-                WWterm12_analytical = chebyfwdnr(r -> WWterm12fn(r, n))
-                @test WWterm12_op ≈ WWterm12_analytical rtol=1e-4
+            @testset "WWterm12fn" begin
+                @testset for n in 0:nr-1
+                    WWterm12_op = @view ddr_minus_2byr_ηρ_by_r2M[:, n+1]
+                    WWterm12_analytical = chebyfwdnr(r -> WWterm12fn(r, n))
+                    @test WWterm12_op ≈ WWterm12_analytical rtol=5e-4
+                end
             end
 
             function WWterm13fn(r, n)
@@ -1075,10 +1107,12 @@ end
                 F2(r)
             end
 
-            @testset for n in 0:nr-1
-                WWterm13_op = @view d2dr2_plus_4ηρ_by_rM[:, n+1]
-                WWterm13_analytical = chebyfwdnr(r -> WWterm13fn(r, n))
-                @test WWterm13_op ≈ WWterm13_analytical rtol=1e-4
+            @testset "WWterm13fn" begin
+                @testset for n in 0:nr-1
+                    WWterm13_op = @view d2dr2_plus_4ηρ_by_rM[:, n+1]
+                    WWterm13_analytical = chebyfwdnr(r -> WWterm13fn(r, n))
+                    @test WWterm13_op ≈ WWterm13_analytical rtol=5e-4
+                end
             end
 
             function WWterm13_fullfn(r, n)
@@ -1088,10 +1122,12 @@ end
                 F2(r)
             end
 
-            @testset for n in 0:nr-1
-                WWterm13_op = @view d2dr2_d2dr2_plus_4ηρ_by_rM[:, n+1]
-                WWterm13_analytical = chebyfwdnr(r -> WWterm13_fullfn(r, n))
-                @test WWterm13_op ≈ WWterm13_analytical rtol=1e-4
+            @testset "WWterm13_fullfn" begin
+                @testset for n in 0:nr-1
+                    WWterm13_op = @view d2dr2_d2dr2_plus_4ηρ_by_rM[:, n+1]
+                    WWterm13_analytical = chebyfwdnr(r -> WWterm13_fullfn(r, n))
+                    @test WWterm13_op ≈ WWterm13_analytical rtol=5e-4
+                end
             end
 
             function WWterm14_fullfn(r, n)
@@ -1101,10 +1137,12 @@ end
                 F2(r)
             end
 
-            @testset for n in 0:nr-1
-                WWterm14_op = @view one_by_r2_d2dr2_plus_4ηρ_by_rM[:, n+1]
-                WWterm14_analytical = chebyfwdnr(r -> WWterm14_fullfn(r, n))
-                @test WWterm14_op ≈ WWterm14_analytical rtol=1e-4
+            @testset "WWterm14_fullfn" begin
+                @testset for n in 0:nr-1
+                    WWterm14_op = @view one_by_r2_d2dr2_plus_4ηρ_by_rM[:, n+1]
+                    WWterm14_analytical = chebyfwdnr(r -> WWterm14_fullfn(r, n))
+                    @test WWterm14_op ≈ WWterm14_analytical rtol=5e-4
+                end
             end
 
             function WWterm15fn(r, n)
@@ -1113,12 +1151,12 @@ end
                 d2f(F1, r)
             end
 
-            @testset for n in 0:nr-1
-                WWterm15_op = @view d2dr2_one_by_r2M[:, n+1]
-                WWterm15_analytical = chebyfwdnr(r -> WWterm15fn(r, n))
-                @test WWterm15_op ≈ WWterm15_analytical rtol=3e-2
-                WWterm15_op_2 = @view d2dr2_one_by_r2M_2[:, n+1]
-                @test WWterm15_op_2 ≈ WWterm15_analytical rtol=1e-4
+            @testset "WWterm15fn" begin
+                @testset for n in 0:nr-1
+                    WWterm15_analytical = chebyfwdnr(r -> WWterm15fn(r, n))
+                    WWterm15_op_2 = @view d2dr2_one_by_r2M_2[:, n+1]
+                    @test WWterm15_op_2 ≈ WWterm15_analytical rtol=5e-4
+                end
             end
 
             function WWterm16fn(r, n)
@@ -1126,10 +1164,12 @@ end
                 1/r^4 * T(r̄(r))
             end
 
-            @testset for n in 0:nr-1
-                WWterm16_op = @view onebyr4_chebyM[:, n+1]
-                WWterm16_analytical = chebyfwdnr(r -> WWterm16fn(r, n))
-                @test WWterm16_op ≈ WWterm16_analytical rtol=1e-4
+            @testset "WWterm16fn" begin
+                @testset for n in 0:nr-1
+                    WWterm16_op = @view onebyr4_chebyM[:, n+1]
+                    WWterm16_analytical = chebyfwdnr(r -> WWterm16fn(r, n))
+                    @test WWterm16_op ≈ WWterm16_analytical rtol=1e-4
+                end
             end
         end
         @testset "third term" begin
