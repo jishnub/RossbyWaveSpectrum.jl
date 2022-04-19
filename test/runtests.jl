@@ -1230,7 +1230,7 @@ end
         M1v = matrix_block(M1, rowind, colind, nvariables);
         @testset "real" begin
             if rowind == 3 && colind == 2
-                @test real(M2_ssv) ≈ real(M1v) rtol=3e-3
+                @test real(M2_ssv) ≈ real(M1v) rtol=5e-3
             else
                 @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
             end
@@ -1250,7 +1250,7 @@ end
         M1v = matrix_block(M1, rowind, colind, nvariables)
         @testset "real" begin
             if rowind == 3 && colind == 2
-                @test real(M3_ssv) ≈ real(M1v) rtol=3e-3
+                @test real(M3_ssv) ≈ real(M1v) rtol=5e-3
             else
                 @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
             end
@@ -1362,20 +1362,26 @@ end
 @testset "differential rotation" begin
     @testset "compare with constant" begin
         nr, nℓ = 30, 2
-        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-        (; nvariables) = operators.constants
+        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+        (; nvariables) = operators.constants;
 
         m = 1
 
-        Mc = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m,
-            rotation_profile = :constant; operators)
-
         @testset "radial constant and constant" begin
+            Mc = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m,
+                rotation_profile = :constant; operators);
             Mr = RossbyWaveSpectrum.differential_rotation_matrix(nr, nℓ, m,
-                rotation_profile = :radial_constant; operators)
+                rotation_profile = :radial_constant; operators);
 
             @testset for colind in 1:nvariables, rowind in 1:nvariables
-                @test matrix_block(Mr, rowind, colind, nvariables) ≈ matrix_block(Mc, rowind, colind, nvariables) atol = 1e-10 rtol = 1e-3
+                Rc = matrix_block(Mr, rowind, colind, nvariables)
+                C = matrix_block(Mc, rowind, colind, nvariables)
+                @testset "real" begin
+                    @test real(Rc) ≈ real(C) atol = 1e-10 rtol = 1e-3
+                end
+                @testset "imag" begin
+                    @test imag(Rc) ≈ imag(C) atol = 1e-10 rtol = 1e-3
+                end
             end
         end
     end
@@ -1616,7 +1622,7 @@ end
                         M1v = matrix_block(M1, rowind, colind, nvariables);
                         @testset "real" begin
                             if rowind == 3 && colind == 2
-                                @test real(M2_ssv) ≈ real(M1v) rtol=3e-3
+                                @test real(M2_ssv) ≈ real(M1v) rtol=5e-3
                             else
                                 @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
                             end
@@ -1638,7 +1644,7 @@ end
                         M1v = matrix_block(M1, rowind, colind, nvariables)
                         @testset "real" begin
                             if rowind == 3 && colind == 2
-                                @test real(M3_ssv) ≈ real(M1v) rtol=3e-3
+                                @test real(M3_ssv) ≈ real(M1v) rtol=5e-3
                             else
                                 @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
                             end

@@ -55,6 +55,9 @@ end
 
 indexedfromzero(A) = OffsetArray(A, OffsetArrays.Origin(0))
 
+# Assume v is evaluated on an grid that is in increasing order (default in this project)
+chebyshevgrid_to_Fun(v) = Fun(Chebyshev(), ApproxFun.transform(Chebyshev(), reverse(v)))
+
 struct VWArrays{TV,TW}
     V::TV
     W::TW
@@ -444,7 +447,7 @@ end
 function superadiabaticity(r; r_out = Rsun)
     δcz = 3e-6
     δtop = 3e-5
-    dtrans = dtop = 0.0125Rsun
+    dtrans = dtop = 0.05Rsun
     r_sub = 0.8 * Rsun
     r_tran = 0.725 * Rsun
     δrad = -1e-5
@@ -1574,6 +1577,10 @@ function radial_differential_rotation_profile(operators, thetaGL, model = :solar
         ΔΩ_by_Ω = 0.02
         Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
         ΔΩ_r = fill(ΔΩ_by_Ω * Ω0, nr)
+    elseif model == :core
+        ΔΩ_by_Ω = 0.3
+        Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
+        ΔΩ_r = @. (Ω0*ΔΩ_by_Ω)*1/2*(1 - tanh((r - 0.6Rsun)/(0.08Rsun)))
     else
         error("$model is not a valid rotation model")
     end
@@ -1590,15 +1597,17 @@ function radial_differential_rotation_profile_derivatives(m; operators, rotation
     (; thetaGL) = gausslegendre_theta_grid(ntheta);
 
     ΔΩ_r, Ω0 = radial_differential_rotation_profile(operators, thetaGL, rotation_profile);
+    ΔΩ_r ./= Ω0;
+
+    ΔΩ = chop(chebyshevgrid_to_Fun(ΔΩ_r), 1e-3);
 
     ΔΩ_spl = Spline1D(r, ΔΩ_r);
-    ΔΩ = chop(Fun(ΔΩ_spl ∘ r_cheby, Chebyshev()), 1e-3) / Ω0;
+    ddrΔΩ_r = derivative(ΔΩ_spl, r);
+    d2dr2ΔΩ_r = derivative(ΔΩ_spl, r, nu=2);
 
-    ddrΔΩ = ddr * ΔΩ
-    ddrΔΩ_real = ddrΔΩ.(r_chebyshev)
-    d2dr2ΔΩ = ddr * ddrΔΩ
-    d2dr2ΔΩ_real = d2dr2ΔΩ.(r_chebyshev)
-    (; ΔΩ_r, Ω0, ΔΩ, ΔΩ_spl, ddrΔΩ, d2dr2ΔΩ, ddrΔΩ_real, d2dr2ΔΩ_real)
+    ddrΔΩ = chop(chebyshevgrid_to_Fun(ddrΔΩ_r), 1e-2);
+    d2dr2ΔΩ = chop(chebyshevgrid_to_Fun(d2dr2ΔΩ_r), 1e-2);
+    (; Ω0, ΔΩ, ΔΩ_spl, ddrΔΩ, d2dr2ΔΩ, ddrΔΩ_r, d2dr2ΔΩ_r, ΔΩ_r)
 end
 
 function radial_differential_rotation_terms_inner!((VWterm, WVterm), (ℓ, ℓ′),
@@ -1974,6 +1983,8 @@ function _differential_rotation_matrix!(M, nr, nℓ, m, rotation_profile; kw...)
         radial_differential_rotation_terms!(M, nr, nℓ, m; rotation_profile = :constant, kw...)
     elseif rotation_profile === :radial_linear
         radial_differential_rotation_terms!(M, nr, nℓ, m; rotation_profile = :linear, kw...)
+    elseif rotation_profile === :radial_core
+        radial_differential_rotation_terms!(M, nr, nℓ, m; rotation_profile = :core, kw...)
     elseif rotation_profile === :solar
         solar_differential_rotation_terms!(M, nr, nℓ, m; rotation_profile, kw...)
     elseif rotation_profile === :solar_radial
