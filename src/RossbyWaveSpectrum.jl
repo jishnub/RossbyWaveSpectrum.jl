@@ -1609,7 +1609,7 @@ function radial_differential_rotation_profile_derivatives(m; operators, rotation
     (; r_cheby) = operators.rad_terms;
     (; r_chebyshev, r) = operators.coordinates;
     (; ddr) = operators.diff_operators;
-    (; nℓ, nr) = operators.radial_params;
+    (; nℓ, nr, Δr) = operators.radial_params;
 
     ntheta = ntheta_ℓmax(nℓ, m);
     (; thetaGL) = gausslegendre_theta_grid(ntheta);
@@ -1624,7 +1624,9 @@ function radial_differential_rotation_profile_derivatives(m; operators, rotation
 
     ΔΩ_spl = Spline1D(r, ΔΩ_r);
     ddrΔΩ_r = derivative(ΔΩ_spl, r);
+    ddrΔΩ_r[abs.(ddrΔΩ_r) .< 1e-10*(2/Δr)] .= 0;
     d2dr2ΔΩ_r = derivative(ΔΩ_spl, r, nu=2);
+    d2dr2ΔΩ_r[abs.(d2dr2ΔΩ_r) .< 1e-10*(2/Δr)^2] .= 0;
 
     ddrΔΩ = chop(chebyshevgrid_to_Fun(ddrΔΩ_r), 1e-2);
     if ncoefficients(ddrΔΩ) > 2nr/3
