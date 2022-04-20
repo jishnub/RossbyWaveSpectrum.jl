@@ -23,6 +23,8 @@ using StructArrays
 using TimerOutputs
 using UnPack
 
+include("eigen.jl")
+
 export datadir
 export F_EIGVAL
 export F_EIGEN
@@ -2149,6 +2151,9 @@ function constrained_eigensystem(M, operators, constraints = constraintmatrix(op
     rebalance_matrix = false,
     scalings = (; Wscaling = 1, Sscaling = 1),
     temp_projectback = allocate_projectback_temp_matrices(size(constraints.ZC)),
+    eigencache = allocate_eigen_cache(cache.M_constrained),
+    λ = similar(M, ComplexF64, size(cache.M_constrained, 1)),
+    w = similar(M, ComplexF64, size(cache.M_constrained)),
     kw...
     )
 
@@ -2165,7 +2170,7 @@ function constrained_eigensystem(M, operators, constraints = constraintmatrix(op
         balance_matrix!(M, nvariables, scales)
     end
     @timeit timer "basis" M_constrained = compute_constrained_matrix(M, constraints, cache)
-    @timeit timer "eigen" λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(M_constrained)
+    @timeit timer "eigen" eigenCF64!(M_constrained; cache = eigencache, lams = λ, vecs = w)
     @timeit timer "projectback" v = realmatcomplexmatmul(ZC, w, temp_projectback)
     λ, v, M
 end
@@ -2645,12 +2650,22 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
                 map(ℓ -> greenfn_cheby(UniformRotGfn(), ℓ, operators, lobattochebyshevtransform), ℓs), ℓs)
         end
 
+    Mc = caches[1].M_constrained
+    eigencaches = [allocate_eigen_cache(Mc) for _ in 1:Threads.nthreads()]
+    λs = [similar(Mc, ComplexF64, size(Mc, 1)) for _ in 1:Threads.nthreads()]
+    ws = [similar(Mc, ComplexF64, size(Mc)) for _ in 1:Threads.nthreads()]
+
     λv = @maybe_reduce_blas_threads(
         Folds.map(mr) do m
-            M = Ms[Threads.threadid()];
-            cache = caches[Threads.threadid()];
-            temp_projectback = temp_projectback_mats[Threads.threadid()];
-            X = spectrumfn!(M, nr, nℓ, m; operators, constraints, cache, temp_projectback, Jtermsunirot, kw...);
+            threadid = Threads.threadid()
+            M = Ms[threadid];
+            cache = caches[threadid];
+            temp_projectback = temp_projectback_mats[threadid];
+            eigencache = eigencaches[threadid];
+            λ = λs[threadid];
+            w = ws[threadid];
+            X = spectrumfn!(M, nr, nℓ, m; operators, constraints, cache,
+                    temp_projectback, Jtermsunirot, eigencache, λ, w, kw...);
             filter_eigenvalues(X..., m; operators, constraints, kw...)
         end
     )
