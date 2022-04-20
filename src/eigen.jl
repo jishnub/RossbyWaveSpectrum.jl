@@ -23,12 +23,12 @@ function eigenCF64!(A::AbstractMatrix{ComplexF64};
 
     balanc = 'B'
     sense = 'N'
-    if balanc ∉ ['N', 'P', 'S', 'B']
-        throw(ArgumentError("balanc must be 'N', 'P', 'S', or 'B', but $balanc was passed"))
-    end
-    if sense ∉ ['N','E','V','B']
-        throw(ArgumentError("sense must be 'N', 'E', 'V' or 'B', but $sense was passed"))
-    end
+    # if balanc ∉ ['N', 'P', 'S', 'B']
+    #     throw(ArgumentError("balanc must be 'N', 'P', 'S', or 'B', but $balanc was passed"))
+    # end
+    # if sense ∉ ['N','E','V','B']
+    #     throw(ArgumentError("sense must be 'N', 'E', 'V' or 'B', but $sense was passed"))
+    # end
 
     chkfinite(A) # balancing routines don't support NaNs and Infs
     lda = max(1,stride(A,2))

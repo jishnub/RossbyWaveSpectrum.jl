@@ -2146,14 +2146,17 @@ function allocate_projectback_temp_matrices(sz)
     v, temp
 end
 
-function constrained_eigensystem(M, operators, constraints = constraintmatrix(operators),
-    cache = constrained_matmul_cache(constraints), timer = TimerOutput();
+function constrained_eigensystem(M;
+    operators,
+    constraints = constraintmatrix(operators),
+    cache = constrained_matmul_cache(constraints),
     rebalance_matrix = false,
     scalings = (; Wscaling = 1, Sscaling = 1),
     temp_projectback = allocate_projectback_temp_matrices(size(constraints.ZC)),
     eigencache = allocate_eigen_cache(cache.M_constrained),
     λ = similar(M, ComplexF64, size(cache.M_constrained, 1)),
     w = similar(M, ComplexF64, size(cache.M_constrained)),
+    timer = TimerOutput(),
     kw...
     )
 
@@ -2177,7 +2180,6 @@ end
 
 function uniform_rotation_spectrum(nr, nℓ, m; operators,
     constraints = constraintmatrix(operators),
-    cache = constrained_matmul_cache(constraints),
     kw...)
 
     rp = operators.radial_params
@@ -2186,7 +2188,7 @@ function uniform_rotation_spectrum(nr, nℓ, m; operators,
     to = TimerOutput()
 
     @timeit to "matrix" M = uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; kw...)
+    X = @timeit to "eigen" constrained_eigensystem(M; operators, constraints, timer = to, kw...)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -2194,7 +2196,6 @@ function uniform_rotation_spectrum(nr, nℓ, m; operators,
 end
 function uniform_rotation_spectrum!(M, nr, nℓ, m; operators,
     constraints = constraintmatrix(operators),
-    cache = constrained_matmul_cache(constraints),
     kw...)
 
     rp = operators.radial_params
@@ -2203,7 +2204,7 @@ function uniform_rotation_spectrum!(M, nr, nℓ, m; operators,
     to = TimerOutput()
 
     @timeit to "matrix" uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; kw...)
+    X = @timeit to "eigen" constrained_eigensystem(M; operators, constraints, timer = to, kw...)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -2231,7 +2232,6 @@ end
 function differential_rotation_spectrum(nr, nℓ, m;
     rotation_profile, operators,
     constraints = constraintmatrix(operators),
-    cache = constrained_matmul_cache(constraints),
     kw...)
 
     rp = operators.radial_params
@@ -2240,7 +2240,7 @@ function differential_rotation_spectrum(nr, nℓ, m;
     to = TimerOutput()
 
     @timeit to "matrix" M = differential_rotation_matrix(nr, nℓ, m; operators, rotation_profile, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; kw...)
+    X = @timeit to "eigen" constrained_eigensystem(M; operators, constraints, timer = to, kw...)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -2249,7 +2249,6 @@ end
 function differential_rotation_spectrum!(M, nr, nℓ, m;
     rotation_profile, operators,
     constraints = constraintmatrix(operators),
-    cache = constrained_matmul_cache(constraints),
     kw...)
 
     rp = operators.radial_params
@@ -2258,7 +2257,7 @@ function differential_rotation_spectrum!(M, nr, nℓ, m;
     to = TimerOutput()
 
     @timeit to "matrix" differential_rotation_matrix!(M, nr, nℓ, m; operators, rotation_profile, kw...)
-    X = @timeit to "eigen" constrained_eigensystem(M, operators, constraints, cache, to; kw...)
+    X = @timeit to "eigen" constrained_eigensystem(M; operators, constraints, timer = to, kw...)
     if get(kw, :print_timer, false)
         println(to)
     end
@@ -2433,7 +2432,7 @@ end
     F_NODES
 end
 FilterFlag(F::FilterFlag) = F
-Base.:(!)(F::FilterFlag) = FilterFlag(127 - Int(F))
+Base.:(!)(F::FilterFlag) = FilterFlag(Int(typemax(UInt8) >> 1) - Int(F))
 Base.in(t::FilterFlag, F::FilterFlag) = (t & F) != F_NONE
 Base.broadcastable(x::FilterFlag) = Ref(x)
 
