@@ -10,6 +10,7 @@ using Dierckx
 using FastGaussQuadrature
 import ApproxFun
 using DelimitedFiles
+using PerformanceTestTools
 
 @testset "project quality" begin
     Aqua.test_all(RossbyWaveSpectrum,
@@ -1876,3 +1877,9 @@ end
         end
     end
 end
+
+PerformanceTestTools.@include_foreach(
+    "test_threaded.jl",
+    [nothing, ["JULIA_NUM_THREADS" => Threads.nthreads() > 1 ? "1" : "2"]],
+)
+
