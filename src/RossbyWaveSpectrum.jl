@@ -2537,7 +2537,7 @@ const DefaultFilterParams = Dict(
     :Δl_cutoff => 7,
     :Δl_power_cutoff => 0.9,
     :eigen_rtol => 0.01,
-    :n_cutoff => 7,
+    :n_cutoff => 10,
     :n_power_cutoff => 0.9,
     :eig_imag_unstable_cutoff => -1e-3,
     :eig_imag_to_real_ratio_cutoff => 1e-1,
@@ -2631,6 +2631,19 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     first.(λv), last.(λv)
 end
 
+function fmap(spectrumfn!, (nr, nℓ, m), (Ms, caches, temp_projectback_mats, eigencaches, λs, ws, operators, constraints, Jtermsunirot); kw...)
+    threadid = Threads.threadid()
+    M = Ms[threadid];
+    cache = caches[threadid];
+    temp_projectback = temp_projectback_mats[threadid];
+    eigencache = eigencaches[threadid];
+    λ = λs[threadid];
+    w = ws[threadid];
+    X = spectrumfn!(M, nr, nℓ, m; operators, constraints, cache,
+            temp_projectback, Jtermsunirot, eigencache, λ, w, kw...);
+    filter_eigenvalues(X..., m; operators, constraints, kw...)
+end
+
 function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
     operators, constraints = constraintmatrix(operators), kw...)
 
@@ -2647,25 +2660,18 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
                     operators.transforms.normr)
             OffsetArray(
                 map(ℓ -> greenfn_cheby(UniformRotGfn(), ℓ, operators, lobattochebyshevtransform), ℓs), ℓs)
-        end
+        end;
 
-    Mc = caches[1].M_constrained
-    eigencaches = [allocate_eigen_cache(Mc) for _ in 1:Threads.nthreads()]
-    λs = [similar(Mc, ComplexF64, size(Mc, 1)) for _ in 1:Threads.nthreads()]
-    ws = [similar(Mc, ComplexF64, size(Mc)) for _ in 1:Threads.nthreads()]
+    Mc = caches[1].M_constrained;
+    eigencaches = [allocate_eigen_cache(Mc) for _ in 1:Threads.nthreads()];
+    λs = [similar(Mc, ComplexF64, size(Mc, 1)) for _ in 1:Threads.nthreads()];
+    ws = [similar(Mc, ComplexF64, size(Mc)) for _ in 1:Threads.nthreads()];
 
     λv = @maybe_reduce_blas_threads(
         Folds.map(mr) do m
-            threadid = Threads.threadid()
-            M = Ms[threadid];
-            cache = caches[threadid];
-            temp_projectback = temp_projectback_mats[threadid];
-            eigencache = eigencaches[threadid];
-            λ = λs[threadid];
-            w = ws[threadid];
-            X = spectrumfn!(M, nr, nℓ, m; operators, constraints, cache,
-                    temp_projectback, Jtermsunirot, eigencache, λ, w, kw...);
-            filter_eigenvalues(X..., m; operators, constraints, kw...)
+            fmap(spectrumfn!, (nr, nℓ, m),
+                (Ms, caches, temp_projectback_mats, eigencaches, λs, ws, operators, constraints, Jtermsunirot);
+                kw...)
         end
     )
     first.(λv), last.(λv)
