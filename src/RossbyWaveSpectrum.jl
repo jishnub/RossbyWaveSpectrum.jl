@@ -2587,15 +2587,17 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     λ, v
 end
 
-macro maybe_reduce_blas_threads(ex)
+macro maybe_reduce_blas_threads(nt, ex)
     ex_esc = esc(ex)
+    nt_esc = esc(nt)
     quote
-        n = BLAS.get_num_threads()
-        nt = Threads.nthreads()
-        BLAS.set_num_threads(max(1, n ÷ nt))
-        f = $ex_esc
-        BLAS.set_num_threads(n)
-        f
+        nblasthreads = BLAS.get_num_threads()
+        try
+            BLAS.set_num_threads(max(1, round(Int, nblasthreads/$nt_esc)))
+            $ex_esc
+        finally
+            BLAS.set_num_threads(nblasthreads)
+        end
     end
 end
 
@@ -2620,7 +2622,7 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
             map(ℓ -> greenfn_cheby(UniformRotGfn(), ℓ, operators, lobattochebyshevtransform), ℓs), ℓs)
     end
 
-    λv = @maybe_reduce_blas_threads(
+    λv = @maybe_reduce_blas_threads(Threads.nthreads(),
         Folds.map(zip(λs, vs, mr)) do (λm, vm, m)
             M = Ms[Threads.threadid()]
             matrixfn!(M, nr, nℓ, m; operators, Jtermsunirot)
@@ -2647,34 +2649,70 @@ end
 function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
     operators, constraints = constraintmatrix(operators), kw...)
 
-    (; nvariables) = operators.constants;
-    (; nr, nℓ, nparams) = operators.radial_params;
-    ℓs = minimum(mr):maximum(mr) + nℓ - 1
-    Ms = [zeros(ComplexF64, nvariables * nparams, nvariables * nparams) for _ in 1:Threads.nthreads()];
-    caches = [constrained_matmul_cache(constraints) for _ in 1:Threads.nthreads()];
-    temp_projectback_mats = [allocate_projectback_temp_matrices(size(constraints.ZC)) for _ in 1:Threads.nthreads()];
-    Jtermsunirot = begin
-            lobattochebyshevtransform =
-                LobattoChebyshev(operators.transforms.TfGL_nr,
-                    operators.transforms.TiGL_nr,
-                    operators.transforms.normr)
-            OffsetArray(
-                map(ℓ -> greenfn_cheby(UniformRotGfn(), ℓ, operators, lobattochebyshevtransform), ℓs), ℓs)
-        end;
+    to = TimerOutput()
 
-    Mc = caches[1].M_constrained;
-    eigencaches = [allocate_eigen_cache(Mc) for _ in 1:Threads.nthreads()];
-    λs = [similar(Mc, ComplexF64, size(Mc, 1)) for _ in 1:Threads.nthreads()];
-    ws = [similar(Mc, ComplexF64, size(Mc)) for _ in 1:Threads.nthreads()];
+    @timeit to "alloc" begin
+        (; nvariables) = operators.constants;
+        (; nr, nℓ, nparams) = operators.radial_params;
+        ℓs = minimum(mr):maximum(mr) + nℓ - 1
+        nthreads = Threads.nthreads()
+        @timeit to "M" Ms = [zeros(ComplexF64, nvariables * nparams, nvariables * nparams) for _ in 1:nthreads];
+        @timeit to "caches" caches = [constrained_matmul_cache(constraints) for _ in 1:nthreads];
+        @timeit to "projectback" temp_projectback_mats = [allocate_projectback_temp_matrices(size(constraints.ZC)) for _ in 1:nthreads];
+        @timeit to "J" Jtermsunirot = begin
+                lobattochebyshevtransform =
+                    LobattoChebyshev(operators.transforms.TfGL_nr,
+                        operators.transforms.TiGL_nr,
+                        operators.transforms.normr)
+                OffsetArray(
+                    map(ℓ -> greenfn_cheby(UniformRotGfn(), ℓ, operators, lobattochebyshevtransform), ℓs), ℓs)
+            end;
 
-    λv = @maybe_reduce_blas_threads(
-        Folds.map(mr) do m
-            fmap(spectrumfn!, (nr, nℓ, m),
-                (Ms, caches, temp_projectback_mats, eigencaches, λs, ws, operators, constraints, Jtermsunirot);
-                kw...)
+        Mc = caches[1].M_constrained;
+        @timeit to "eigencache" eigencaches = [allocate_eigen_cache(Mc) for _ in 1:nthreads];
+        @timeit to "λ" λs = [Vector{ComplexF64}(undef, size(Mc, 1)) for _ in 1:nthreads];
+        @timeit to "w" ws = [Matrix{ComplexF64}(undef, size(Mc)) for _ in 1:nthreads];
+    end
+
+    @timeit to "spectrum" begin
+        addl_params = (Ms, caches, temp_projectback_mats, eigencaches, λs, ws, operators, constraints, Jtermsunirot);
+
+        nblasthreads = BLAS.get_num_threads()
+
+        nthreads_trailing_elems = rem(length(mr), nthreads)
+
+        if nthreads_trailing_elems > 0 && div(nblasthreads, nthreads_trailing_elems) > max(1, div(nblasthreads, nthreads))
+            # in this case the extra elements may be run using a higher number of blas threads
+            mr1 = @view mr[1:end-nthreads_trailing_elems]
+            λv1 = @maybe_reduce_blas_threads(Threads.nthreads(),
+                Folds.map(mr1) do m
+                    fmap(spectrumfn!, (nr, nℓ, m), addl_params; kw...)
+                end
+            )
+            λs, vs = first.(λv1), last.(λv1)
+
+            mr2 = @view mr[end-nthreads_trailing_elems+1:end]
+
+            λv2 = @maybe_reduce_blas_threads(nthreads_trailing_elems,
+                Folds.map(mr2) do m
+                    fmap(spectrumfn!, (nr, nℓ, m), addl_params; kw...)
+                end
+            )
+
+            λs2, vs2 = first.(λv2), last.(λv2)
+            append!(λs, λs2)
+            append!(vs, vs2)
+        else
+            λv = @maybe_reduce_blas_threads(Threads.nthreads(),
+                Folds.map(mr) do m
+                    fmap(spectrumfn!, (nr, nℓ, m), addl_params; kw...)
+                end
+            )
+            λs, vs = first.(λv), last.(λv)
         end
-    )
-    first.(λv), last.(λv)
+    end
+    println(to)
+    λs, vs
 end
 function filter_eigenvalues(filename::String; kw...)
     λs, vs, mr, nr, nℓ, kwold = load(filename, "lam", "vec", "mr", "nr", "nℓ", "kw");
