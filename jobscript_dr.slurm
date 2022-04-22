@@ -3,7 +3,7 @@
 #SBATCH --job-name=rosbyspec
 #SBATCH --nodes=1
 #SBATCH -C dalma
-#SBATCH --ntasks=20
+#SBATCH --ntasks=14
 #SBATCH --mem-per-cpu=8G
 
 cd $SCRATCH/jobs
@@ -12,5 +12,5 @@ module purge
 project="$HOME/RossbyWaveSpectrum.jl"
 export MKL_DYNAMIC="FALSE"
 export MKL_NUM_THREADS=$SLURM_NTASKS
-$julia --project=$project -t 20 -e \
+$julia --project=$project -t 14 -e \
 'include("$(ENV["HOME"])/RossbyWaveSpectrum.jl/compute_rossby_spectrum.jl")'

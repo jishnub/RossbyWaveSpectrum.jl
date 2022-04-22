@@ -2307,10 +2307,10 @@ function isapprox2(x, y; rtol)
     Ndiff <= rtol * N
 end
 function eigensystem_satisfy_filter(λ, v, M, MVcache, rtol = 1e-1)
-    mul!(MVcache.re, M.re, v.re,  1, 0)
-    mul!(MVcache.re, M.im, v.im, -1, 1)
-    mul!(MVcache.im, M.re, v.im,  1, 0)
-    mul!(MVcache.im, M.im, v.re,  1, 1)
+    mul!(MVcache.re, M.re, v.re)
+    mul!(MVcache.re, M.im, v.im, -1.0, 1.0)
+    mul!(MVcache.im, M.re, v.im)
+    mul!(MVcache.im, M.im, v.re,  1.0, 1.0)
     MVcache ./= λ
     isapprox2(MVcache, v; rtol) && return true
     # isapprox2(MVcache.re, v.re; rtol) && isapprox2(MVcache.im, v.im; rtol) && return true
