@@ -2675,8 +2675,8 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
             end;
 
         Mc = caches[1].M_constrained;
-        @timeit to "eigencache" eigencaches = [allocate_eigen_cache(Mc) for _ in 1:nthreads];
-        @timeit to "λ" λs = [Vector{ComplexF64}(undef, size(Mc, 1)) for _ in 1:nthreads];
+        eigencaches = [allocate_eigen_cache(Mc) for _ in 1:nthreads];
+        λs = [Vector{ComplexF64}(undef, size(Mc, 1)) for _ in 1:nthreads];
         @timeit to "w" ws = [Matrix{ComplexF64}(undef, size(Mc)) for _ in 1:nthreads];
     end
 
