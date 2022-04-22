@@ -1501,7 +1501,13 @@ function matrix_block(M, rowind, colind, nvariables = 3)
     @view M[inds]
 end
 
-matrix_block_maximum(f, M, nvariables = 3) = [maximum(f, matrix_block(M, i, j)) for i in 1:nvariables, j in 1:nvariables]
+matrix_block_maximum(f, M::AbstractMatrix, nvariables = 3) = [maximum(f, matrix_block(M, i, j)) for i in 1:nvariables, j in 1:nvariables]
+function matrix_block_maximum(M::AbstractMatrix, operators::NamedTuple)
+    (; nvariables) = operators.constants
+    R = RossbyWaveSpectrum.matrix_block_maximum(abs∘real, M, nvariables)
+    I = RossbyWaveSpectrum.matrix_block_maximum(abs∘imag, M, nvariables)
+    [R I]
+end
 
 function constant_differential_rotation_terms!(M, nr, nℓ, m;
         operators,
