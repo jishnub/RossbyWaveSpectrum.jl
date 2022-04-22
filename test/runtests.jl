@@ -1001,7 +1001,7 @@ end
 
         VVtermfn(r, n) = VVterm1fn(r, n) + VVterm3fn(r, n)
 
-        M = zeros(ComplexF64, nvariables * nparams, nvariables * nparams)
+        M = RossbyWaveSpectrum.allocate_matrix(operators)
         RossbyWaveSpectrum.viscosity_terms!(M, nr, nℓ, m; operators)
 
         @testset "VV terms" begin
@@ -1452,7 +1452,7 @@ end
         ∇²_sinθdθ21 = -ℓℓp1 * sinθdθ21
 
         # used to check the VV term
-        M = zeros(3nr*nℓ, 3nr*nℓ);
+        M = RossbyWaveSpectrum.allocate_matrix(operators);
         RossbyWaveSpectrum._differential_rotation_matrix!(M, nr, nℓ, m, :constant; operators);
 
         @testset for rotation_profile in [:constant, :linear, :solar_equator]

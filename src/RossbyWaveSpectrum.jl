@@ -1163,10 +1163,16 @@ function blockinds((m, nr), ℓ, ℓ′ = ℓ)
     CartesianIndices((rowinds, colinds))
 end
 
+function allocate_matrix(operators)
+    (; nparams) = operators.radial_params
+    (; nvariables) = operators.constants
+    nrows = nvariables * nparams
+    sz = (nrows, nrows)
+    M = StructArray{ComplexF64}((zeros(sz), zeros(sz)))
+end
+
 function uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
-    nparams = nr * nℓ
-    nvariables = operators.constants.nvariables
-    M = zeros(ComplexF64, nvariables * nparams, nvariables * nparams)
+    M = allocate_matrix(operators)
     uniform_rotation_matrix!(M, nr, nℓ, m; operators, kw...)
     return M
 end
@@ -1214,15 +1220,15 @@ function uniform_rotation_matrix!(M, nr, nℓ, m;
 
     M .= 0
 
-    VV = matrix_block(M, 1, 1, nvariables)
-    VW = matrix_block(M, 1, 2, nvariables)
-    WV = matrix_block(M, 2, 1, nvariables)
-    WW = matrix_block(M, 2, 2, nvariables)
+    VV = matrix_block(M.re, 1, 1, nvariables)
+    VW = matrix_block(M.re, 1, 2, nvariables)
+    WV = matrix_block(M.re, 2, 1, nvariables)
+    WW = matrix_block(M.re, 2, 2, nvariables)
     # the following are only valid if S is included
     if nvariables == 3
-        WS = matrix_block(M, 2, 3, nvariables)
-        SW = matrix_block(M, 3, 2, nvariables)
-        SS = matrix_block(M, 3, 3, nvariables)
+        WS = matrix_block(M.re, 2, 3, nvariables)
+        SW = matrix_block(M.re, 3, 2, nvariables)
+        SS = matrix_block(M.im, 3, 3, nvariables)
     end
 
     cosθ = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs);
@@ -1259,7 +1265,7 @@ function uniform_rotation_matrix!(M, nr, nℓ, m;
         if nvariables == 3
             @. WS[blockdiaginds_ℓ] = -J_g / (Ω0^2 * Rsun)  * Wscaling/Sscaling
             @. SW[blockdiaginds_ℓ] = SWterm * Sscaling/Wscaling
-            @. SS[blockdiaginds_ℓ] = -im * SSterm
+            @. SS[blockdiaginds_ℓ] = -SSterm
         end
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
@@ -1315,8 +1321,8 @@ function viscosity_terms!(M, nr, nℓ, m; operators,
         onebyr3_ddrM, onebyr4_chebyM) = operators.diff_operator_matrices;
     (; ν, nvariables) = operators.constants;
 
-    VV = matrix_block(M, 1, 1, nvariables)
-    WW = matrix_block(M, 2, 2, nvariables)
+    VV = matrix_block(M.im, 1, 1, nvariables)
+    WW = matrix_block(M.im, 2, 2, nvariables)
 
     d2dr2_min_ℓℓp1_by_r2_squaredM = zeros(nr, nr);
 
@@ -1391,7 +1397,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators,
         ℓℓp1 = ℓ * (ℓ + 1)
         neg2by3_ℓℓp1 = -2ℓℓp1 / 3
 
-        @views @. VV[blockdiaginds_ℓ] -= im * ν * (d2dr2M - ℓℓp1 * onebyr2_chebyM + ηρ_ddr_minus_2byrM) * Rsun^2
+        @views @. VV[blockdiaginds_ℓ] -= ν * (d2dr2M - ℓℓp1 * onebyr2_chebyM + ηρ_ddr_minus_2byrM) * Rsun^2
 
         G = greenfn_cheby!(ViscosityGfn(), ℓ, operators, viscosity_terms, funs, Jtermsunirot[ℓ],
             tempmatGfn, tempvecGfn, lobattochebyshevtransform);
@@ -1418,7 +1424,7 @@ function viscosity_terms!(M, nr, nℓ, m; operators,
 
         @. WWop += (T3_1 + T3_2 + T3_ℓterms) + T4
 
-        @views @. WW[blockdiaginds_ℓ] -= im * ν * WWop * Rsun^4
+        @views @. WW[blockdiaginds_ℓ] -= ν * WWop * Rsun^4
     end
 
     return M
@@ -1533,10 +1539,10 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m;
     (; mat) = operators
     (; Wscaling) = scalings
 
-    VV = matrix_block(M, 1, 1, nvariables)
-    VW = matrix_block(M, 1, 2, nvariables)
-    WV = matrix_block(M, 2, 1, nvariables)
-    WW = matrix_block(M, 2, 2, nvariables)
+    VV = matrix_block(M.re, 1, 1, nvariables)
+    VW = matrix_block(M.re, 1, 2, nvariables)
+    WV = matrix_block(M.re, 2, 1, nvariables)
+    WW = matrix_block(M.re, 2, 2, nvariables)
 
     cosθo = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs)
     sinθdθo = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
@@ -1691,13 +1697,13 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     (; mat) = operators;
     (; Sscaling, Wscaling) = scalings;
 
-    VV = matrix_block(M, 1, 1, nvariables)
-    VW = matrix_block(M, 1, 2, nvariables)
-    WV = matrix_block(M, 2, 1, nvariables)
-    WW = matrix_block(M, 2, 2, nvariables)
+    VV = matrix_block(M.re, 1, 1, nvariables)
+    VW = matrix_block(M.re, 1, 2, nvariables)
+    WV = matrix_block(M.re, 2, 1, nvariables)
+    WW = matrix_block(M.re, 2, 2, nvariables)
     if nvariables === 3
-        SV = matrix_block(M, 3, 1, nvariables)
-        SW = matrix_block(M, 3, 2, nvariables)
+        SV = matrix_block(M.re, 3, 1, nvariables)
+        SW = matrix_block(M.re, 3, 2, nvariables)
     end
 
     ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(m; operators, rotation_profile);
@@ -2066,27 +2072,25 @@ _maybetrimM(M, nvariables, nparams) = nvariables == 3 ? M : M[1:(nvariables*npar
 
 function constrained_matmul_cache(constraints)
     (; ZC) = constraints
+    sz_constrained = (size(ZC, 2), size(ZC, 2))
     MZCcache = zeros(size(ZC))
-    Mreimtemp = zeros(size(ZC, 1), size(ZC, 1))
-    M_constrained_reim = zeros(size(ZC, 2), size(ZC, 2))
-    M_constrained = zeros(ComplexF64, size(ZC, 2), size(ZC, 2))
-    return (; MZCcache, M_constrained, Mreimtemp, M_constrained_reim)
+    M_constrained_reim = zeros(sz_constrained)
+    M_constrained = zeros(ComplexF64, sz_constrained)
+    return (; MZCcache, M_constrained, M_constrained_reim)
 end
 
 function compute_constrained_matrix(M, constraints,
         cache = constrained_matmul_cache(constraints))
 
-    (; M_constrained, MZCcache, Mreimtemp, M_constrained_reim) = cache
+    (; M_constrained, MZCcache, M_constrained_reim) = cache
     (; ZC) = constraints
 
     #= not thread-safe if cache is preallocated =#
-    Mreimtemp .= real.(M)
-    mul!(M_constrained_reim, ZC', mul!(MZCcache, Mreimtemp, ZC))
+    mul!(M_constrained_reim, ZC', mul!(MZCcache, M.re, ZC))
     for i in eachindex(M_constrained)
         M_constrained[i] = M_constrained_reim[i]
     end
-    Mreimtemp .= imag.(M)
-    mul!(M_constrained_reim, ZC', mul!(MZCcache, Mreimtemp, ZC))
+    mul!(M_constrained_reim, ZC', mul!(MZCcache, M.im, ZC))
     for i in eachindex(M_constrained)
         M_constrained[i] += im*M_constrained_reim[i]
     end
@@ -2292,8 +2296,9 @@ function eigenvalue_filter(x, m;
 
     realfilter && imagfilter
 end
-function boundary_condition_filter(v, C, BCVcache, atol = 1e-5)
-    mul!(BCVcache, C, v)
+function boundary_condition_filter(v, BC, BCVcache, atol = 1e-5)
+    mul!(BCVcache.re, BC, v.re)
+    mul!(BCVcache.im, BC, v.im)
     norm(BCVcache) < atol
 end
 function isapprox2(x, y; rtol)
@@ -2302,8 +2307,14 @@ function isapprox2(x, y; rtol)
     Ndiff <= rtol * N
 end
 function eigensystem_satisfy_filter(λ, v, M, MVcache, rtol = 1e-1)
-    mul!(MVcache, M, v, 1 / λ, false)
-    isapprox2(MVcache, v; rtol)
+    mul!(MVcache.re, M.re, v.re,  1, 0)
+    mul!(MVcache.re, M.im, v.im, -1, 1)
+    mul!(MVcache.im, M.re, v.im,  1, 0)
+    mul!(MVcache.im, M.im, v.re,  1, 1)
+    MVcache ./= λ
+    isapprox2(MVcache, v; rtol) && return true
+    # isapprox2(MVcache.re, v.re; rtol) && isapprox2(MVcache.im, v.im; rtol) && return true
+    return false
 end
 
 function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = 1e-4)
@@ -2525,9 +2536,10 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
     (; BC, nvariables) = constraints
     (; nr, nℓ, nparams) = operators.radial_params
     # temporary cache arrays
-    MVcache = Vector{ComplexF64}(undef, nvariables * nparams)
-    Vcache = Vector{ComplexF64}(undef, nvariables * nparams)
-    BCVcache = Vector{ComplexF64}(undef, size(BC, 1))
+    nrows = nvariables * nparams
+    MVcache = StructArray{ComplexF64}((zeros(nrows),zeros(nrows)))
+    Vcache = StructArray{ComplexF64}((zeros(nrows),zeros(nrows)))
+    BCVcache = StructArray{ComplexF64}((zeros(size(BC, 1)),zeros(size(BC, 1))))
 
     nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
 
@@ -2617,7 +2629,7 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
 
     (; nr, nℓ, nparams) = operators.radial_params
     (; nvariables) = operators.constants
-    Ms = [zeros(ComplexF64, nvariables*nparams, nvariables*nparams) for _ in 1:Threads.nthreads()]
+    Ms = [allocate_matrix(operators) for _ in 1:Threads.nthreads()]
     ℓs = minimum(mr):maximum(mr) + nℓ - 1
     Jtermsunirot = begin
         lobattochebyshevtransform =
@@ -2662,7 +2674,7 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
         (; nr, nℓ, nparams) = operators.radial_params;
         ℓs = minimum(mr):maximum(mr) + nℓ - 1
         nthreads = Threads.nthreads()
-        @timeit to "M" Ms = [zeros(ComplexF64, nvariables * nparams, nvariables * nparams) for _ in 1:nthreads];
+        @timeit to "M" Ms = [allocate_matrix(operators) for _ in 1:nthreads];
         @timeit to "caches" caches = [constrained_matmul_cache(constraints) for _ in 1:nthreads];
         @timeit to "projectback" temp_projectback_mats = [allocate_projectback_temp_matrices(size(constraints.ZC)) for _ in 1:nthreads];
         @timeit to "J" Jtermsunirot = begin

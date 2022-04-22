@@ -1,8 +1,8 @@
 @time using RossbyWaveSpectrum
 using LinearAlgebra
 
-nr = 60;
-nℓ = 30;
+nr = 50;
+nℓ = 50;
 mrange = 1:20;
 
 # test
@@ -24,8 +24,8 @@ n_power_cutoff = 0.9
 # used for filtering, zero for uniform rotation
 ΔΩ_by_Ω_low = -0.5
 ΔΩ_by_Ω_high = 0.5
-# ΔΩ_by_Ω_low = 0
-# ΔΩ_by_Ω_high = 0
+ΔΩ_by_Ω_low = 0
+ΔΩ_by_Ω_high = 0
 
 r_in_frac = 0.7
 r_out_frac = 0.985
@@ -35,7 +35,7 @@ scale_eigenvectors = false
 
 operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac);
 
-spectrumfn! = RossbyWaveSpectrum.diffrotspectrumfn!(:constant);
+spectrumfn! = RossbyWaveSpectrum.diffrotspectrumfn!(:radial);
 # spectrumfn! = RossbyWaveSpectrum.uniform_rotation_spectrum!
 @show nr nℓ mrange Δl_cutoff Δl_power_cutoff eigen_rtol ΔΩ_by_Ω_low ΔΩ_by_Ω_high;
 @show scale_eigenvectors;
