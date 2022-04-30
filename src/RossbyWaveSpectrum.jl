@@ -1543,6 +1543,9 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m;
     VW = matrix_block(M.re, 1, 2, nvariables)
     WV = matrix_block(M.re, 2, 1, nvariables)
     WW = matrix_block(M.re, 2, 2, nvariables)
+    if nvariables == 3
+        SS = matrix_block(M.re, 3, 3, nvariables)
+    end
 
     cosθo = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs)
     sinθdθo = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
@@ -1560,7 +1563,8 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m;
         blockdiaginds_ℓ = blockinds((m, nr), ℓ)
         two_over_ℓℓp1 = 2 / ℓℓp1
 
-        diagterm = m * (two_over_ℓℓp1 - 1) * ΔΩ_by_Ω0
+        dopplerterm = m * ΔΩ_by_Ω0
+        diagterm = m * two_over_ℓℓp1 * ΔΩ_by_Ω0 - dopplerterm
 
         VVd = @view VV[blockdiaginds_ℓ]
         @views VVd[diagind(VVd)] .+= diagterm
@@ -1571,6 +1575,11 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m;
 
         mul!(Jddr, J, ddrM)
         @. Jddr_plus_2byrM = Jddr + 2J_by_r
+
+        if nvariables == 3
+            SSd = @view SS[blockdiaginds_ℓ]
+            @views SSd[diagind(SSd)] .-= dopplerterm
+        end
 
         @views for ℓ′ in ℓ-1:2:ℓ+1
             ℓ′ in ℓs || continue
@@ -1704,19 +1713,20 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     if nvariables === 3
         SV = matrix_block(M.re, 3, 1, nvariables)
         SW = matrix_block(M.re, 3, 2, nvariables)
+        SS = matrix_block(M.re, 3, 3, nvariables)
     end
 
     ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(m; operators, rotation_profile);
 
-    (; ΔΩ, ddrΔΩ) = ΔΩprofile_deriv;
+    (; ΔΩ, ddrΔΩ, Ω0) = ΔΩprofile_deriv;
 
     ΔΩM = mat(ΔΩ);
     ddrΔΩM = mat(ddrΔΩ);
 
-    # ddrΔΩ_over_g = ddrΔΩ / g_cheby;
-    # ddrΔΩ_over_gM = mat(ddrΔΩ_over_g);
-    # ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr)::Tmul;
-    # ddrΔΩ_over_g_DDrM = mat(ddrΔΩ_over_g_DDr);
+    ddrΔΩ_over_g = ddrΔΩ / g_cheby;
+    ddrΔΩ_over_gM = mat(ddrΔΩ_over_g);
+    ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr)::Tmul;
+    ddrΔΩ_over_g_DDrM = mat(ddrΔΩ_over_g_DDr);
     ddrΔΩ_plus_ΔΩddr = (ddrΔΩ + (ΔΩ * ddr)::Tmul)::Tplus;
 
     ℓs = range(m, length = nℓ);
@@ -1725,8 +1735,8 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     cosθo = OffsetArray(cosθ, ℓs, ℓs);
     sinθdθ = sintheta_dtheta_operator(nℓ, m);
     sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs);
-    # cosθsinθdθ = (costheta_operator(nℓ + 1, m)*sintheta_dtheta_operator(nℓ + 1, m))[1:end-1, 1:end-1];
-    # cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
+    cosθsinθdθ = (costheta_operator(nℓ + 1, m)*sintheta_dtheta_operator(nℓ + 1, m))[1:end-1, 1:end-1];
+    cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
     ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs);
 
     DDr_min_2byr = (DDr - 2onebyr_cheby)::Tplus;
@@ -1791,6 +1801,10 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
 
         J_ddrΔΩ_plus_ΔΩddrM = J_ddrΩ + J_ΔΩ * ddrM
 
+        if nvariables == 3
+            @. SS[inds_ℓℓ] -= m * ΔΩM
+        end
+
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
@@ -1809,18 +1823,18 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
                         ∇²_sinθdθ_ℓℓ′ * J_twoΔΩ_by_r
                     ) * Wscaling
 
-            # if nvariables == 3
-            #     @. SV[inds_ℓℓ′] -= (Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM * Sscaling;
-            # end
+            if nvariables == 3
+                @. SV[inds_ℓℓ′] -= (Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM * Sscaling;
+            end
         end
 
-        # for ℓ′ in intersect(ℓs, ℓ-2:2:ℓ+2)
-        #     inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
+        for ℓ′ in intersect(ℓs, ℓ-2:2:ℓ+2)
+            inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
-        #     if nvariables == 3
-        #         @. SW[inds_ℓℓ′] += (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM * Sscaling/Wscaling;
-        #     end
-        # end
+            if nvariables == 3
+                @. SW[inds_ℓℓ′] += (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM * Sscaling/Wscaling;
+            end
+        end
     end
     return M
 end
