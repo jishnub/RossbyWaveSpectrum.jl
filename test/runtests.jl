@@ -705,7 +705,7 @@ end
 
     (; ddr, d2dr2, DDr) = operators.diff_operators;
 
-    (; DDrM, ddrDDrM, onebyr2_chebyM, ddrM, onebyr_chebyM, gM,
+    (; DDrM, onebyr2_chebyM, ddrM, onebyr_chebyM, gM,
         κ_∇r2_plus_ddr_lnρT_ddrM, onebyr2_cheby_ddr_S0_by_cpM,
         onebyr2_IplusrηρM) = operators.diff_operator_matrices;
 
@@ -732,11 +732,10 @@ end
 
     ℓ′ = 1
     # for these terms ℓ = ℓ′ (= 1 in this case)
-    SWterm, SSterm = (zeros(nr, nr) for i in 1:3);
+    SWterm, SSterm = (zeros(nr, nr) for i in 1:2);
     RossbyWaveSpectrum.uniform_rotation_matrix_terms_outer!((SWterm, SSterm),
-                        (ℓ′, m), nchebyr,
-                        (ddrDDrM, onebyr2_IplusrηρM, gM,
-                            κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M, onebyr2_cheby_ddr_S0_by_cpM), Ω0);
+                        (ℓ′, m),
+                        (κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M, onebyr2_cheby_ddr_S0_by_cpM));
 
     @testset "V terms" begin
         @testset "WV term" begin
@@ -827,43 +826,6 @@ end
         end
 
         @testset "WW term" begin
-            function ddrDrρTn_fn(r, n)
-                r̄_r = r̄(r)
-                Tn = chebyshevT(n, r̄_r)
-                Unm1 = chebyshevU(n-1, r̄_r)
-                ηr = ηρ_cheby(r̄_r)
-                η′r = ddrηρ(r̄_r)
-                T1 = a * n * Unm1 * ηr + Tn * η′r
-                if n > 1
-                    Unm2 = chebyshevU(n-2, r̄_r)
-                    return a^2 * n * (-n*Unm2 + (n-1)*Unm1*r̄_r)/(r̄_r^2 - 1) + T1
-                elseif n == 1
-                    return T1
-                else
-                    error("invalid n")
-                end
-            end
-
-            @testset "ddrDrρTn" begin
-                @testset for n in 1:nr - 1
-                    ddrDrρ_Tn_analytical = chebyfwdnr(r -> ddrDrρTn_fn(r, n))
-                    @test ddrDDrM[:, n+1] ≈ ddrDrρ_Tn_analytical rtol=1e-8
-                end
-            end
-
-            function onebyr2Tn_fn(r, n)
-                r̄_r = r̄(r)
-                Tn = chebyshevT(n, r̄_r)
-                1/r^2 * Tn
-            end
-
-            @testset "onebyr2Tn" begin
-                @testset for n in 1:nr - 1
-                    onebyr2_Tn_analytical = chebyfwdnr(r -> onebyr2Tn_fn(r, n))
-                    @test onebyr2_chebyM[:, n+1] ≈ onebyr2_Tn_analytical rtol=1e-4
-                end
-            end
-
             function onebyr2_Iplusrηρ_Tn_fn(r, n)
                 r̄_r = r̄(r)
                 Tn = chebyshevT(n, r̄_r)
@@ -1438,7 +1400,7 @@ end
         r̄(r) = clamp(a * r + b, -1.0, 1.0)
         (; Tcrfwd) = transforms;
         (; Iℓ) = identities;
-        (; ddr, d2dr2, DDr, ddrDDr) = diff_operators;
+        (; ddr, d2dr2, DDr) = diff_operators;
         (; onebyr_cheby, onebyr2_cheby, r2_cheby, r_cheby, ηρ_cheby) = rad_terms;
         (; r_in, r_out) = operators.radial_params;
         (; mat) = operators;
@@ -1474,9 +1436,6 @@ end
                         (mat(ddrΔΩ), Ω0),
                         map(mat, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr)))
 
-            ΔΩ_ddrDDr = ΔΩ * ddrDDr
-            ddrΔΩ_DDr = ddrΔΩ * DDr
-            ddrΔΩ_DDr_plus_ΔΩ_ddrDDr = ddrΔΩ_DDr + ΔΩ_ddrDDr
             ΔΩ_by_r2 = ΔΩ * onebyr2_cheby
             two_ΔΩbyr_ηρ = twoΔΩ_by_r * ηρ_cheby
             ddrΔΩ_ddr_plus_2byr = ddrΔΩ * (ddr + 2onebyr_cheby)

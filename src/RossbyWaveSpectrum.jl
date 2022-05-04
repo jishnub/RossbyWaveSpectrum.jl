@@ -635,11 +635,8 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators,
     )
 
     (; r_chebyshev_lobatto, r_lobatto) = operators.coordinates;
-    (; TfGL_nr, TiGL_nr, normr) = operators.transforms;
     (; ddr_lobatto) = operators.diff_operator_matrices;
-    (; ηρ_cheby, ηρ_by_r, ηρ2_by_r2, ηρ_by_r2, g_cheby, ddr_ηρbyr2, ddr_ηρbyr,
-            ηρ_by_r3, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ,
-            onebyr_cheby, onebyr2_cheby, onebyr3_cheby) = operators.rad_terms;
+    (; ηρ_cheby, ηρ_by_r, g_cheby, ηρ_by_r3, ddr_ηρ) = operators.rad_terms;
 
     H = greenfn_radial_lobatto(ℓ, operators)
     J = lobattochebyshevtransform(H)
@@ -693,9 +690,7 @@ function greenfn_cheby!(::ViscosityGfn, ℓ, operators, viscosity_terms, funs,
     )
 
     (; r_chebyshev_lobatto) = operators.coordinates;
-    (; ηρ_cheby, ηρ_by_r, ηρ2_by_r2, ηρ_by_r2, g_cheby, ddr_ηρbyr2, ddr_ηρbyr,
-            ηρ_by_r3, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ,
-            onebyr_cheby, onebyr2_cheby, onebyr3_cheby) = operators.rad_terms;
+    (; ηρ2_by_r2, ηρ_by_r2, ddr_ηρbyr2, d2dr2_ηρ, onebyr_cheby, onebyr2_cheby) = operators.rad_terms;
 
     (; unirot_terms) = G
     L = lobattochebyshevtransform
@@ -1000,9 +995,6 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     DDr = (ddr + ηρ_cheby)::Tplus
     rDDr = (r_cheby * DDr)::Tmul
-    D2Dr2 = (DDr * DDr)::Tmul
-
-    ddrDDr = (ddr * DDr)::Tmul
 
     onebyr = 1 ./ r
     onebyr_cheby = (1 / r_cheby)::typeof(r_cheby)
@@ -1063,15 +1055,12 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     d2dr2M = mat(d2dr2)
     d3dr3M = mat(d3dr3)
     d4dr4M = mat(d4dr4)
-    ddrDDrM = mat(ddrDDr)
     rddrM = mat(rddr)
-    ddrDDrM = mat(ddrDDr)
     twoηρ_by_rM = mat(twoηρ_by_r)
     ddr_plus_2byrM = @. ddrM + 2 * onebyr_chebyM
     ddr_minus_2byrM = @. ddrM - 2 * onebyr_chebyM
     DDr_minus_2byrM = mat(DDr_minus_2byr)
     gM = mat(g_cheby)
-    grddrM = mat((g_cheby * rddr)::Tmul)
 
     # uniform rotation terms
     onebyr2_IplusrηρM = mat((1 + ηρ_cheby * r_cheby) * onebyr2_cheby);
@@ -1124,13 +1113,13 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         ηρ_by_r, ηρ_by_r2, ηρ2_by_r2, ddr_ηρbyr, ddr_ηρbyr2, ηρ_by_r3,
         ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ)
 
-    diff_operators = (; DDr, D2Dr2, DDr_minus_2byr, rDDr, rddr,
-        ddr, d2dr2, d3dr3, d4dr4, r2d2dr2, ddrDDr, ddr_plus_2byr)
+    diff_operators = (; DDr, DDr_minus_2byr, rDDr, rddr,
+        ddr, d2dr2, d3dr3, d4dr4, r2d2dr2, ddr_plus_2byr)
 
     diff_operator_matrices = (; onebyr_chebyM, onebyr2_chebyM, DDrM,
-        ddrM, d2dr2M, ddrDDrM, rddrM, twoηρ_by_rM, ddr_plus_2byrM,
+        ddrM, d2dr2M, rddrM, twoηρ_by_rM, ddr_plus_2byrM,
         ddr_minus_2byrM, DDr_minus_2byrM,
-        grddrM, gM,
+        gM,
         ddr_lobatto,
         ddrDDr_lobatto,
         ηρ_by_rM, ηρ2_by_r2M, d3dr3M, d4dr4M,
@@ -1178,9 +1167,8 @@ function uniform_rotation_matrix(nr, nℓ, m; operators, kw...)
 end
 
 function uniform_rotation_matrix_terms_outer!((SWterm, SSterm),
-    (ℓ, m), nchebyr,
-    (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
-        onebyr2_cheby_ddr_S0_by_cpM), Ω0)
+    (ℓ, m),
+    (κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M, onebyr2_cheby_ddr_S0_by_cpM))
 
     ℓℓp1 = ℓ*(ℓ+1)
 
@@ -1206,9 +1194,8 @@ function uniform_rotation_matrix!(M, nr, nℓ, m;
         )
 
     (; nvariables, Ω0, scalings) = operators.constants;
-    (; nchebyr) = operators.radial_params;
-    (; ddrDDrM, ddrM, DDrM, onebyr_chebyM, gM, DDr_minus_2byrM,
-        onebyr2_IplusrηρM, onebyr2_cheby_ddr_S0_by_cpM,
+    (; ddrM, DDrM, onebyr_chebyM, DDr_minus_2byrM,
+        onebyr2_cheby_ddr_S0_by_cpM,
         κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M) = operators.diff_operator_matrices;
     (; Sscaling, Wscaling) = scalings;
 
@@ -1247,9 +1234,9 @@ function uniform_rotation_matrix!(M, nr, nℓ, m;
         blockdiaginds_ℓ = blockinds((m, nr), ℓ)
 
         uniform_rotation_matrix_terms_outer!((SWterm, SSterm),
-                (ℓ, m), nchebyr,
-                (ddrDDrM, onebyr2_IplusrηρM, gM, κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
-                    onebyr2_cheby_ddr_S0_by_cpM), Ω0);
+                (ℓ, m),
+                (κ_∇r2_plus_ddr_lnρT_ddrM, κ_by_r2M,
+                    onebyr2_cheby_ddr_S0_by_cpM));
 
         diagterm = 2m/ℓℓp1
 
@@ -1531,12 +1518,8 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m;
     )
 
     (; nvariables, scalings) = operators.constants
-    (; ddrDDrM, ddrM, DDrM, onebyr_chebyM,
-        onebyr2_chebyM, twoηρ_by_rM, ddr_plus_2byrM) = operators.diff_operator_matrices
+    (; ddrM, DDrM, onebyr_chebyM) = operators.diff_operator_matrices
 
-    (; onebyr_cheby, onebyr2_cheby, twoηρ_by_r) = operators.rad_terms
-    (; DDr, ddr, ddrDDr, ddr_plus_2byr) = operators.diff_operators
-    (; mat) = operators
     (; Wscaling) = scalings
 
     VV = matrix_block(M.re, 1, 1, nvariables)
@@ -1699,10 +1682,9 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     )
 
     (; nvariables, scalings) = operators.constants;
-    (; r) = operators.coordinates;
-    (; DDr, ddr, ddrDDr) = operators.diff_operators;
-    (; twoηρ_by_rM, onebyr_chebyM, ddrM) = operators.diff_operator_matrices;
-    (; onebyr_cheby, onebyr2_cheby, ηρ_cheby, g_cheby, r_cheby) = operators.rad_terms;
+    (; DDr, ddr) = operators.diff_operators;
+    (; ddrM) = operators.diff_operator_matrices;
+    (; onebyr_cheby, g_cheby) = operators.rad_terms;
     (; mat) = operators;
     (; Sscaling, Wscaling) = scalings;
 
@@ -1745,7 +1727,7 @@ function radial_differential_rotation_terms!(M, nr, nℓ, m;
     ΔΩ_by_r = ΔΩ * onebyr_cheby;
 
     inner_matrices = map(mat, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr));
-    (ΔΩ_by_rM, ΔΩ_DDrM, ΔΩ_DDr_min_2byrM, ddrΔΩ_plus_ΔΩddrM) = inner_matrices;
+    (ΔΩ_by_rM, ΔΩ_DDrM, ΔΩ_DDr_min_2byrM) = inner_matrices;
 
     Nlobatto = length(operators.coordinates.r_chebyshev_lobatto)
     tempmatGfn = zeros(Nlobatto, Nlobatto);
