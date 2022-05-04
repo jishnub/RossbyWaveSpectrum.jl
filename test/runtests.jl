@@ -20,8 +20,46 @@ using PerformanceTestTools
     )
 end
 
-@testset "operators inferred" begin
+@testset "operators" begin
     @inferred RossbyWaveSpectrum.radial_operators(5, 2)
+    # Ensure that the Chebyshev interpolations of the scale heights match the actual
+    # functional form, given by the spline interpolations
+    @testset "stratification" begin
+        nr, nℓ = 50, 25
+        @testset "shallow" begin
+            operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+            (; r, r_chebyshev) = operators.coordinates;
+            (; sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
+                sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ,
+                sT, sηT) = operators.splines;
+            (; ηρ_cheby, ddr_ηρbyr, ddr_ηρbyr2,
+                ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ) = operators.rad_terms;
+
+            @test sηρ.(r) ≈ ηρ_cheby.(r_chebyshev) rtol=1e-2
+            @test ddrsηρ.(r) ≈ ddr_ηρ.(r_chebyshev) rtol=1e-2
+            @test d2dr2sηρ.(r) ≈ d2dr2_ηρ.(r_chebyshev) rtol=1e-2
+            @test d3dr3sηρ.(r) ≈ d3dr3_ηρ.(r_chebyshev) rtol=2e-2
+            @test ddrsηρ_by_r2.(r) ≈ ddr_ηρbyr2.(r_chebyshev) rtol=1e-2
+            @test ddrsηρ_by_r.(r) ≈ ddr_ηρbyr.(r_chebyshev) rtol=1e-2
+        end
+
+        @testset "deep" begin
+            operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.5);
+            (; r, r_chebyshev) = operators.coordinates;
+            (; sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
+                sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ,
+                sT, sηT) = operators.splines;
+            (; ηρ_cheby, ddr_ηρbyr, ddr_ηρbyr2,
+                ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ) = operators.rad_terms;
+
+            @test sηρ.(r) ≈ ηρ_cheby.(r_chebyshev) rtol=1e-2
+            @test ddrsηρ.(r) ≈ ddr_ηρ.(r_chebyshev) rtol=1e-2
+            @test d2dr2sηρ.(r) ≈ d2dr2_ηρ.(r_chebyshev) rtol=1e-2
+            @test d3dr3sηρ.(r) ≈ d3dr3_ηρ.(r_chebyshev) rtol=2e-2
+            @test ddrsηρ_by_r2.(r) ≈ ddr_ηρbyr2.(r_chebyshev) rtol=2e-2
+            @test ddrsηρ_by_r.(r) ≈ ddr_ηρbyr.(r_chebyshev) rtol=2e-2
+        end
+    end
 end
 
 df(f) = x -> ForwardDiff.derivative(f, x)
@@ -74,7 +112,7 @@ end
     r_out_frac = 0.985
     r_in = r_in_frac * Rsun
     r_out = r_out_frac * Rsun
-    (; sρ, sT, sg, sηρ, sηT) = RossbyWaveSpectrum.read_solar_model(; r_in, r_out);
+    (; sρ, sT, sg, sηρ, sηT) = RossbyWaveSpectrum.read_solar_model(; r_in, r_out).splines;
 
     operators = RossbyWaveSpectrum.radial_operators(50, 2; r_in_frac, r_out_frac);
     (; r, r_chebyshev) = operators.coordinates;
@@ -119,24 +157,42 @@ end
     ηρ_by_r3M = mat(ηρ_by_r * onebyr2_cheby);
 
     function greenfn_radial_lobatto_unstratified_analytical(ℓ, operators)
-        (; n_lobatto) = operators.transforms;
-        (; r_in, r_out, Δr) = operators.radial_params;
-        (; r_lobatto) = operators.coordinates;
+        (; r_lobatto) = operators.coordinates
+        (; radial_params) = operators
+        greenfn_radial_lobatto_unstratified_analytical(ℓ, r_lobatto, radial_params)
+    end
+
+    function Grlts(ri, sj, ℓ, radial_params)
+        (; r_in, r_out, Δr) = radial_params;
         r_in_frac = r_in/Rsun;
         r_out_frac = r_out/Rsun;
         W = (2ℓ+1)*((r_out_frac)^(2ℓ+1) - (r_in_frac)^(2ℓ+1))
         norm = 1/W * (Δr/2) / Rsun
-        H = zeros(n_lobatto+1, n_lobatto+1);
+        (sj^(ℓ+1) - r_out_frac^(2ℓ+1)/sj^ℓ)*(ri^(ℓ+1) - r_in_frac^(2ℓ+1)/ri^ℓ) * norm
+    end
+
+    function Grgts(ri, sj, ℓ, radial_params)
+        (; r_in, r_out, Δr) = radial_params;
+        r_in_frac = r_in/Rsun;
+        r_out_frac = r_out/Rsun;
+        W = (2ℓ+1)*((r_out_frac)^(2ℓ+1) - (r_in_frac)^(2ℓ+1))
+        norm = 1/W * (Δr/2) / Rsun
+        (sj^(ℓ+1) - r_in_frac^(2ℓ+1)/sj^ℓ)*(ri^(ℓ+1) - r_out_frac^(2ℓ+1)/ri^ℓ) * norm
+    end
+
+    function greenfn_radial_lobatto_unstratified_analytical(ℓ, r_lobatto, radial_params)
+        (; r_in, r_out, Δr) = radial_params;
+        H = zeros(length(r_lobatto), length(r_lobatto));
 
         for rind in axes(r_lobatto, 1)[2:end-1]
             ri = r_lobatto[rind]/Rsun
             for sind in axes(r_lobatto, 1)[2]:rind
                 sj = r_lobatto[sind]/Rsun
-                H[rind, sind] = (sj^(ℓ+1) - r_in_frac^(2ℓ+1)/sj^ℓ)*(ri^(ℓ+1) - r_out_frac^(2ℓ+1)/ri^ℓ) * norm
+                H[rind, sind] = Grgts(ri, sj, ℓ, radial_params)
             end
             for sind in rind + 1:axes(r_lobatto, 1)[end-1]
                 sj = r_lobatto[sind]/Rsun
-                H[rind, sind] = (sj^(ℓ+1) - r_out_frac^(2ℓ+1)/sj^ℓ)*(ri^(ℓ+1) - r_in_frac^(2ℓ+1)/ri^ℓ) * norm
+                H[rind, sind] = Grlts(ri, sj, ℓ, radial_params)
             end
         end
 
@@ -459,11 +515,7 @@ end
                     intresc = TfGL_nr * intres
 
                     Xn = @view JDDrc[:, n+1]
-                    if n <= 30
-                        @test Xn ≈ intresc rtol=1e-2
-                    else
-                        @test Xn ≈ intresc rtol=2e-1
-                    end
+                    @test Xn ≈ intresc rtol=5e-3
                 end
             end
 
@@ -665,22 +717,32 @@ end
                 end
             end
 
-            @testset "J * ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr" begin
-                J_ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr_c = -J_ηρbyr2 * ddrM .+ J_ddrηρbyr2_plus_4ηρbyr3;
+            # viscosity 3rd term
+            @testset "J * ηρbyr2 * ∂r" begin
+                J_ηρbyr2_ddrM = J_ηρbyr2 * ddrM;
                 @testset for n = 0:5:nr-1
                     T = chebyshevT(n)
-                    f = x -> df(x -> ηρ_by_r2(x) * T(x), x) * (2/Δr) -
-                        2ηρ_cheby(x)/r_cheby(x)^2 * (df(T, x) * (2/Δr) -2T(x)/r_cheby(x))
+                    dT = df(T)
+                    f = x -> ηρ_by_r2(x) * dT(x) * (2/Δr)
 
                     intres = intJ_quadgc(f);
                     intresc = TfGL_nr * intres;
 
-                    Xn = @view J_ddr_ηρ_by_r2_minus_2ηρ_by_r2_ddr_minus_2byr_c[:, n+1];
-                    if n <= 40
-                        @test Xn ≈ intresc rtol=3e-3
-                    else
-                        @test Xn ≈ intresc rtol=6e-3
-                    end
+                    Xn = @view J_ηρbyr2_ddrM[:, n+1];
+                    @test Xn ≈ intresc rtol=1e-3
+                end
+            end
+
+            @testset "J * ddrηρbyr2_plus_4ηρbyr3" begin
+                @testset for n = 0:5:nr-1
+                    T = chebyshevT(n)
+                    f = x -> (ddr_ηρbyr2(x) + 4*ηρ_by_r3(x))*T(x)
+
+                    intres = intJ_quadgc(f);
+                    intresc = TfGL_nr * intres;
+
+                    Xn = @view J_ddrηρbyr2_plus_4ηρbyr3[:, n+1];
+                    @test Xn ≈ intresc rtol=1e-3
                 end
             end
         end
@@ -1018,123 +1080,128 @@ end
         # fourth term
         ηρ2_by_r2M = mat(ηρ2_by_r2);
 
-        @testset "first term" begin
-            function WWterm11_1fn(r, n)
-                T = chebyshevT(n)
-                F1 = r -> r * d2f(r -> ηρ_cheby(r̄(r))/r * T(r̄(r)), r)
-                F1(r)
-            end
+        # @testset "first term" begin
+            # function WWterm11_1fn(r, n)
+            #     T = chebyshevT(n)
+            #     dT = x -> df(T, x) * (2/Δr)
+            #     d2T = x -> d2f(T, x) * (2/Δr)^2
+            #     r̄_r = r̄(r)
+            #     # F1 = r -> 2dT(r̄_r)*ddr_ηρ(r̄_r) + ηρ_cheby(r̄_r)*(-2dT(r̄_r)/r + d2T(r̄_r)) +
+            #     #         T(r̄_r) * (2 * ηρ_by_r2(r̄_r) - 2 * ddr_ηρ(r̄_r)/r + d2dr2_ηρ(r̄_r))
+            #     F1 = r -> r * d2f(r -> ηρ_cheby(r̄(r))/r * T(r̄(r)), r)
+            #     F1(r)
+            # end
 
-            @testset "WWterm11_1fn" begin
-                @testset for n in 0:nr-1
-                    WWterm11_1_op = @view r_d2dr2_ηρ_by_rM[:, n+1]
-                    WWterm11_1_analytical = chebyfwdnr(r -> WWterm11_1fn(r, n))
-                    @test WWterm11_1_op ≈ WWterm11_1_analytical rtol=5e-4
-                end
-            end
+            # @testset "WWterm11_1fn" begin
+            #     @testset for n in 0:nr-1
+            #         WWterm11_1_op = @view r_d2dr2_ηρ_by_rM[:, n+1];
+            #         WWterm11_1_analytical = chebyfwdnr(r -> WWterm11_1fn(r, n));
+            #         @test WWterm11_1_op ≈ WWterm11_1_analytical rtol=5e-4
+            #     end
+            # end
 
-            function WWterm11fn(r, n)
-                T = chebyshevT(n)
-                F1 = r -> WWterm11_1fn(r, n)
-                F2 = r -> df(F1, r) - 2/r * F1(r)
-                F2(r)
-            end
+        #     function WWterm11fn(r, n)
+        #         T = chebyshevT(n)
+        #         F1 = r -> WWterm11_1fn(r, n)
+        #         F2 = r -> df(F1, r) - 2/r * F1(r)
+        #         F2(r)
+        #     end
 
-            @testset "WWterm11fn" begin
-                @testset for n in 0:nr-1
-                    WWterm11_op = @view ddr_minus_2byr_r_d2dr2_ηρ_by_rM[:, n+1]
-                    WWterm11_analytical = chebyfwdnr(r -> WWterm11fn(r, n))
-                    @test WWterm11_op ≈ WWterm11_analytical rtol=5e-4
-                end
-            end
+        #     @testset "WWterm11fn" begin
+        #         @testset for n in 0:nr-1
+        #             WWterm11_op = @view ddr_minus_2byr_r_d2dr2_ηρ_by_rM[:, n+1]
+        #             WWterm11_analytical = chebyfwdnr(r -> WWterm11fn(r, n))
+        #             @test WWterm11_op ≈ WWterm11_analytical rtol=5e-4
+        #         end
+        #     end
 
-            function WWterm12fn(r, n)
-                T = chebyshevT(n)
-                F1 = r -> ηρ_cheby(r̄(r))/r^2 * T(r̄(r))
-                F2 = r -> df(F1, r) - 2/r * F1(r)
-                F2(r)
-            end
+        #     function WWterm12fn(r, n)
+        #         T = chebyshevT(n)
+        #         F1 = r -> ηρ_cheby(r̄(r))/r^2 * T(r̄(r))
+        #         F2 = r -> df(F1, r) - 2/r * F1(r)
+        #         F2(r)
+        #     end
 
-            @testset "WWterm12fn" begin
-                @testset for n in 0:nr-1
-                    WWterm12_op = @view ddr_minus_2byr_ηρ_by_r2M[:, n+1]
-                    WWterm12_analytical = chebyfwdnr(r -> WWterm12fn(r, n))
-                    @test WWterm12_op ≈ WWterm12_analytical rtol=5e-4
-                end
-            end
+        #     @testset "WWterm12fn" begin
+        #         @testset for n in 0:nr-1
+        #             WWterm12_op = @view ddr_minus_2byr_ηρ_by_r2M[:, n+1]
+        #             WWterm12_analytical = chebyfwdnr(r -> WWterm12fn(r, n))
+        #             @test WWterm12_op ≈ WWterm12_analytical rtol=5e-4
+        #         end
+        #     end
 
-            function WWterm13fn(r, n)
-                T = chebyshevT(n)
-                F1 = r -> 4ηρ_cheby(r̄(r))/r * T(r̄(r))
-                F2 = r -> d2f(F1, r)
-                F2(r)
-            end
+        #     function WWterm13fn(r, n)
+        #         T = chebyshevT(n)
+        #         F1 = r -> 4ηρ_cheby(r̄(r))/r * T(r̄(r))
+        #         F2 = r -> d2f(F1, r)
+        #         F2(r)
+        #     end
 
-            @testset "WWterm13fn" begin
-                @testset for n in 0:nr-1
-                    WWterm13_op = @view d2dr2_plus_4ηρ_by_rM[:, n+1]
-                    WWterm13_analytical = chebyfwdnr(r -> WWterm13fn(r, n))
-                    @test WWterm13_op ≈ WWterm13_analytical rtol=5e-4
-                end
-            end
+        #     @testset "WWterm13fn" begin
+        #         @testset for n in 0:nr-1
+        #             WWterm13_op = @view d2dr2_plus_4ηρ_by_rM[:, n+1]
+        #             WWterm13_analytical = chebyfwdnr(r -> WWterm13fn(r, n))
+        #             @test WWterm13_op ≈ WWterm13_analytical rtol=5e-4
+        #         end
+        #     end
 
-            function WWterm13_fullfn(r, n)
-                T = chebyshevT(n)
-                F1 = r -> d2f(T ∘ r̄, r) + 4ηρ_cheby(r̄(r))/r * T(r̄(r))
-                F2 = r -> d2f(F1, r)
-                F2(r)
-            end
+        #     function WWterm13_fullfn(r, n)
+        #         T = chebyshevT(n)
+        #         F1 = r -> d2f(T ∘ r̄, r) + 4ηρ_cheby(r̄(r))/r * T(r̄(r))
+        #         F2 = r -> d2f(F1, r)
+        #         F2(r)
+        #     end
 
-            @testset "WWterm13_fullfn" begin
-                @testset for n in 0:nr-1
-                    WWterm13_op = @view d2dr2_d2dr2_plus_4ηρ_by_rM[:, n+1]
-                    WWterm13_analytical = chebyfwdnr(r -> WWterm13_fullfn(r, n))
-                    @test WWterm13_op ≈ WWterm13_analytical rtol=5e-4
-                end
-            end
+        #     @testset "WWterm13_fullfn" begin
+        #         @testset for n in 0:nr-1
+        #             WWterm13_op = @view d2dr2_d2dr2_plus_4ηρ_by_rM[:, n+1]
+        #             WWterm13_analytical = chebyfwdnr(r -> WWterm13_fullfn(r, n))
+        #             @test WWterm13_op ≈ WWterm13_analytical rtol=5e-4
+        #         end
+        #     end
 
-            function WWterm14_fullfn(r, n)
-                T = chebyshevT(n)
-                F1 = r -> d2f(T ∘ r̄, r) + 4ηρ_cheby(r̄(r))/r * T(r̄(r))
-                F2 = r -> F1(r) / r^2
-                F2(r)
-            end
+        #     function WWterm14_fullfn(r, n)
+        #         T = chebyshevT(n)
+        #         F1 = r -> d2f(T ∘ r̄, r) + 4ηρ_cheby(r̄(r))/r * T(r̄(r))
+        #         F2 = r -> F1(r) / r^2
+        #         F2(r)
+        #     end
 
-            @testset "WWterm14_fullfn" begin
-                @testset for n in 0:nr-1
-                    WWterm14_op = @view one_by_r2_d2dr2_plus_4ηρ_by_rM[:, n+1]
-                    WWterm14_analytical = chebyfwdnr(r -> WWterm14_fullfn(r, n))
-                    @test WWterm14_op ≈ WWterm14_analytical rtol=5e-4
-                end
-            end
+        #     @testset "WWterm14_fullfn" begin
+        #         @testset for n in 0:nr-1
+        #             WWterm14_op = @view one_by_r2_d2dr2_plus_4ηρ_by_rM[:, n+1]
+        #             WWterm14_analytical = chebyfwdnr(r -> WWterm14_fullfn(r, n))
+        #             @test WWterm14_op ≈ WWterm14_analytical rtol=5e-4
+        #         end
+        #     end
 
-            function WWterm15fn(r, n)
-                T = chebyshevT(n)
-                F1 = r -> 1/r^2 * T(r̄(r))
-                d2f(F1, r)
-            end
+        #     function WWterm15fn(r, n)
+        #         T = chebyshevT(n)
+        #         F1 = r -> 1/r^2 * T(r̄(r))
+        #         d2f(F1, r)
+        #     end
 
-            @testset "WWterm15fn" begin
-                @testset for n in 0:nr-1
-                    WWterm15_analytical = chebyfwdnr(r -> WWterm15fn(r, n))
-                    WWterm15_op_2 = @view d2dr2_one_by_r2M_2[:, n+1]
-                    @test WWterm15_op_2 ≈ WWterm15_analytical rtol=5e-4
-                end
-            end
+        #     @testset "WWterm15fn" begin
+        #         @testset for n in 0:nr-1
+        #             WWterm15_analytical = chebyfwdnr(r -> WWterm15fn(r, n))
+        #             WWterm15_op_2 = @view d2dr2_one_by_r2M_2[:, n+1]
+        #             @test WWterm15_op_2 ≈ WWterm15_analytical rtol=5e-4
+        #         end
+        #     end
 
-            function WWterm16fn(r, n)
-                T = chebyshevT(n)
-                1/r^4 * T(r̄(r))
-            end
+        #     function WWterm16fn(r, n)
+        #         T = chebyshevT(n)
+        #         1/r^4 * T(r̄(r))
+        #     end
 
-            @testset "WWterm16fn" begin
-                @testset for n in 0:nr-1
-                    WWterm16_op = @view onebyr4_chebyM[:, n+1]
-                    WWterm16_analytical = chebyfwdnr(r -> WWterm16fn(r, n))
-                    @test WWterm16_op ≈ WWterm16_analytical rtol=1e-4
-                end
-            end
-        end
+        #     @testset "WWterm16fn" begin
+        #         @testset for n in 0:nr-1
+        #             WWterm16_op = @view onebyr4_chebyM[:, n+1]
+        #             WWterm16_analytical = chebyfwdnr(r -> WWterm16fn(r, n))
+        #             @test WWterm16_op ≈ WWterm16_analytical rtol=1e-4
+        #         end
+        #     end
+        # end
         @testset "third term" begin
             function WWterm31_1fn(r, n)
                 T = chebyshevT(n) ∘ r̄
@@ -1358,7 +1425,7 @@ end
     end
 end
 
-@testset "differential rotation" begin
+@testset "radial differential rotation" begin
     @testset "compare with constant" begin
         nr, nℓ = 30, 2
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);

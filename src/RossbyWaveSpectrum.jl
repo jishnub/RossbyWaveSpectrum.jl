@@ -788,7 +788,7 @@ function greenfn_cheby!(::ViscosityGfn, ℓ, operators, viscosity_terms, funs,
     lobattochebyshev!(J_c2_1, L, tempmat)
 
     # T2 = ((-2*ddr_ηρbyr + d2dr2_ηρ) * ηρ_cheby)::TFunDeriv
-    T2 = funs[5]::TFunDeriv
+    T2 = funs[5]::TFun
     @. tempvec = T2(r_chebyshev_lobatto)
     tempmat .= H .* tempvec'
     lobattochebyshev!(J_c2_2, L, tempmat)
@@ -912,12 +912,19 @@ function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only fo
     logT_modelS = log.(T_modelS);
 
     sρ = Spline1D(r_modelS, ρ_modelS);
-    slogρ = smoothed_spline(r_modelS, logρ_modelS, s = 1e-5);
-    ddrlogρ = Dierckx.derivative(slogρ, r_modelS);
+    slogρ = smoothed_spline(r_modelS, logρ_modelS, s = 1e-6);
+    ddrlogρ_modelS = Dierckx.derivative(slogρ, r_modelS);
     if !_stratified
-        ddrlogρ .= 0
+        ddrlogρ_modelS .= 0
     end
-    sηρ = smoothed_spline(r_modelS, ddrlogρ, s = 1e-5);
+    sηρ = smoothed_spline(r_modelS, ddrlogρ_modelS, s = 1e-4);
+    sηρ_by_r = smoothed_spline(r_modelS, ddrlogρ_modelS ./ r_modelS, s = 1e-5);
+    sηρ_by_r2 = smoothed_spline(r_modelS, ddrlogρ_modelS ./ r_modelS.^2, s = 1e-6);
+    ddrsηρ = smoothed_spline(r_modelS, derivative(sηρ, r_modelS), s = 1e-5);
+    ddrsηρ_by_r = smoothed_spline(r_modelS, derivative(sηρ_by_r, r_modelS), s = 1e-4);
+    ddrsηρ_by_r2 = smoothed_spline(r_modelS, derivative(sηρ_by_r2, r_modelS), s = 1e-4);
+    d2dr2sηρ = smoothed_spline(r_modelS, derivative(ddrsηρ, r_modelS), s = 1e-4)
+    d3dr3sηρ = smoothed_spline(r_modelS, derivative(ddrsηρ, r_modelS, nu=2), s = 1e-4)
 
     sT = Spline1D(r_modelS, T_modelS);
     slogT = smoothed_spline(r_modelS, logT_modelS, s = 1e-7);
@@ -929,7 +936,10 @@ function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only fo
 
     g_modelS = @. G * Msun * q_modelS / r_modelS^2;
     sg = smoothed_spline(r_modelS, g_modelS, s = 1e-2);
-    (; sρ, sT, sg, sηρ, sηT)
+
+    rad_terms = (; r_modelS, ρ_modelS, logρ_modelS, ddrlogρ_modelS, T_modelS, g_modelS)
+    splines = (; sρ, sT, sg, slogρ, sηρ, sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, ddrsηρ, d2dr2sηρ, d3dr3sηρ, sηT)
+    (; splines, rad_terms)
 end
 
 struct SpectralOperatorForm
@@ -962,7 +972,11 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     r_cheby = Fun(ApproxFun.Chebyshev(), [r_mid, Δr / 2]);
     r2_cheby = r_cheby * r_cheby;
 
-    (; sρ, sg, sηρ, sT, sηT) = read_solar_model(; r_in, r_out, _stratified);
+    (; splines) = read_solar_model(; r_in, r_out, _stratified);
+
+    (; sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
+        sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ,
+        sT, sηT) = splines
 
     ddr = ApproxFun.Derivative() * (2 / Δr)
     rddr = (r_cheby * ddr)::Tmul
@@ -975,7 +989,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     ρ = sρ.(r);
     ηρ = sηρ.(r);
     # ηρ_cheby = ApproxFun.chop(chebyshevgrid_to_Fun(ηρ), 1e-2)::TFun;
-    ηρ_cheby = ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev()), 1e-2)::TFun
+    ηρ_cheby = ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev()), 1e-3)::TFun
     if iszerofun(ηρ_cheby)
         ηρ_cheby = Fun(ApproxFun.Chebyshev(), [1e-100])::TFun
     end
@@ -1004,16 +1018,37 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     DDr_minus_2byr = (DDr - 2onebyr_cheby)::Tplus
     ddr_plus_2byr = (ddr + 2onebyr_cheby)::Tplus
 
-    ηρ_by_r = onebyr_cheby * ηρ_cheby
+    # ηρ_by_r = onebyr_cheby * ηρ_cheby
+    ηρ_by_r = chop(Fun(sηρ_by_r ∘ r_cheby, Chebyshev()), 1e-2)::TFun;
+    if ncoefficients(ηρ_by_r) > 2/3*nr
+        @warn "number of coefficients in ηρ_by_r is $(ncoefficients(ηρ_by_r))"
+    end
     twoηρ_by_r = 2ηρ_by_r
 
     ηρ_by_r2 = onebyr2_cheby * ηρ_cheby
     ηρ_by_r3 = onebyr_cheby * ηρ_by_r2
-    ddr_ηρ = ddr * ηρ_cheby
-    ddr_ηρbyr = ddr * ηρ_by_r
-    d2dr2_ηρ = (d2dr2 * ηρ_cheby)::typeof(ddr_ηρbyr)
-    d3dr3_ηρ = (d3dr3 * ηρ_cheby)::typeof(ddr_ηρbyr)
-    ddr_ηρbyr2 = ddr * ηρ_by_r2
+    ddr_ηρ = chop(Fun(ddrsηρ ∘ r_cheby, Chebyshev()), 1e-2)::TFun
+    if ncoefficients(ddr_ηρ) > 2/3*nr
+        @warn "number of coefficients in ddr_ηρ is $(ncoefficients(ddr_ηρ))"
+    end
+    ddr_ηρbyr = chop(Fun(ddrsηρ_by_r ∘ r_cheby, Chebyshev()), 1e-2)::TFun
+    if ncoefficients(ddr_ηρbyr) > 2/3*nr
+        @warn "number of coefficients in ddr_ηρbyr is $(ncoefficients(ddr_ηρbyr))"
+    end
+    # ddr_ηρbyr = ddr * ηρ_by_r
+    d2dr2_ηρ = chop(Fun(d2dr2sηρ ∘ r_cheby, Chebyshev()), 1e-2)::TFun
+    if ncoefficients(d2dr2_ηρ) > 2/3*nr
+        @warn "number of coefficients in d2dr2_ηρ is $(ncoefficients(d2dr2_ηρ))"
+    end
+    d3dr3_ηρ = chop(Fun(d3dr3sηρ ∘ r_cheby, Chebyshev()), 1e-2)::TFun
+    if ncoefficients(d3dr3_ηρ) > 2/3*nr
+        @warn "number of coefficients in d3dr3_ηρ is $(ncoefficients(d3dr3_ηρ))"
+    end
+    ddr_ηρbyr2 = chop(Fun(ddrsηρ_by_r2 ∘ r_cheby, Chebyshev()), 5e-3)::TFun
+    if ncoefficients(ddr_ηρbyr2) > 2/3*nr
+        @warn "number of coefficients in ddr_ηρbyr2 is $(ncoefficients(ddr_ηρbyr2))"
+    end
+    # ddr_ηρbyr2 = ddr * ηρ_by_r2
     ηρ2_by_r2 = ApproxFun.chop(ηρ_by_r2 * ηρ_cheby, 1e-3)::TFun
     if iszerofun(ηρ2_by_r2)
         ηρ2_by_r2 = Fun(ApproxFun.Chebyshev(), [1e-100])::TFun
@@ -1131,6 +1166,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     (;
         constants, rad_terms,
+        splines,
         diff_operators,
         transforms, coordinates,
         radial_params, identities,
@@ -1284,7 +1320,7 @@ function viscosity_functions(operators)
         (ddr_ηρ * (ηρ_cheby - 2onebyr_cheby))::TFun,
         ((ddr_ηρ - 2ηρ_by_r)*ddr_ηρ) ::TFun,
         (2(ddr_ηρ - ηρ_by_r + onebyr2_cheby)*ηρ_cheby) ::TFun,
-        ((-2*ddr_ηρbyr + d2dr2_ηρ) * ηρ_cheby)::TFunDeriv,
+        ((-2*ddr_ηρbyr + d2dr2_ηρ) * ηρ_cheby)::TFun,
         (3ddr_ηρ - 4ηρ_by_r)::TFun,
         (3d2dr2_ηρ - 8ddr_ηρ*onebyr_cheby + 8ηρ_cheby*onebyr2_cheby)::TFun,
         (d3dr3_ηρ - 4d2dr2_ηρ*onebyr_cheby + 8ddr_ηρ*onebyr2_cheby - 8ηρ_cheby*onebyr3_cheby)::TFun,
@@ -1569,13 +1605,13 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m;
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
             inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
-            @. VW[inds_ℓℓ′] -= two_over_ℓℓp1 *
+            @. VW[inds_ℓℓ′] += -two_over_ℓℓp1 *
                                     ΔΩ_by_Ω0 * (
                                         ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * DDr_min_2byrM +
                                         (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθo[ℓ, ℓ′]
                                     ) * Rsun / Wscaling
 
-            @. WV[inds_ℓℓ′] .-= Rsun * ΔΩ_by_Ω0 / ℓℓp1 *
+            @. WV[inds_ℓℓ′] += -Rsun * ΔΩ_by_Ω0 / ℓℓp1 *
                                     ((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * Jddr
                                         +
                                         Jddr_plus_2byrM * laplacian_sinθdθo[ℓ, ℓ′]) * Wscaling
@@ -1583,6 +1619,14 @@ function constant_differential_rotation_terms!(M, nr, nℓ, m;
     end
     return M
 end
+
+function equatorial_radial_rotation_profile(operators, thetaGL; smoothing_param = 1e-3)
+    (; r) = operators.coordinates
+    ΔΩ_rθ, Ω0 = read_angular_velocity(operators, thetaGL; smoothing_param)
+    s = Spline2D(r, thetaGL, ΔΩ_rθ)
+    ΔΩ_r = reshape(evalgrid(s, r, [pi/2]), Val(1))
+end
+
 function radial_differential_rotation_profile(operators, thetaGL, model = :solar_equator;
     smoothing_param = 1e-3)
 
@@ -1590,9 +1634,8 @@ function radial_differential_rotation_profile(operators, thetaGL, model = :solar
     (; r_out, nr, r_in) = operators.radial_params
 
     if model == :solar_equator
-        ΔΩ_rθ, Ω0 = read_angular_velocity(operators, thetaGL; smoothing_param)
-        s = Spline2D(r, thetaGL, ΔΩ_rθ)
-        ΔΩ_r = reshape(evalgrid(s, r, [pi/2]), Val(1))
+        Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
+        ΔΩ_r = equatorial_radial_rotation_profile(operators, thetaGL; smoothing_param)
     elseif model == :linear # for testing
         Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
         f = 0.02 / (r_in / Rsun - 1)
@@ -2740,8 +2783,8 @@ rossbyeigenfilename(nr, nℓ, tag = "ur", posttag = "") = "$(tag)_nr$(nr)_nl$(n�
 function save_eigenvalues(f, nr, nℓ, mr; operators = radial_operators(nr, nℓ), kw...)
     kw = merge(DefaultFilterParams, kw)
     lam, vec = filter_eigenvalues(f, mr; operators, kw...)
-    isdiffrot = !iszero(get(kw, :ΔΩ_by_Ω_low, 0) * get(kw, :ΔΩ_by_Ω_high, 0))
-    filenametag = isdiffrot == 0 ? "ur" : "dr"
+    isdiffrot = get(kw, :diffrot, false)
+    filenametag = isdiffrot ? "dr" : "ur"
     fname = datadir(rossbyeigenfilename(nr, nℓ, filenametag))
     @info "saving to $fname"
     jldsave(fname; lam, vec, mr, nr, nℓ, kw)

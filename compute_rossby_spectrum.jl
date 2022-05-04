@@ -18,16 +18,14 @@ atol_constraint = 1e-5
 Δl_power_cutoff = 0.9;
 eigen_rtol = 0.01;
 
-n_cutoff = 10
+n_cutoff = 20
 n_power_cutoff = 0.9
 
 # used for filtering, zero for uniform rotation
-ΔΩ_by_Ω_low = -0.5
-ΔΩ_by_Ω_high = 0.5
-ΔΩ_by_Ω_low = 0
-ΔΩ_by_Ω_high = 0
+ΔΩ_by_Ω_low = -5
+ΔΩ_by_Ω_high = 5
 
-r_in_frac = 0.7
+r_in_frac = 0.5
 r_out_frac = 0.985
 
 print_timer = false
@@ -35,8 +33,10 @@ scale_eigenvectors = false
 
 operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac);
 
-spectrumfn! = RossbyWaveSpectrum.diffrotspectrumfn!(:radial);
-# spectrumfn! = RossbyWaveSpectrum.uniform_rotation_spectrum!
+diffrot = false
+
+# spectrumfn! = RossbyWaveSpectrum.diffrotspectrumfn!(:radial_linear);
+spectrumfn! = RossbyWaveSpectrum.uniform_rotation_spectrum!
 @show nr nℓ mrange Δl_cutoff Δl_power_cutoff eigen_rtol ΔΩ_by_Ω_low ΔΩ_by_Ω_high;
 @show scale_eigenvectors;
 @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads();
@@ -45,4 +45,4 @@ spectrumfn! = RossbyWaveSpectrum.diffrotspectrumfn!(:radial);
     atol_constraint, Δl_cutoff, Δl_power_cutoff,
     eigen_rtol, n_cutoff, n_power_cutoff,
     ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, operators,
-    print_timer, scale_eigenvectors)
+    print_timer, scale_eigenvectors, diffrot)
