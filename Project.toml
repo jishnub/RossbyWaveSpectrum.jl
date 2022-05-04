@@ -27,6 +27,7 @@ SimpleDelimitedFiles = "44ac6da9-39e0-40c2-8ac2-dc1cb273e973"
 StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
 TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
+ZChop = "8603256b-76ad-53fe-b511-38a38e6437cd"
 
 [compat]
 ApproxFun = "0.13"
@@ -52,6 +53,7 @@ SpecialPolynomials = "0.3"
 StructArrays = "0.6"
 TimerOutputs = "0.5"
 UnPack = "1"
+ZChop = "0.3"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"

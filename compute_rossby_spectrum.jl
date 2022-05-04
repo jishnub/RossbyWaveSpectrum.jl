@@ -1,7 +1,7 @@
 @time using RossbyWaveSpectrum
 using LinearAlgebra
 
-nr = 50;
+nr = 60;
 nℓ = 50;
 mrange = 1:20;
 

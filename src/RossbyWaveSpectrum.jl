@@ -22,6 +22,7 @@ using SimpleDelimitedFiles: readdlm
 using StructArrays
 using TimerOutputs
 using UnPack
+using ZChop
 
 include("eigen.jl")
 
@@ -492,6 +493,7 @@ function sintheta_dtheta_operator(nℓ, m)
     Matrix(Tridiagonal(dl, d, du)')
 end
 
+# defined for normalized Legendre polynomials
 function invsintheta_dtheta_operator(nℓ)
     M = zeros(nℓ, nℓ)
     Mo = indexedfromzero(M)
@@ -641,7 +643,7 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators,
     H = greenfn_radial_lobatto(ℓ, operators)
     J = lobattochebyshevtransform(H)
 
-    ddrHrr = H * ddr_lobatto'
+    ddr′Hrr′ = H * ddr_lobatto'
 
     tempmat = zeros(size(H));
     tempvec = zeros(length(r_chebyshev_lobatto));
@@ -649,7 +651,7 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators,
     @. tempvec = ηρ_cheby(r_chebyshev_lobatto)
     ηρrHrr = H .* tempvec'
 
-    twoddr_plus_3ηρr_H = @. 2*ddrHrr + 3*ηρrHrr
+    twoddr_plus_3ηρr_H = @. 2*ddr′Hrr′ + 3*ηρrHrr
 
     @. tempvec = ηρ_by_r(r_chebyshev_lobatto)
     H_ηρbyr = H .* tempvec'
@@ -672,7 +674,7 @@ function greenfn_cheby(::UniformRotGfn, ℓ, operators,
     H_4ηρbyr3 = 4 .* H .* tempvec'
 
     rad_terms = (; H, twoddr_plus_3ηρr_H, H_times_2byr_min_ηρ, ηρrHrr, H_ηρbyr, H_g,
-        H_ddrηρ, H_4ηρbyr3)
+        H_ddrηρ, H_4ηρbyr3, ddr′Hrr′)
 
     unirot_terms = (; J, J_by_r, J_g, J_ηρbyr)
 
@@ -1654,18 +1656,7 @@ function radial_differential_rotation_profile(operators, thetaGL, model = :solar
     return ΔΩ_r, Ω0
 end
 
-function radial_differential_rotation_profile_derivatives(m; operators, rotation_profile = :constant)
-    (; r_cheby) = operators.rad_terms;
-    (; r_chebyshev, r) = operators.coordinates;
-    (; ddr) = operators.diff_operators;
-    (; nℓ, nr, Δr) = operators.radial_params;
-
-    ntheta = ntheta_ℓmax(nℓ, m);
-    (; thetaGL) = gausslegendre_theta_grid(ntheta);
-
-    ΔΩ_r, Ω0 = radial_differential_rotation_profile(operators, thetaGL, rotation_profile);
-    ΔΩ_r ./= Ω0;
-
+function rotationprofile_radialderiv(r, ΔΩ_r, nr, Δr)
     ΔΩ = chop(chebyshevgrid_to_Fun(ΔΩ_r), 1e-3);
     if ncoefficients(ΔΩ) > 2nr/3
         @warn "ncoefficients(ΔΩ) = $(ncoefficients(ΔΩ))"
@@ -1673,19 +1664,40 @@ function radial_differential_rotation_profile_derivatives(m; operators, rotation
 
     ΔΩ_spl = Spline1D(r, ΔΩ_r);
     ddrΔΩ_r = derivative(ΔΩ_spl, r);
-    ddrΔΩ_r[abs.(ddrΔΩ_r) .< 1e-10*(2/Δr)] .= 0;
+    zchop!(ddrΔΩ_r, 1e-10*(2/Δr))
     d2dr2ΔΩ_r = derivative(ΔΩ_spl, r, nu=2);
-    d2dr2ΔΩ_r[abs.(d2dr2ΔΩ_r) .< 1e-10*(2/Δr)^2] .= 0;
+    zchop!(d2dr2ΔΩ_r, 1e-10*(2/Δr)^2)
 
     ddrΔΩ = chop(chebyshevgrid_to_Fun(ddrΔΩ_r), 1e-2);
     if ncoefficients(ddrΔΩ) > 2nr/3
         @warn "ncoefficients(ddrΔΩ) = $(ncoefficients(ddrΔΩ))"
     end
-    d2dr2ΔΩ = chop(chebyshevgrid_to_Fun(d2dr2ΔΩ_r), 1e-2);
+    d2dr2ΔΩ = chop(chebyshevgrid_to_Fun(d2dr2ΔΩ_r), 5e-2);
     if ncoefficients(d2dr2ΔΩ) > 2nr/3
         @warn "ncoefficients(d2dr2ΔΩ) = $(ncoefficients(d2dr2ΔΩ))"
     end
-    (; Ω0, ΔΩ, ΔΩ_spl, ddrΔΩ, d2dr2ΔΩ, ddrΔΩ_r, d2dr2ΔΩ_r, ΔΩ_r)
+
+    (ΔΩ, ddrΔΩ, d2dr2ΔΩ)
+end
+
+function replaceemptywithzero(f::Fun)
+    T = eltype(coefficients(f))
+    ncoefficients(f) == 0 ? typeof(f)(space(f), T[0]) : f
+end
+
+function radial_differential_rotation_profile_derivatives(m; operators,
+        rotation_profile = :radial, smoothing_param = 1e-3)
+    (; r) = operators.coordinates;
+    (; nr, nℓ, Δr) = operators.radial_params;
+
+    ntheta = ntheta_ℓmax(nℓ, m);
+    (; thetaGL) = gausslegendre_theta_grid(ntheta);
+
+    ΔΩ_r, Ω0 = radial_differential_rotation_profile(operators, thetaGL, rotation_profile; smoothing_param);
+    ΔΩ_r ./= Ω0;
+
+    (ΔΩ, ddrΔΩ, d2dr2ΔΩ) = replaceemptywithzero.(rotationprofile_radialderiv(r, ΔΩ_r, nr, Δr))
+    (; Ω0, ΔΩ, ddrΔΩ, d2dr2ΔΩ)
 end
 
 function radial_differential_rotation_terms_inner!((VWterm, WVterm), (ℓ, ℓ′),
@@ -2576,9 +2588,11 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
     (; nr, nℓ, nparams) = operators.radial_params
     # temporary cache arrays
     nrows = nvariables * nparams
-    MVcache = StructArray{ComplexF64}((zeros(nrows),zeros(nrows)))
-    Vcache = StructArray{ComplexF64}((zeros(nrows),zeros(nrows)))
-    BCVcache = StructArray{ComplexF64}((zeros(size(BC, 1)),zeros(size(BC, 1))))
+    MVcache = StructArray{ComplexF64}((zeros(nrows), zeros(nrows)))
+    Vcache = StructArray{ComplexF64}((zeros(nrows), zeros(nrows)))
+
+    n_bc = size(BC, 1)
+    BCVcache = StructArray{ComplexF64}((zeros(n_bc), zeros(n_bc)))
 
     nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
 
