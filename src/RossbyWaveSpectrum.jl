@@ -1061,7 +1061,6 @@ function viscosity_terms!(A, m; operators)
     T3_1 = zeros(nr, nr);
     T3_2 = zeros(nr, nr);
     T4 = zeros(nr, nr);
-    WWop = zeros(nr, nr);
 
     Mcache1 = zeros(nr, nr)
     Mcache2 = zeros(nr, nr)
@@ -1095,7 +1094,7 @@ function viscosity_terms!(A, m; operators)
         ℓℓp1 = ℓ * (ℓ + 1)
         neg2by3_ℓℓp1 = -2ℓℓp1 / 3
 
-        @. VVim[blockdiaginds_ℓ] -= ν * (d2dr2MCU2 - ℓℓp1 * onebyr2MCU2 + ηρ_ddr_minus_2byrMCU2) * Rsun^2
+        @. VVim[blockdiaginds_ℓ] = -ν * (d2dr2MCU2 - ℓℓp1 * onebyr2MCU2 + ηρ_ddr_minus_2byrMCU2) * Rsun^2
 
         ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
         @. T1_1 = ((d3dr3ηρMCU4 -4*d2dr2ηρ_by_rMCU4 + 8*ddrηρ_by_r2MCU4 - 8*ηρ_by_r3MCU4)
@@ -1115,9 +1114,7 @@ function viscosity_terms!(A, m; operators)
 
         @. T4 = neg2by3_ℓℓp1 * ηρ2_by_r2MCU4
 
-        @. WWop += T1_1 + T1_2 + T3_1 + T3_2 + T4
-
-        @. WWim[blockdiaginds_ℓ] -= ν * WWop * Rsun^4
+        @. WWim[blockdiaginds_ℓ] = -ν * (T1_1 + T1_2 + T3_1 + T3_2 + T4) * Rsun^4
     end
 
     return A

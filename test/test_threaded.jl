@@ -27,7 +27,7 @@ using Folds
         λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints);
         λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m; operators, constraints);
 
-        @test λuf ≈ λs[ind] rtol=1e-5
-        @test vuf ≈ vs[ind] rtol=1e-5
+        @test λuf ≈ λs[ind]
+        @test vuf ≈ vs[ind]
     end
 end
