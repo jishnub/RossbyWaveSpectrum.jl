@@ -12,7 +12,9 @@ using Folds
 
     As = Folds.map(m -> RossbyWaveSpectrum.uniform_rotation_matrix(m; operators), mr)
     for (ind, m) in enumerate(mr)
-        @test As[m] ≈ RossbyWaveSpectrum.uniform_rotation_matrix(m; operators)
+        Am = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators)
+        @test As[m].re ≈ Am.re
+        @test As[m].im ≈ Am.im
     end
 
     Bs = Folds.map(m -> RossbyWaveSpectrum.mass_matrix(m; operators), mr)

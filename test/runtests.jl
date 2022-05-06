@@ -809,6 +809,17 @@ end
     end
 end
 
+@testset "constant differential rotation and uniform rotation" begin
+    nr, nℓ = 20, 15
+    m = 3
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
+    Mu = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators);
+    Mc = RossbyWaveSpectrum.differential_rotation_matrix(m;
+            rotation_profile = :constant, operators, ΔΩ_by_Ω0 = 0);
+    @test Mu.re ≈ Mc.re
+    @test Mu.im ≈ Mu.im
+end
+
 # @testset "radial differential rotation" begin
 #     @testset "compare with constant" begin
 #         nr, nℓ = 30, 2

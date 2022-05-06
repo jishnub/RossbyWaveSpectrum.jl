@@ -4,10 +4,13 @@ using MKL
 
 using ApproxFun
 using ApproxFun: DomainSets
+using BlockArrays
+using BlockBandedMatrices
 using BitFlags
 using Dierckx
 using FastGaussQuadrature
 using FastTransforms
+using FillArrays
 using Folds
 using ForwardDiff
 using Infinities
@@ -19,6 +22,7 @@ using LinearAlgebra: BLAS
 using LegendrePolynomials
 using OffsetArrays
 using SimpleDelimitedFiles: readdlm
+using SparseArrays
 using StructArrays
 using TimerOutputs
 using UnPack
@@ -352,16 +356,12 @@ function constraintmatrix(operators; entropy_outer_boundary = :neumann)
     nconstraints = nradconstraints * nℓ;
 
     # Radial constraint
-    M = zeros(2nradconstraints, nr);
-    MVn = @view M[1:nradconstraints, :];
+    MVn = zeros(nradconstraints, nr);
     MVno = OffsetArray(MVn, :, 0:nr-1);
-    MWn = @view M[nradconstraints.+(1:nradconstraints), :];
+    MWn = zeros(nradconstraints, nr);
     MWno = OffsetArray(MWn, :, 0:nr-1);
-    MSn = MWn;
-    MSn = zero(MWn);
+    MSn = zeros(nradconstraints, nr);
     MSno = OffsetArray(MSn, :, 0:nr-1);
-
-    BC = zeros(nvariables * nconstraints, nvariables * nparams);
 
     # constraints on V, Robin
     for n = 0:nr-1
@@ -400,22 +400,35 @@ function constraintmatrix(operators; entropy_outer_boundary = :neumann)
 
     ZMSn = nullspace(MSn)
 
-    ZC = zeros(nr*nℓ*nvariables, (nr-nradconstraints)*nℓ*nvariables)
+    # BC = zeros(nvariables * nconstraints, nvariables * nparams);
+    rowsB = Fill(nradconstraints, nℓ)
+    colsB = Fill(nr, nℓ)
+    BC_block = mortar(reshape([BlockBandedMatrix(Zeros(sum(rowsB),sum(colsB)), rowsB, colsB, (0,0)) for _ in 1:nvariables^2],
+            nvariables, nvariables))
+
+    # ZC = zeros(nr*nℓ*nvariables, (nr-nradconstraints)*nℓ*nvariables)
+    rowsZ = Fill(nr, nℓ)
+    colsZ = Fill(nr - nradconstraints, nℓ)
+    ZC_block = mortar(reshape([BlockBandedMatrix(Zeros(sum(rowsZ),sum(colsZ)), rowsZ, colsZ, (0,0)) for _ in 1:nvariables^2],
+            nvariables, nvariables))
 
     fieldmatrices = [MVn, MWn, MSn][1:nvariables]
-    nullspacematrices = [ZMVn, ZMWn, ZMSn][1:nvariables]
-    for ℓind = 1:nℓ
-        indstart = (ℓind - 1)*nr + 1
-        indend = (ℓind - 1)*nr + nr
-        for (fieldno, (M, Z)) in enumerate(zip(fieldmatrices, nullspacematrices))
-            rowinds = (fieldno - 1) * nℓ * size(M, 1) + (ℓind-1) * size(M, 1) .+ axes(M, 1)
-            colinds = (fieldno - 1) * nℓ * size(M, 2) + (ℓind-1) * size(M, 2) .+ axes(M, 2)
-            BC[rowinds, colinds] = M
-            rowinds2 = (fieldno - 1) * nℓ * size(Z, 1) + (ℓind-1) * size(Z, 1) .+ axes(Z, 1)
-            colinds2 = (fieldno - 1) * nℓ * size(Z, 2) + (ℓind-1) * size(Z, 2) .+ axes(Z, 2)
-            ZC[rowinds2, colinds2] = Z
+    for (Mind, M) in enumerate(fieldmatrices)
+        BCi = BC_block[Block(Mind, Mind)]
+        for ℓind = 1:nℓ
+            BCi[Block(ℓind, ℓind)] = M
         end
     end
+    nullspacematrices = [ZMVn, ZMWn, ZMSn][1:nvariables]
+    for (Zind, Z) in enumerate(nullspacematrices)
+        ZCi = ZC_block[Block(Zind, Zind)]
+        for ℓind = 1:nℓ
+            ZCi[Block(ℓind, ℓind)] = Z
+        end
+    end
+
+    BC = computesparse(BC_block)
+    ZC = computesparse(ZC_block)
 
     (; BC, ZC, nvariables)
 end
@@ -904,20 +917,60 @@ function blockinds((m, nr), ℓ, ℓ′ = ℓ)
     CartesianIndices((rowinds, colinds))
 end
 
-function allocate_operator_matrix(operators)
-    (; nparams) = operators.radial_params
+matrix_block(M::AbstractBlockMatrix, rowind, colind, nvariables = 3) = M[Block(rowind, colind)]
+function matrix_block(M::AbstractMatrix, rowind, colind, nvariables = 3)
+    nparams = div(size(M, 1), nvariables)
+    inds1 = (rowind - 1) * nparams .+ (1:nparams)
+    inds2 = (colind - 1) * nparams .+ (1:nparams)
+    inds = CartesianIndices((inds1, inds2))
+    @view M[inds]
+end
+
+matrix_block_maximum(f, M::AbstractMatrix, nvariables = 3) = [maximum(f, matrix_block(M, i, j)) for i in 1:nvariables, j in 1:nvariables]
+function matrix_block_maximum(M::AbstractMatrix, operators::NamedTuple)
     (; nvariables) = operators.constants
-    nrows = nvariables * nparams
-    sz = (nrows, nrows)
-    StructArray{ComplexF64}((zeros(sz), zeros(sz)))
+    R = RossbyWaveSpectrum.matrix_block_maximum(abs∘real, M, nvariables)
+    I = RossbyWaveSpectrum.matrix_block_maximum(abs∘imag, M, nvariables)
+    [R I]
+end
+
+
+function computesparse(M::StructArray{ComplexF64})
+    SR = computesparse(M.re)
+    SI = computesparse(M.im)
+    StructArray{ComplexF64}((SR, SI))
+end
+
+function computesparse(M::BlockArray)
+    hvcat((3,3,3), [sparse(M[j, i]) for (i,j) in Iterators.product(blockaxes(M)...)]...)
+end
+
+computesparse(M::AbstractMatrix) = sparse(M)
+
+function allocate_operator_matrix(operators, bandwidth = 2)
+    (; nr, nℓ, nparams) = operators.radial_params
+    (; nvariables) = operators.constants
+    # individual BlockBandedMatrix
+    cols = rows = Fill(nr, nℓ) # block sizes
+    l,u = bandwidth, bandwidth # block bandwidths
+
+    R = mortar(reshape(
+            [BlockBandedMatrix(Zeros(nparams,nparams), rows,cols, (l,u)) for i in 1:nvariables^2],
+                nvariables, nvariables))
+    I = mortar(reshape(
+            [BlockBandedMatrix(Zeros(nparams,nparams), rows,cols, (0,0)) for i in 1:nvariables^2],
+                nvariables, nvariables))
+    StructArray{ComplexF64}((R, I))
 end
 
 function allocate_mass_matrix(operators)
-    (; nparams) = operators.radial_params
+    (; nr, nℓ, nparams) = operators.radial_params
     (; nvariables) = operators.constants
-    nrows = nvariables * nparams
-    sz = (nrows, nrows)
-    zeros(sz)
+    # individual BlockBandedMatrix
+    cols = rows = Fill(nr, nℓ) # block sizes
+    mortar(reshape(
+            [BlockBandedMatrix(Zeros(nparams,nparams), rows,cols, (0,0)) for i in 1:nvariables^2],
+                nvariables, nvariables))
 end
 
 function mass_matrix(m; operators, kw...)
@@ -931,29 +984,28 @@ function mass_matrix!(B, m; operators, kw...)
     (; nvariables) = operators.constants
     (; ddrDDrMCU4, onebyr2MCU4) = operators.operator_matrices;
 
-    B .= 0
-
     ℓs = range(m, length = nℓ)
 
-    VV = matrix_block(B, 1, 1, nvariables)
-    WW = matrix_block(B, 2, 2, nvariables)
+    B .= 0
+
+    VV = matrix_block(B, 1, 1)
+    WW = matrix_block(B, 2, 2)
     if nvariables == 3
-        SS = matrix_block(B, 3, 3, nvariables)
+        SS = matrix_block(B, 3, 3)
     end
 
     ddrDDr_minus_ℓℓp1_by_r2MCU4 = similar(ddrDDrMCU4);
 
-    @views for ℓ in ℓs
+    @views for (ℓind, ℓ) in enumerate(ℓs)
         ℓℓp1 = ℓ * (ℓ+1)
-        blockdiaginds_ℓ = blockinds((m, nr), ℓ)
 
-        @. VV[blockdiaginds_ℓ] = IU2
+        VV[Block(ℓind, ℓind)] .= IU2
 
         @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
-        @. WW[blockdiaginds_ℓ] = Rsun^2 * ddrDDr_minus_ℓℓp1_by_r2MCU4
+        WW[Block(ℓind, ℓind)] .= Rsun^2 .* ddrDDr_minus_ℓℓp1_by_r2MCU4
 
         if nvariables == 3
-            @. SS[blockdiaginds_ℓ] = IU2
+            SS[Block(ℓind, ℓind)] .= IU2
         end
     end
 
@@ -975,17 +1027,18 @@ function uniform_rotation_matrix!(A, m; operators, kw...)
     (; Sscaling, Wscaling) = scalings;
     (; IU2) = operators.identities;
 
-    A .= 0
+    A.re .= 0
+    A.im .= 0
 
-    VV = matrix_block(A.re, 1, 1, nvariables)
-    VW = matrix_block(A.re, 1, 2, nvariables)
-    WV = matrix_block(A.re, 2, 1, nvariables)
-    WW = matrix_block(A.re, 2, 2, nvariables)
+    VV = matrix_block(A.re, 1, 1)
+    VW = matrix_block(A.re, 1, 2)
+    WV = matrix_block(A.re, 2, 1)
+    WW = matrix_block(A.re, 2, 2)
     # the following are only valid if S is included
     if nvariables == 3
-        WS = matrix_block(A.re, 2, 3, nvariables)
-        SW = matrix_block(A.re, 3, 2, nvariables)
-        SS = matrix_block(A.im, 3, 3, nvariables)
+        WS = matrix_block(A.re, 2, 3)
+        SW = matrix_block(A.re, 3, 2)
+        SS = matrix_block(A.im, 3, 3)
     end
 
     ℓs = range(m, length = nℓ)
@@ -996,38 +1049,41 @@ function uniform_rotation_matrix!(A, m; operators, kw...)
     SSterm = zeros(nr, nr);
 
     ddrDDr_minus_ℓℓp1_by_r2MCU4 = similar(ddrDDrMCU4);
+    T = zeros(nr, nr)
 
-    @views for ℓ in ℓs
+    @views for (ℓind, ℓ) in enumerate(ℓs)
 
         ℓℓp1 = ℓ * (ℓ + 1)
 
-        blockdiaginds_ℓ = blockinds((m, nr), ℓ)
-
         twom_by_ℓℓp1 = 2m/ℓℓp1
 
-        VVblockdiag = VV[blockdiaginds_ℓ]
-        @. VVblockdiag = twom_by_ℓℓp1 * IU2
+        VV[Block(ℓind, ℓind)] .= twom_by_ℓℓp1 .* IU2
 
         @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
 
-        WWblockdiag = WW[blockdiaginds_ℓ]
-        @. WW[blockdiaginds_ℓ] = twom_by_ℓℓp1 * Rsun^2 * (ddrDDr_minus_ℓℓp1_by_r2MCU4 - ℓℓp1 * ηρ_by_rMCU4)
+        WW[Block(ℓind, ℓind)] .= twom_by_ℓℓp1 * Rsun^2 .* (ddrDDr_minus_ℓℓp1_by_r2MCU4 .- ℓℓp1 .* ηρ_by_rMCU4)
 
         if nvariables == 3
-            @. WS[blockdiaginds_ℓ] = - gMCU4 / (Ω0^2 * Rsun)  * Wscaling/Sscaling
-            @. SW[blockdiaginds_ℓ] = ℓℓp1 * ddr_S0_by_cp_by_r2MCU2 * Rsun^3 * Sscaling/Wscaling
-            @. SS[blockdiaginds_ℓ] = -(κ_∇r2_plus_ddr_lnρT_ddrMCU2 - ℓℓp1 * κ_by_r2MCU2) * Rsun^2
+            @. T = - gMCU4 / (Ω0^2 * Rsun)  * Wscaling/Sscaling
+            WS[Block(ℓind, ℓind)] .= T
+            @. T = ℓℓp1 * ddr_S0_by_cp_by_r2MCU2 * (Rsun^3 * Sscaling/Wscaling)
+            SW[Block(ℓind, ℓind)] .= T
+            @. T = -(κ_∇r2_plus_ddr_lnρT_ddrMCU2 - ℓℓp1 * κ_by_r2MCU2) * Rsun^2
+            SS[Block(ℓind, ℓind)] .= T
         end
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
+            ℓ′ind = findfirst(isequal(ℓ′), ℓs)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-            blockinds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
 
-            @. VW[blockinds_ℓℓ′] = (-2/ℓℓp1) * (ℓ′ℓ′p1 * DDr_minus_2byrMCU2 * cosθ[ℓ, ℓ′] +
+            @. T = (-2/ℓℓp1) * (ℓ′ℓ′p1 * DDr_minus_2byrMCU2 * cosθ[ℓ, ℓ′] +
                     (DDrMCU2 - ℓ′ℓ′p1 * onebyrMCU2) * sinθdθ[ℓ, ℓ′]) * Rsun / Wscaling
+            VW[Block(ℓind, ℓ′ind)] .= T
 
-            @. WV[blockinds_ℓℓ′] = (-2/ℓℓp1) * (ℓ′ℓ′p1 * ddr_minus_2byrMCU4 * cosθ[ℓ, ℓ′] +
+            @. T = (-2/ℓℓp1) * (ℓ′ℓ′p1 * ddr_minus_2byrMCU4 * cosθ[ℓ, ℓ′] +
                     (ddrMCU4 - ℓ′ℓ′p1 * onebyrMCU4) * sinθdθ[ℓ, ℓ′]) * Rsun * Wscaling
+
+            WV[Block(ℓind, ℓ′ind)] .= T
         end
     end
 
@@ -1052,8 +1108,8 @@ function viscosity_terms!(A, m; operators)
     (; ν, nvariables) = operators.constants;
     (; matCU4, matCU2) = operators;
 
-    VVim = matrix_block(A.im, 1, 1, nvariables)
-    WWim = matrix_block(A.im, 2, 2, nvariables)
+    VVim = matrix_block(A.im, 1, 1)
+    WWim = matrix_block(A.im, 2, 2)
 
     # caches for the WW term
     T1_1 = zeros(nr, nr);
@@ -1061,6 +1117,7 @@ function viscosity_terms!(A, m; operators)
     T3_1 = zeros(nr, nr);
     T3_2 = zeros(nr, nr);
     T4 = zeros(nr, nr);
+    WWop = zeros(nr, nr);
 
     Mcache1 = zeros(nr, nr)
     Mcache2 = zeros(nr, nr)
@@ -1088,13 +1145,13 @@ function viscosity_terms!(A, m; operators)
     ηρd2dr2DDrMCU4 = matCU4(ηρ * d2dr2DDr);
     ddr_ηρbyr_DDrMCU4 = matCU4(ddr_ηρbyr * DDr);
 
-    @views for ℓ in ℓs
-        blockdiaginds_ℓ = blockinds((m, nr), ℓ)
-
+    @views for (ℓind, ℓ) in enumerate(ℓs)
         ℓℓp1 = ℓ * (ℓ + 1)
         neg2by3_ℓℓp1 = -2ℓℓp1 / 3
 
-        @. VVim[blockdiaginds_ℓ] = -ν * (d2dr2MCU2 - ℓℓp1 * onebyr2MCU2 + ηρ_ddr_minus_2byrMCU2) * Rsun^2
+        @. T1_1 = -ν * (d2dr2MCU2 - ℓℓp1 * onebyr2MCU2 + ηρ_ddr_minus_2byrMCU2) * Rsun^2
+
+        VVim[Block(ℓind, ℓind)] .= T1_1
 
         ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
         @. T1_1 = ((d3dr3ηρMCU4 -4*d2dr2ηρ_by_rMCU4 + 8*ddrηρ_by_r2MCU4 - 8*ηρ_by_r3MCU4)
@@ -1114,7 +1171,9 @@ function viscosity_terms!(A, m; operators)
 
         @. T4 = neg2by3_ℓℓp1 * ηρ2_by_r2MCU4
 
-        @. WWim[blockdiaginds_ℓ] = -ν * (T1_1 + T1_2 + T3_1 + T3_2 + T4) * Rsun^4
+        @. WWop = -ν * (T1_1 + T1_2 + T3_1 + T3_2 + T4) * Rsun^4
+
+        WWim[Block(ℓind, ℓind)] .= WWop
     end
 
     return A
@@ -1189,25 +1248,10 @@ function laplacian_operator(nℓ, m)
     Diagonal(@. -ℓs * (ℓs + 1))
 end
 
-function matrix_block(M, rowind, colind, nvariables = 3)
-    nparams = div(size(M, 1), nvariables)
-    inds1 = (rowind - 1) * nparams .+ (1:nparams)
-    inds2 = (colind - 1) * nparams .+ (1:nparams)
-    inds = CartesianIndices((inds1, inds2))
-    @view M[inds]
-end
-
-matrix_block_maximum(f, M::AbstractMatrix, nvariables = 3) = [maximum(f, matrix_block(M, i, j)) for i in 1:nvariables, j in 1:nvariables]
-function matrix_block_maximum(M::AbstractMatrix, operators::NamedTuple)
-    (; nvariables) = operators.constants
-    R = RossbyWaveSpectrum.matrix_block_maximum(abs∘real, M, nvariables)
-    I = RossbyWaveSpectrum.matrix_block_maximum(abs∘imag, M, nvariables)
-    [R I]
-end
-
 function constant_differential_rotation_terms!(M, m; operators, ΔΩ_by_Ω0 = 0.02, kw...)
+    (; nr, nℓ) = operators.radial_params;
     (; nvariables, scalings) = operators.constants
-    (; ddrM, DDrM, onebyr_chebyM) = operators.diff_operator_matrices
+    (; ddrMCU4, DDrMCU2, onebyrMCU2, onebyrMCU4, DDr_minus_2byrMCU2, ηρ_by_rMCU4) = operators.operator_matrices
 
     (; Wscaling) = scalings
 
@@ -1224,50 +1268,50 @@ function constant_differential_rotation_terms!(M, m; operators, ΔΩ_by_Ω0 = 0.
     sinθdθo = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
     laplacian_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * parent(sinθdθo), ℓs, ℓs)
 
-    DDr_min_2byrM = @. DDrM - 2 * onebyr_chebyM
+    DDr_minus_2byrMCU2 = @. DDrMCU2 - 2 * onebyrMCU2
 
-    Jddr = zeros(nr, nr)
-    Jddr_plus_2byrM = zeros(nr, nr)
+    ddr_plus_2byrMCU4 = @. ddrMCU4 + 2 * onebyrMCU4
 
-    for ℓ in ℓs
+    T = zeros(nr, nr);
+
+    @views for (ℓind, ℓ) in enumerate(ℓs)
         # numerical green function
         ℓℓp1 = ℓ * (ℓ + 1)
-        blockdiaginds_ℓ = blockinds((m, nr), ℓ)
         two_over_ℓℓp1 = 2 / ℓℓp1
 
         dopplerterm = m * ΔΩ_by_Ω0
         diagterm = m * two_over_ℓℓp1 * ΔΩ_by_Ω0 - dopplerterm
 
-        VVd = @view VV[blockdiaginds_ℓ]
-        @views VVd[diagind(VVd)] .+= diagterm
+        VVd = VV[Block(ℓind, ℓind)]
+        VVd[diagind(VVd)] .+= diagterm
 
-        WWd = @view WW[blockdiaginds_ℓ]
-        @views WWd[diagind(WWd)] .+= diagterm
+        WWd = WW[Block(ℓind, ℓind)]
+        WWd[diagind(WWd)] .+= diagterm
         @. WWd -= m * 2ΔΩ_by_Ω0 * Rsun^2 * ηρ_by_rMCU4
 
-        mul!(Jddr, J, ddrM)
-        @. Jddr_plus_2byrM = Jddr + 2J_by_r
-
         if nvariables == 3
-            SSd = @view SS[blockdiaginds_ℓ]
-            @views SSd[diagind(SSd)] .-= dopplerterm
+            SSd = SS[Block(ℓind, ℓind)]
+            SSd[diagind(SSd)] .-= dopplerterm
         end
 
-        @views for ℓ′ in ℓ-1:2:ℓ+1
-            ℓ′ in ℓs || continue
+        for ℓ′ in intersect(ℓ-1:2:ℓ+1, ℓs)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-            inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
+            ℓ′ind = findfirst(isequal(ℓ′), ℓs)
 
-            @. VW[inds_ℓℓ′] += -two_over_ℓℓp1 *
+            @. T = -two_over_ℓℓp1 *
                                     ΔΩ_by_Ω0 * (
-                                        ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * DDr_min_2byrM +
-                                        (DDrM - ℓ′ℓ′p1 * onebyr_chebyM) * sinθdθo[ℓ, ℓ′]
+                                        ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * DDr_minus_2byrMCU2 +
+                                        (DDrMCU2 - ℓ′ℓ′p1 * onebyrMCU2) * sinθdθo[ℓ, ℓ′]
                                     ) * Rsun / Wscaling
 
-            @. WV[inds_ℓℓ′] += -Rsun * ΔΩ_by_Ω0 / ℓℓp1 *
-                                    ((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * Jddr
+            VW[Block(ℓind, ℓ′ind)] .+= T
+
+            @. T = -Rsun * ΔΩ_by_Ω0 / ℓℓp1 *
+                                    ((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * ddrMCU4
                                         +
-                                        Jddr_plus_2byrM * laplacian_sinθdθo[ℓ, ℓ′]) * Wscaling
+                                        ddr_plus_2byrMCU4 * laplacian_sinθdθo[ℓ, ℓ′]) * Wscaling
+
+            WV[Block(ℓind, ℓ′ind)] .+= T
         end
     end
     return M
@@ -1330,8 +1374,6 @@ function rotationprofile_radialderiv(r, ΔΩ_r, nr, Δr)
 
     (ΔΩ, ddrΔΩ, d2dr2ΔΩ)
 end
-
-
 
 function radial_differential_rotation_profile_derivatives(m; operators,
         rotation_profile = :radial, smoothing_param = 1e-3)
@@ -1419,39 +1461,9 @@ function radial_differential_rotation_terms!(M, m; operators, rotation_profile =
     inner_matrices = map(mat, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr));
     (ΔΩ_by_rM, ΔΩ_DDrM, ΔΩ_DDr_min_2byrM) = inner_matrices;
 
-    Nlobatto = length(operators.coordinates.r_chebyshev_lobatto)
-    tempmatGfn = zeros(Nlobatto, Nlobatto);
-    tempvecGfn = zeros(Nlobatto);
-    lobattochebyshevtransform =
-        LobattoChebyshev(operators.transforms.TfGL_nr,
-                operators.transforms.TiGL_nr,
-                operators.transforms.normr);
+    T = zeros(nr, nr);
 
-    J_ηρbyr_ΔΩ = zeros(nr, nr);
-    J_ddrΩ = zeros(nr, nr);
-    J_twoΔΩ_by_r = zeros(nr, nr);
-    J_d2dr2ΔΩ = zeros(nr, nr);
-    J_ddrΩ_ηρ = zeros(nr, nr);
-    J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ = zeros(nr, nr);
-    twoddr_plus_3ηρr_J_ddrΔΩ = zeros(nr, nr);
-    J_ΔΩ = zeros(nr, nr);
-    twoddr_plus_3ηρr_J = zeros(nr, nr);
-    J_times_2byr_min_ηρ = zeros(nr, nr);
-
-    diffrot_terms = (;
-        J_ηρbyr_ΔΩ,
-        J_ddrΩ,
-        J_twoΔΩ_by_r,
-        J_d2dr2ΔΩ,
-        J_ddrΩ_ηρ,
-        J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ,
-        twoddr_plus_3ηρr_J_ddrΔΩ,
-        J_ΔΩ,
-        twoddr_plus_3ηρr_J,
-        J_times_2byr_min_ηρ,
-    );
-
-    @views for ℓ in ℓs
+    @views for (ℓind, ℓ) in enumerate(ℓs)
         # numerical green function
 
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ);
@@ -1460,22 +1472,26 @@ function radial_differential_rotation_terms!(M, m; operators, rotation_profile =
         two_over_ℓℓp1 = 2/ℓℓp1
         two_over_ℓℓp1_min_1 = two_over_ℓℓp1 - 1
 
-        @. VV[inds_ℓℓ] += m * two_over_ℓℓp1_min_1 * ΔΩM
+        @. T = m * two_over_ℓℓp1_min_1 * ΔΩM
+
+        VV[Block(ℓind, ℓind)] .+= T
 
         J_ddrΔΩDDr_plus_d2dr2ΔΩM = J_ddrΩ * ddrM .+ J_ddrΩ_ηρ .+ J_d2dr2ΔΩ;
 
-        @. WW[inds_ℓℓ] += m * (two_over_ℓℓp1_min_1 * ΔΩM - 2Rsun^2 * J_ηρbyr_ΔΩ +
+        @. T = m * (two_over_ℓℓp1_min_1 * ΔΩM - 2Rsun^2 * J_ηρbyr_ΔΩ +
             Rsun^2 * J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ +
             two_over_ℓℓp1 * Rsun^2 * (J_ddrΔΩDDr_plus_d2dr2ΔΩM + twoddr_plus_3ηρr_J_ddrΔΩ))
+
+        WW[Block(ℓind, ℓind)] .+= T
 
         J_ddrΔΩ_plus_ΔΩddrM = J_ddrΩ + J_ΔΩ * ddrM
 
         if nvariables == 3
-            @. SS[inds_ℓℓ] -= m * ΔΩM
+            SS[Block(ℓind, ℓind)] .+= -m .* ΔΩM
         end
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
-            inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
+            ℓ′ind = findfirst(isequal(ℓ′), ℓs)
 
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
 
@@ -1483,25 +1499,30 @@ function radial_differential_rotation_terms!(M, m; operators, rotation_profile =
             sinθdθ_ℓℓ′ = sinθdθo[ℓ, ℓ′]
             ∇²_sinθdθ_ℓℓ′ = ∇²_sinθdθo[ℓ, ℓ′]
 
-            @. VW[inds_ℓℓ′] += -Rsun * two_over_ℓℓp1 *
+            @. T = -Rsun * two_over_ℓℓp1 *
                     (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byrM - ddrΔΩM) +
                     sinθdθ_ℓℓ′ * ((ΔΩ_DDrM - ℓ′ℓ′p1 * ΔΩ_by_rM) - ℓ′ℓ′p1 / 2 * ddrΔΩM)) / Wscaling
 
-            @. WV[inds_ℓℓ′] += -1/ℓℓp1 * Rsun * (
+            VW[Block(ℓind, ℓ′ind)] .+= T
+
+            @. T = -1/ℓℓp1 * Rsun * (
                         (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * J_ddrΔΩ_plus_ΔΩddrM +
                         ∇²_sinθdθ_ℓℓ′ * J_twoΔΩ_by_r
                     ) * Wscaling
 
+            WV[Block(ℓind, ℓ′ind)] .+= T
+
             if nvariables == 3
-                @. SV[inds_ℓℓ′] -= (Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM * Sscaling;
+                @. T = -(Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM * Sscaling;
+                SV[Block(ℓind, ℓ′ind)] .+= T
             end
         end
 
         for ℓ′ in intersect(ℓs, ℓ-2:2:ℓ+2)
-            inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
-
+            ℓ′ind = findfirst(isequal(ℓ′), ℓs)
             if nvariables == 3
-                @. SW[inds_ℓℓ′] += (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM * Sscaling/Wscaling;
+                @. T = (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM * Sscaling/Wscaling;
+                SW[Block(ℓind, ℓ′ind)] .+= T
             end
         end
     end
@@ -1547,7 +1568,7 @@ function cutoff_chebyshev_degree(ΔΩ_nℓ, cutoff_power = 0.9)
     maximum(col -> cutoff_degree(col, cutoff_power), eachcol(ΔΩ_nℓ))
 end
 
-function solar_differential_rotation_terms!(M, nr, nℓ, m;
+function solar_differential_rotation_terms!(M, m;
     operators = radial_operators(nr, nℓ),
     rotation_profile = :constant)
 
@@ -1702,23 +1723,23 @@ function solar_differential_rotation_terms!(M, nr, nℓ, m;
     return M
 end
 
-function _differential_rotation_matrix!(M, nr, nℓ, m, rotation_profile; kw...)
+function _differential_rotation_matrix!(M, m; rotation_profile, kw...)
     if rotation_profile === :radial
-        radial_differential_rotation_terms!(M, nr, nℓ, m; rotation_profile = :solar_equator, kw...)
+        radial_differential_rotation_terms!(M, m; rotation_profile = :solar_equator, kw...)
     elseif rotation_profile === :radial_constant
-        radial_differential_rotation_terms!(M, nr, nℓ, m; rotation_profile = :constant, kw...)
+        radial_differential_rotation_terms!(M, m; rotation_profile = :constant, kw...)
     elseif rotation_profile === :radial_linear
-        radial_differential_rotation_terms!(M, nr, nℓ, m; rotation_profile = :linear, kw...)
+        radial_differential_rotation_terms!(M, m; rotation_profile = :linear, kw...)
     elseif rotation_profile === :radial_core
-        radial_differential_rotation_terms!(M, nr, nℓ, m; rotation_profile = :core, kw...)
+        radial_differential_rotation_terms!(M, m; rotation_profile = :core, kw...)
     elseif rotation_profile === :solar
-        solar_differential_rotation_terms!(M, nr, nℓ, m; rotation_profile, kw...)
+        solar_differential_rotation_terms!(M, m; rotation_profile, kw...)
     elseif rotation_profile === :solar_radial
-        solar_differential_rotation_terms!(M, nr, nℓ, m; rotation_profile = :radial, kw...)
+        solar_differential_rotation_terms!(M, m; rotation_profile = :radial, kw...)
     elseif rotation_profile === :solar_constant
-        solar_differential_rotation_terms!(M, nr, nℓ, m; rotation_profile = :constant, kw...)
+        solar_differential_rotation_terms!(M, m; rotation_profile = :constant, kw...)
     elseif rotation_profile === :constant
-        constant_differential_rotation_terms!(M, nr, nℓ, m; kw...)
+        constant_differential_rotation_terms!(M, m; kw...)
     else
         throw(ArgumentError("Invalid rotation profile"))
     end
@@ -1729,46 +1750,42 @@ function differential_rotation_matrix(m; operators, kw...)
     differential_rotation_matrix!(M, m; operators, kw...)
     return M
 end
-function differential_rotation_matrix!(M, m; rotation_profile, operators, kw...)
-    uniform_rotation_matrix!(M, m; operators, kw...)
-    _differential_rotation_matrix!(M, m, rotation_profile; operators)
+function differential_rotation_matrix!(M, m; kw...)
+    uniform_rotation_matrix!(M, m; kw...)
+    _differential_rotation_matrix!(M, m; kw...)
     return M
 end
-
-_maybetrimM(M, nvariables, nparams) = nvariables == 3 ? M : M[1:(nvariables*nparams), 1:(nvariables*nparams)]
 
 function constrained_matmul_cache(constraints)
     (; ZC) = constraints
     sz_constrained = (size(ZC, 2), size(ZC, 2))
-    MZCcache = zeros(size(ZC))
-    AB_constrained_real = zeros(sz_constrained)
     A_constrained = zeros(ComplexF64, sz_constrained)
     B_constrained = zeros(ComplexF64, sz_constrained)
-    return (; MZCcache, A_constrained, B_constrained, AB_constrained_real)
+    return (; A_constrained, B_constrained)
 end
-
-function compute_constrained_matrix(A::StructArray{<:Complex}, constraints,
+function compute_constrained_matrix!(out, constraints, A)
+    (; ZC) = constraints
+    out .= ZC' * A * ZC
+    return out
+end
+function compute_constrained_matrix!(out, constraints, A::StructArray{<:Complex})
+    (; ZC) = constraints
+    out .= (ZC' * A.re * ZC) .+ im .* (ZC' * A.im * ZC)
+    return out
+end
+function compute_constrained_matrix(A::AbstractMatrix{<:Complex}, constraints,
         cache = constrained_matmul_cache(constraints))
 
-    (; A_constrained, MZCcache, AB_constrained_real) = cache
-    (; ZC) = constraints
-
-    mul!(AB_constrained_real, ZC', mul!(MZCcache, A.re, ZC))
-    A_constrained .= AB_constrained_real
-
-    mul!(AB_constrained_real, ZC', mul!(MZCcache, A.im, ZC))
-    @. A_constrained += im * AB_constrained_real
-
+    (; A_constrained) = cache
+    compute_constrained_matrix!(A_constrained, constraints, A)
     return A_constrained
 end
 
-function compute_constrained_matrix(B::Matrix{<:Real}, constraints,
+function compute_constrained_matrix(B::AbstractMatrix{<:Real}, constraints,
         cache = constrained_matmul_cache(constraints))
 
-    (; B_constrained, MZCcache, AB_constrained_real) = cache
-    (; ZC) = constraints
-    mul!(AB_constrained_real, ZC', mul!(MZCcache, B, ZC))
-    B_constrained .= AB_constrained_real
+    (; B_constrained) = cache
+    compute_constrained_matrix!(B_constrained, constraints, B)
     return B_constrained
 end
 
@@ -1828,6 +1845,13 @@ function allocate_projectback_temp_matrices(sz)
     v, temp
 end
 
+function constrained_eigensystem_timed(AB; timer = TimerOutput(), kw...)
+    X = @timeit timer "eigen" constrained_eigensystem(computesparse.(AB); timer, kw...)
+    if get(kw, :print_timer, false)
+        println(timer)
+    end
+    X
+end
 function constrained_eigensystem((A, B);
     operators,
     constraints = constraintmatrix(operators),
@@ -1865,16 +1889,12 @@ function uniform_rotation_spectrum(m; operators, kw...)
     uniform_rotation_spectrum!((A, B), m; operators, kw...)
 end
 function uniform_rotation_spectrum!((A, B), m; operators, kw...)
-    to = TimerOutput()
-    @timeit to "matrix" begin
+    timer = TimerOutput()
+    @timeit timer "matrix" begin
         uniform_rotation_matrix!(A, m; operators, kw...)
         mass_matrix!(B, m; operators, kw...)
     end
-    X = @timeit to "eigen" constrained_eigensystem((A, B); operators, timer = to, kw...)
-    if get(kw, :print_timer, false)
-        println(to)
-    end
-    X
+    constrained_eigensystem_timed((A, B); operators, timer, kw...)
 end
 
 function real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop)
@@ -1901,16 +1921,12 @@ function differential_rotation_spectrum(m; operators, kw...)
     differential_rotation_spectrum!((A, B), m; operators, kw...)
 end
 function differential_rotation_spectrum!((A, B), m; rotation_profile, operators, kw...)
-    to = TimerOutput()
-    @timeit to "matrix" begin
-        differential_rotation_matrix!(A; operators, rotation_profile, kw...)
+    timer = TimerOutput()
+    @timeit timer "matrix" begin
+        differential_rotation_matrix!(A, m; operators, rotation_profile, kw...)
         mass_matrix!(B, m; operators)
     end
-    X = @timeit to "eigen" constrained_eigensystem((A, B); operators, timer = to, kw...)
-    if get(kw, :print_timer, false)
-        println(to)
-    end
-    X
+    constrained_eigensystem_timed((A, B); operators, timer, kw...)
 end
 
 rossby_ridge(m; ΔΩ_by_Ω = 0) = 2 / (m + 1) * (1 + ΔΩ_by_Ω) - m * ΔΩ_by_Ω
@@ -1919,8 +1935,8 @@ function eigenvalue_filter(x, m;
     eig_imag_unstable_cutoff = -1e-3,
     eig_imag_to_real_ratio_cutoff = 1e-1,
     eig_imag_damped_cutoff = 5e-3,
-    ΔΩ_by_Ω_low = 0,
-    ΔΩ_by_Ω_high = ΔΩ_by_Ω_low)
+    ΔΩ_by_Ω_low = -5,
+    ΔΩ_by_Ω_high = 5)
 
     freq_sectoral = 2 / (m + 1)
 
@@ -1941,7 +1957,7 @@ function boundary_condition_filter(v, BC, BCVcache, atol = 1e-5)
     norm(BCVcache) < atol
 end
 function eigensystem_satisfy_filter(λ, v::StructVector{ComplexF64},
-        (A, B)::Tuple{StructArray{<:Complex,2}, Matrix{<:Real}},
+        (A, B)::Tuple{StructArray{<:Complex,2}, AbstractMatrix{<:Real}},
         (Av, λBv)::NTuple{2, StructArray{<:Complex,1}}, rtol = 1e-1)
 
     mul!(Av.re, A.re, v.re)
@@ -2360,7 +2376,7 @@ function filter_eigenvalues(filename::String; kw...)
 end
 
 rossbyeigenfilename(nr, nℓ, tag = "ur", posttag = "") = "$(tag)_nr$(nr)_nl$(nℓ)$(posttag).jld2"
-function save_eigenvalues(f, nr, nℓ, mr; operators = radial_operators(nr, nℓ), kw...)
+function save_eigenvalues(f, mr; operators = radial_operators(nr, nℓ), kw...)
     kw = merge(DefaultFilterParams, kw)
     lam, vec = filter_eigenvalues(f, mr; operators, kw...)
     isdiffrot = get(kw, :diffrot, false)
