@@ -946,6 +946,7 @@ function computesparse(M::BlockArray)
 end
 
 computesparse(M::AbstractMatrix) = sparse(M)
+computesparse(S::SparseMatrixCSC) = S
 
 function allocate_operator_matrix(operators, bandwidth = 2)
     (; nr, nℓ, nparams) = operators.radial_params
@@ -1018,7 +1019,7 @@ function uniform_rotation_matrix(m; operators, kw...)
     return A
 end
 
-function uniform_rotation_matrix!(A, m; operators, kw...)
+function uniform_rotation_matrix!(A::StructArray{<:Complex, 2}, m; operators, kw...)
     (; nvariables, Ω0, scalings) = operators.constants;
     (; nr, nℓ) = operators.radial_params
     (; ddrMCU4, DDrMCU2, DDr_minus_2byrMCU2, ddrDDrMCU4, κ_∇r2_plus_ddr_lnρT_ddrMCU2,
@@ -1092,7 +1093,7 @@ function uniform_rotation_matrix!(A, m; operators, kw...)
     return A
 end
 
-function viscosity_terms!(A, m; operators)
+function viscosity_terms!(A::StructArray{<:Complex, 2}, m; operators)
     (; nr, nℓ) = operators.radial_params;
 
     (; ddrMCU4, d2dr2MCU2, d3dr3MCU4, onebyr2MCU2,
@@ -1248,10 +1249,12 @@ function laplacian_operator(nℓ, m)
     Diagonal(@. -ℓs * (ℓs + 1))
 end
 
-function constant_differential_rotation_terms!(M, m; operators, ΔΩ_by_Ω0 = 0.02, kw...)
+function constant_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
+        operators, ΔΩ_by_Ω0 = 0.02, kw...)
     (; nr, nℓ) = operators.radial_params;
     (; nvariables, scalings) = operators.constants
-    (; ddrMCU4, DDrMCU2, onebyrMCU2, onebyrMCU4, DDr_minus_2byrMCU2, ηρ_by_rMCU4) = operators.operator_matrices
+    (; ddrMCU4, DDrMCU2, onebyrMCU2, onebyrMCU4,
+            DDr_minus_2byrMCU2, ηρ_by_rMCU4) = operators.operator_matrices
 
     (; Wscaling) = scalings
 
@@ -1411,7 +1414,8 @@ function radial_differential_rotation_terms_inner!((VWterm, WVterm), (ℓ, ℓ�
     VWterm, WVterm
 end
 
-function radial_differential_rotation_terms!(M, m; operators, rotation_profile = :constant, kw...)
+function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
+        operators, rotation_profile = :radial, kw...)
 
     (; nvariables, scalings) = operators.constants;
     (; DDr, ddr) = operators.diff_operators;
@@ -1768,7 +1772,7 @@ function compute_constrained_matrix!(out, constraints, A)
     out .= ZC' * A * ZC
     return out
 end
-function compute_constrained_matrix!(out, constraints, A::StructArray{<:Complex})
+function compute_constrained_matrix!(out, constraints, A::StructArray{<:Complex,2})
     (; ZC) = constraints
     out .= (ZC' * A.re * ZC) .+ im .* (ZC' * A.im * ZC)
     return out
@@ -1956,7 +1960,7 @@ function boundary_condition_filter(v, BC, BCVcache, atol = 1e-5)
     mul!(BCVcache.im, BC, v.im)
     norm(BCVcache) < atol
 end
-function eigensystem_satisfy_filter(λ, v::StructVector{ComplexF64},
+function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
         (A, B)::Tuple{StructArray{<:Complex,2}, AbstractMatrix{<:Real}},
         (Av, λBv)::NTuple{2, StructArray{<:Complex,1}}, rtol = 1e-1)
 
@@ -2036,7 +2040,7 @@ function chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff = 7, n_power_cut
 
     for X in fields
         Xrange = view(X, :, rangescan)
-        PV_frac = sum(abs2, @view X[1:n_cutoff_ind, rangescan]) / sum(abs2, X[:, rangescan])
+        PV_frac = sum(abs2, @view X[1:n_cutoff_ind, rangescan]) / sum(abs2, @view X[:, rangescan])
         flag &= PV_frac > n_power_cutoff
     end
 
@@ -2241,16 +2245,16 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     kw = merge(DefaultFilterParams, kw)
     additional_params = (operators, constraints, filtercache, kw)
 
-    inds_bool = filterfn.(λ, eachcol(v), m, (M,), (additional_params,), filterflags)
+    inds_bool = filterfn.(λ, eachcol(v), m, (computesparse.(M),), (additional_params,), filterflags)
     filtinds = axes(λ, 1)[inds_bool]
     λ, v = λ[filtinds], v[:, filtinds]
 
     # re-apply scalings
-    if get(kw, :scale_eigenvectors, false)
+    @views if get(kw, :scale_eigenvectors, false)
         scalings = merge((; Wscaling = 1, Sscaling = 1), kw[:scalings])
-        V = @view v[1:nparams, :]
-        W = @view v[nparams .+ (1:nparams), :]
-        S = @view v[2nparams .+ (1:nparams), :]
+        V = v[1:nparams, :]
+        W = v[nparams .+ (1:nparams), :]
+        S = v[2nparams .+ (1:nparams), :]
 
         W ./= scalings.Wscaling
         S ./= scalings.Sscaling
