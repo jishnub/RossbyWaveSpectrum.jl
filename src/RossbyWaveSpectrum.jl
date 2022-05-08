@@ -1254,7 +1254,9 @@ function constant_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
     (; nr, nℓ) = operators.radial_params;
     (; nvariables, scalings) = operators.constants
     (; ddrMCU4, DDrMCU2, onebyrMCU2, onebyrMCU4,
-            DDr_minus_2byrMCU2, ηρ_by_rMCU4) = operators.operator_matrices
+            DDr_minus_2byrMCU2, ηρ_by_rMCU4, ddrDDrMCU4,
+            onebyr2MCU4) = operators.operator_matrices
+    (; IU2) = operators.identities;
 
     (; Wscaling) = scalings
 
@@ -1275,6 +1277,8 @@ function constant_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
 
     ddr_plus_2byrMCU4 = @. ddrMCU4 + 2 * onebyrMCU4
 
+    ddrDDr_minus_ℓℓp1_by_r2MCU4 = zeros(nr, nr)
+
     T = zeros(nr, nr);
 
     @views for (ℓind, ℓ) in enumerate(ℓs)
@@ -1282,19 +1286,17 @@ function constant_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
         ℓℓp1 = ℓ * (ℓ + 1)
         two_over_ℓℓp1 = 2 / ℓℓp1
 
-        dopplerterm = m * ΔΩ_by_Ω0
-        diagterm = m * two_over_ℓℓp1 * ΔΩ_by_Ω0 - dopplerterm
+        dopplerterm = -m * ΔΩ_by_Ω0
+        diagterm = m * two_over_ℓℓp1 * ΔΩ_by_Ω0 + dopplerterm
 
-        VVd = VV[Block(ℓind, ℓind)]
-        VVd[diagind(VVd)] .+= diagterm
+        VV[Block(ℓind, ℓind)] .+= diagterm .* IU2
 
-        WWd = WW[Block(ℓind, ℓind)]
-        WWd[diagind(WWd)] .+= diagterm
-        @. WWd -= m * 2ΔΩ_by_Ω0 * Rsun^2 * ηρ_by_rMCU4
+        @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
+
+        WW[Block(ℓind, ℓind)] .+= Rsun^2 .* (diagterm .* ddrDDr_minus_ℓℓp1_by_r2MCU4 .+ 2dopplerterm .* ηρ_by_rMCU4)
 
         if nvariables == 3
-            SSd = SS[Block(ℓind, ℓind)]
-            SSd[diagind(SSd)] .-= dopplerterm
+            SS[Block(ℓind, ℓind)] .+= dopplerterm .* IU2
         end
 
         for ℓ′ in intersect(ℓ-1:2:ℓ+1, ℓs)
@@ -1417,34 +1419,35 @@ end
 function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
         operators, rotation_profile = :radial, kw...)
 
+    (; nr, nℓ) = operators.radial_params
     (; nvariables, scalings) = operators.constants;
     (; DDr, ddr) = operators.diff_operators;
-    (; ddrM) = operators.diff_operator_matrices;
-    (; onebyr, g_cheby) = operators.rad_terms;
-    (; mat) = operators;
+    (; ddrMCU4) = operators.operator_matrices;
+    (; onebyr, g, ηρ_by_r) = operators.rad_terms;
     (; Sscaling, Wscaling) = scalings;
+    (; matCU4, matCU2) = operators;
 
-    VV = matrix_block(M.re, 1, 1, nvariables)
-    VW = matrix_block(M.re, 1, 2, nvariables)
-    WV = matrix_block(M.re, 2, 1, nvariables)
-    WW = matrix_block(M.re, 2, 2, nvariables)
+    VV = matrix_block(M.re, 1, 1)
+    VW = matrix_block(M.re, 1, 2)
+    WV = matrix_block(M.re, 2, 1)
+    WW = matrix_block(M.re, 2, 2)
     if nvariables === 3
-        SV = matrix_block(M.re, 3, 1, nvariables)
-        SW = matrix_block(M.re, 3, 2, nvariables)
-        SS = matrix_block(M.re, 3, 3, nvariables)
+        SV = matrix_block(M.re, 3, 1)
+        SW = matrix_block(M.re, 3, 2)
+        SS = matrix_block(M.re, 3, 3)
     end
 
     ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(m; operators, rotation_profile);
 
     (; ΔΩ, ddrΔΩ, Ω0) = ΔΩprofile_deriv;
 
-    ΔΩM = mat(ΔΩ);
-    ddrΔΩM = mat(ddrΔΩ);
+    ΔΩMCU2 = matCU2(ΔΩ);
+    ddrΔΩMCU2 = matCU2(ddrΔΩ);
 
-    ddrΔΩ_over_g = ddrΔΩ / g_cheby;
-    ddrΔΩ_over_gM = mat(ddrΔΩ_over_g);
+    ddrΔΩ_over_g = ddrΔΩ / g;
+    ddrΔΩ_over_gMCU2 = matCU2(ddrΔΩ_over_g);
     ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr)::Tmul;
-    ddrΔΩ_over_g_DDrM = mat(ddrΔΩ_over_g_DDr);
+    ddrΔΩ_over_g_DDrMCU2 = matCU2(ddrΔΩ_over_g_DDr);
     ddrΔΩ_plus_ΔΩddr = (ddrΔΩ + (ΔΩ * ddr)::Tmul)::Tplus;
 
     ℓs = range(m, length = nℓ);
@@ -1457,13 +1460,17 @@ function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
     cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
     ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs);
 
-    DDr_min_2byr = (DDr - 2onebyr_cheby)::Tplus;
+    DDr_min_2byr = (DDr - 2onebyr)::Tplus;
     ΔΩ_DDr_min_2byr = (ΔΩ * DDr_min_2byr)::Tmul;
     ΔΩ_DDr = (ΔΩ * DDr)::Tmul;
     ΔΩ_by_r = ΔΩ * onebyr;
 
-    inner_matrices = map(mat, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr));
-    (ΔΩ_by_rM, ΔΩ_DDrM, ΔΩ_DDr_min_2byrM) = inner_matrices;
+    ΔΩ_by_rMCU2, ΔΩ_DDrMCU2, ΔΩ_DDr_min_2byrMCU2 =
+        map(matCU2, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr));
+
+    ddrΔΩ_plus_ΔΩddrMCU4, twoΔΩ_by_rMCU4 = map(matCU4, (ddrΔΩ_plus_ΔΩddr, 2ΔΩ*onebyr))
+
+    ηρbyr_ΔΩMCU4 = matCU4(ηρ_by_r * ΔΩ)
 
     T = zeros(nr, nr);
 
@@ -1476,22 +1483,16 @@ function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
         two_over_ℓℓp1 = 2/ℓℓp1
         two_over_ℓℓp1_min_1 = two_over_ℓℓp1 - 1
 
-        @. T = m * two_over_ℓℓp1_min_1 * ΔΩM
+        @. T = m * two_over_ℓℓp1_min_1 * ΔΩMCU2
 
         VV[Block(ℓind, ℓind)] .+= T
 
-        J_ddrΔΩDDr_plus_d2dr2ΔΩM = J_ddrΩ * ddrM .+ J_ddrΩ_ηρ .+ J_d2dr2ΔΩ;
-
-        @. T = m * (two_over_ℓℓp1_min_1 * ΔΩM - 2Rsun^2 * J_ηρbyr_ΔΩ +
-            Rsun^2 * J_2byr_min_ηρ__min__twoddr_plus_3ηρr_J__times_drΔΩ +
-            two_over_ℓℓp1 * Rsun^2 * (J_ddrΔΩDDr_plus_d2dr2ΔΩM + twoddr_plus_3ηρr_J_ddrΔΩ))
+        @. T = m
 
         WW[Block(ℓind, ℓind)] .+= T
 
-        J_ddrΔΩ_plus_ΔΩddrM = J_ddrΩ + J_ΔΩ * ddrM
-
         if nvariables == 3
-            SS[Block(ℓind, ℓind)] .+= -m .* ΔΩM
+            SS[Block(ℓind, ℓind)] .+= -m .* ΔΩMCU2
         end
 
         for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
@@ -1504,20 +1505,20 @@ function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
             ∇²_sinθdθ_ℓℓ′ = ∇²_sinθdθo[ℓ, ℓ′]
 
             @. T = -Rsun * two_over_ℓℓp1 *
-                    (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byrM - ddrΔΩM) +
-                    sinθdθ_ℓℓ′ * ((ΔΩ_DDrM - ℓ′ℓ′p1 * ΔΩ_by_rM) - ℓ′ℓ′p1 / 2 * ddrΔΩM)) / Wscaling
+                    (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byrMCU2 - ddrΔΩMCU2) +
+                    sinθdθ_ℓℓ′ * ((ΔΩ_DDrMCU2 - ℓ′ℓ′p1 * ΔΩ_by_rMCU2) - ℓ′ℓ′p1 / 2 * ddrΔΩMCU2)) / Wscaling
 
             VW[Block(ℓind, ℓ′ind)] .+= T
 
             @. T = -1/ℓℓp1 * Rsun * (
-                        (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * J_ddrΔΩ_plus_ΔΩddrM +
-                        ∇²_sinθdθ_ℓℓ′ * J_twoΔΩ_by_r
+                        (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * ddrΔΩ_plus_ΔΩddrMCU4 +
+                        ∇²_sinθdθ_ℓℓ′ * twoΔΩ_by_rMCU4
                     ) * Wscaling
 
             WV[Block(ℓind, ℓ′ind)] .+= T
 
             if nvariables == 3
-                @. T = -(Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gM * Sscaling;
+                @. T = -(Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gMCU2 * Sscaling;
                 SV[Block(ℓind, ℓ′ind)] .+= T
             end
         end
@@ -1525,7 +1526,7 @@ function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
         for ℓ′ in intersect(ℓs, ℓ-2:2:ℓ+2)
             ℓ′ind = findfirst(isequal(ℓ′), ℓs)
             if nvariables == 3
-                @. T = (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrM * Sscaling/Wscaling;
+                @. T = (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrMCU2 * Sscaling/Wscaling;
                 SW[Block(ℓind, ℓ′ind)] .+= T
             end
         end
