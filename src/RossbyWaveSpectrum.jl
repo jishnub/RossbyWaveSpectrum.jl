@@ -1421,9 +1421,9 @@ function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
 
     (; nr, nℓ) = operators.radial_params
     (; nvariables, scalings) = operators.constants;
-    (; DDr, ddr) = operators.diff_operators;
+    (; DDr, ddr, ddrDDr) = operators.diff_operators;
     (; ddrMCU4) = operators.operator_matrices;
-    (; onebyr, g, ηρ_by_r) = operators.rad_terms;
+    (; onebyr, g, ηρ_by_r, onebyr2) = operators.rad_terms;
     (; Sscaling, Wscaling) = scalings;
     (; matCU4, matCU2) = operators;
 
@@ -1439,10 +1439,11 @@ function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
 
     ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(m; operators, rotation_profile);
 
-    (; ΔΩ, ddrΔΩ, Ω0) = ΔΩprofile_deriv;
+    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ, Ω0) = ΔΩprofile_deriv;
 
     ΔΩMCU2 = matCU2(ΔΩ);
     ddrΔΩMCU2 = matCU2(ddrΔΩ);
+    d2dr2ΔΩMCU4 = matCU4(d2dr2ΔΩ);
 
     ddrΔΩ_over_g = ddrΔΩ / g;
     ddrΔΩ_over_gMCU2 = matCU2(ddrΔΩ_over_g);
@@ -1464,14 +1465,19 @@ function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
     ΔΩ_DDr_min_2byr = (ΔΩ * DDr_min_2byr)::Tmul;
     ΔΩ_DDr = (ΔΩ * DDr)::Tmul;
     ΔΩ_by_r = ΔΩ * onebyr;
+    ΔΩ_by_r2 = ΔΩ * onebyr2;
 
     ΔΩ_by_rMCU2, ΔΩ_DDrMCU2, ΔΩ_DDr_min_2byrMCU2 =
         map(matCU2, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr));
 
-    ddrΔΩ_plus_ΔΩddrMCU4, twoΔΩ_by_rMCU4 = map(matCU4, (ddrΔΩ_plus_ΔΩddr, 2ΔΩ*onebyr))
+    ddrΔΩ_plus_ΔΩddrMCU4, twoΔΩ_by_rMCU4, ddrΔΩ_DDrMCU4, ΔΩ_ddrDDrMCU4,
+        ΔΩ_by_r2MCU4, ddrΔΩ_ddr_plus_2byrMCU4, ΔΩ_ηρ_by_rMCU4 =
+        map(matCU4, (ddrΔΩ_plus_ΔΩddr, 2ΔΩ_by_r, ddrΔΩ * DDr, ΔΩ * ddrDDr,
+            ΔΩ_by_r2, ddrΔΩ * (ddr + 2onebyr), ΔΩ * ηρ_by_r))
 
     ηρbyr_ΔΩMCU4 = matCU4(ηρ_by_r * ΔΩ)
 
+    ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4 = zeros(nr, nr);
     T = zeros(nr, nr);
 
     @views for (ℓind, ℓ) in enumerate(ℓs)
@@ -1487,7 +1493,10 @@ function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
 
         VV[Block(ℓind, ℓind)] .+= T
 
-        @. T = m
+        @. ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4 = ΔΩ_ddrDDrMCU4 - ℓℓp1 * ΔΩ_by_r2MCU4
+
+        @. T = m * Rsun^2 * (two_over_ℓℓp1_min_1 * (ddrΔΩ_DDrMCU4 + ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4)
+                - 2ΔΩ_ηρ_by_rMCU4 + d2dr2ΔΩMCU4 + ddrΔΩ_ddr_plus_2byrMCU4)
 
         WW[Block(ℓind, ℓind)] .+= T
 
