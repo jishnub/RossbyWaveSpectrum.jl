@@ -6,9 +6,9 @@ nℓ = 50;
 mrange = 1:20;
 
 # test
-nr = 15;
-nℓ = 15;
-mrange = 1:1;
+# nr = 15;
+# nℓ = 15;
+# mrange = 1:1;
 
 # boundary condition tolerance
 atol_constraint = 1e-5
@@ -41,7 +41,7 @@ spectrumfn! = RossbyWaveSpectrum.uniform_rotation_spectrum!
 @show scale_eigenvectors;
 @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads();
 
-@time RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, nr, nℓ, mrange;
+@time RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange;
     atol_constraint, Δl_cutoff, Δl_power_cutoff,
     eigen_rtol, n_cutoff, n_power_cutoff,
     ΔΩ_by_Ω_low, ΔΩ_by_Ω_high, operators,

@@ -927,8 +927,7 @@ function matrix_block(M::AbstractMatrix, rowind, colind, nvariables = 3)
 end
 
 matrix_block_maximum(f, M::AbstractMatrix, nvariables = 3) = [maximum(f, matrix_block(M, i, j)) for i in 1:nvariables, j in 1:nvariables]
-function matrix_block_maximum(M::AbstractMatrix, operators::NamedTuple)
-    (; nvariables) = operators.constants
+function matrix_block_maximum(M::AbstractMatrix, nvariables = 3)
     R = RossbyWaveSpectrum.matrix_block_maximum(abs∘real, M, nvariables)
     I = RossbyWaveSpectrum.matrix_block_maximum(abs∘imag, M, nvariables)
     [R I]
@@ -1255,7 +1254,7 @@ function constant_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
     (; nvariables, scalings) = operators.constants
     (; ddrMCU4, DDrMCU2, onebyrMCU2, onebyrMCU4,
             DDr_minus_2byrMCU2, ηρ_by_rMCU4, ddrDDrMCU4,
-            onebyr2MCU4) = operators.operator_matrices
+            onebyr2MCU4) = operators.operator_matrices;
     (; IU2) = operators.identities;
 
     (; Wscaling) = scalings
@@ -1277,7 +1276,7 @@ function constant_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
 
     ddr_plus_2byrMCU4 = @. ddrMCU4 + 2 * onebyrMCU4
 
-    ddrDDr_minus_ℓℓp1_by_r2MCU4 = zeros(nr, nr)
+    ddrDDr_minus_ℓℓp1_by_r2MCU4 = zeros(nr, nr);
 
     T = zeros(nr, nr);
 
@@ -1291,7 +1290,7 @@ function constant_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
 
         VV[Block(ℓind, ℓind)] .+= diagterm .* IU2
 
-        @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
+        @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4;
 
         WW[Block(ℓind, ℓind)] .+= Rsun^2 .* (diagterm .* ddrDDr_minus_ℓℓp1_by_r2MCU4 .+ 2dopplerterm .* ηρ_by_rMCU4)
 
@@ -2387,11 +2386,11 @@ function filter_eigenvalues(filename::String; kw...)
 end
 
 rossbyeigenfilename(nr, nℓ, tag = "ur", posttag = "") = "$(tag)_nr$(nr)_nl$(nℓ)$(posttag).jld2"
-function save_eigenvalues(f, mr; operators = radial_operators(nr, nℓ), kw...)
-    kw = merge(DefaultFilterParams, kw)
+function save_eigenvalues(f, mr; operators, kw...)
     lam, vec = filter_eigenvalues(f, mr; operators, kw...)
     isdiffrot = get(kw, :diffrot, false)
     filenametag = isdiffrot ? "dr" : "ur"
+    (; nr, nℓ) = operators.radial_params;
     fname = datadir(rossbyeigenfilename(nr, nℓ, filenametag))
     @info "saving to $fname"
     jldsave(fname; lam, vec, mr, nr, nℓ, kw)
