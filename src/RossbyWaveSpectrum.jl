@@ -2302,13 +2302,11 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
 
     (; nr, nℓ, nparams) = operators.radial_params
     (; nvariables) = operators.constants
-    As = [allocate_operator_matrix(operators) for _ in 1:Threads.nthreads()]
-    Bs = [allocate_mass_matrix(operators) for _ in 1:Threads.nthreads()]
+    ABs = [(allocate_operator_matrix(operators), allocate_mass_matrix(operators)) for _ in 1:Threads.nthreads()]
 
     λv = @maybe_reduce_blas_threads(Threads.nthreads(),
         Folds.map(zip(λs, vs, mr)) do (λm, vm, m)
-            A = Ms[Threads.threadid()]
-            B = Bs[Threads.threadid()]
+            A, B = ABs[Threads.threadid()]
             matrixfn!(A, m; operators)
             mass_matrix!(B, m; operators)
             filter_eigenvalues(λm, vm, (A,B), m; operators, constraints, kw...)
@@ -2317,13 +2315,13 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     first.(λv), last.(λv)
 end
 
-function fmap(spectrumfn!, m, (Ms, caches, temp_projectback_mats, operators, constraints); kw...)
-    threadid = Threads.threadid()
-    M = Ms[threadid];
-    cache = caches[threadid];
-    temp_projectback = temp_projectback_mats[threadid];
+function fmap(spectrumfn!, m, c, operators, constraints; kw...)
+    Ctid = take!(c)
+    M, cache, temp_projectback = Ctid;
     X = spectrumfn!(M, m; operators, constraints, cache, temp_projectback, kw...);
-    filter_eigenvalues(X..., m; operators, constraints, kw...)
+    Y = filter_eigenvalues(X..., m; operators, constraints, kw...)
+    put!(c, Ctid)
+    return Y
 end
 
 function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
@@ -2332,20 +2330,19 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
     to = TimerOutput()
 
     @timeit to "alloc" begin
-        (; nvariables) = operators.constants;
-        (; nr, nℓ, nparams) = operators.radial_params;
-        ℓs = minimum(mr):maximum(mr) + nℓ - 1
         nthreads = Threads.nthreads()
-        @timeit to "M" Ms = [(allocate_operator_matrix(operators), allocate_mass_matrix(operators)) for _ in 1:nthreads];
+        @timeit to "M" ABs = [(allocate_operator_matrix(operators), allocate_mass_matrix(operators)) for _ in 1:nthreads];
         @timeit to "caches" caches = [constrained_matmul_cache(constraints) for _ in 1:nthreads];
         @timeit to "projectback" temp_projectback_mats = [allocate_projectback_temp_matrices(size(constraints.ZC)) for _ in 1:nthreads];
+        z = zip(ABs, caches, temp_projectback_mats)
+        c = Channel(nthreads);
+        for el in z
+            put!(c, el)
+        end
     end
 
     @timeit to "spectrum" begin
-        addl_params = (Ms, caches, temp_projectback_mats, operators, constraints);
-
         nblasthreads = BLAS.get_num_threads()
-
         nthreads_trailing_elems = rem(length(mr), nthreads)
 
         if nthreads_trailing_elems > 0 && div(nblasthreads, nthreads_trailing_elems) > max(1, div(nblasthreads, nthreads))
@@ -2353,7 +2350,7 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
             mr1 = @view mr[1:end-nthreads_trailing_elems]
             λv1 = @maybe_reduce_blas_threads(Threads.nthreads(),
                 Folds.map(mr1) do m
-                    fmap(spectrumfn!, m, addl_params; kw...)
+                    fmap(spectrumfn!, m, c, operators, constraints; kw...)
                 end
             )
             λs, vs = first.(λv1), last.(λv1)
@@ -2362,7 +2359,7 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
 
             λv2 = @maybe_reduce_blas_threads(nthreads_trailing_elems,
                 Folds.map(mr2) do m
-                    fmap(spectrumfn!, m, addl_params; kw...)
+                    fmap(spectrumfn!, m, c, operators, constraints; kw...)
                 end
             )
 
@@ -2372,7 +2369,7 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
         else
             λv = @maybe_reduce_blas_threads(Threads.nthreads(),
                 Folds.map(mr) do m
-                    fmap(spectrumfn!, m, addl_params; kw...)
+                    fmap(spectrumfn!, m, c, operators, constraints; kw...)
                 end
             )
             λs, vs = first.(λv), last.(λv)

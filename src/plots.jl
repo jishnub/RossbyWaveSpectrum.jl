@@ -22,10 +22,21 @@ function cbformat(x, _)
     a * L"\times10^{%$c}"
 end
 
-function plot_rossby_ridges(mr; ax = gca(), ΔΩ_by_Ω = 0, kw...)
+function plot_rossby_ridges(mr; ax = gca(), ΔΩ_by_Ω = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
         ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_by_Ω),
             label = ΔΩ_by_Ω == 0 ? "Sectoral" :
+                    L"\Delta\Omega/\Omega_0 = " * string(round(ΔΩ_by_Ω, sigdigits = 1)),
+            lw = 1,
+            color = get(kw, :sectoral_rossby_ridge_color, "black"),
+            zorder = 0,
+            ls = get(kw, :sectoral_rossby_ridge_ls, "solid")
+        )
+    end
+
+    if !isnothing(ridgescalefactor)
+        ax.plot(mr, ridgescalefactor .* RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_by_Ω),
+            label = ΔΩ_by_Ω == 0 ? "Sectoral x $ridgescalefactor" :
                     L"\Delta\Omega/\Omega_0 = " * string(round(ΔΩ_by_Ω, sigdigits = 1)),
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),

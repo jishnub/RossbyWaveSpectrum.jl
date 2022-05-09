@@ -3,12 +3,12 @@ using Test
 using Folds
 
 @testset "multiple ms" begin
-    nr, nℓ = 30, 15
+    nr, nℓ = 15, 15
 
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.5, r_out_frac = 0.985);
     constraints = RossbyWaveSpectrum.constraintmatrix(operators);
 
-    mr = 1:3
+    mr = 1:6
 
     As = Folds.map(m -> RossbyWaveSpectrum.uniform_rotation_matrix(m; operators), mr)
     for (ind, m) in enumerate(mr)

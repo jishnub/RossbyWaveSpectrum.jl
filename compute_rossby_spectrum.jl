@@ -6,9 +6,9 @@ nℓ = 50;
 mrange = 1:20;
 
 # test
-# nr = 15;
-# nℓ = 15;
-# mrange = 1:1;
+nr = 15;
+nℓ = 15;
+mrange = 1:1;
 
 # boundary condition tolerance
 atol_constraint = 1e-5
@@ -22,8 +22,8 @@ n_cutoff = 20
 n_power_cutoff = 0.9
 
 # used for filtering, zero for uniform rotation
-ΔΩ_by_Ω_low = -5
-ΔΩ_by_Ω_high = 5
+ΔΩ_by_Ω_low = -10
+ΔΩ_by_Ω_high = 10
 
 r_in_frac = 0.5
 r_out_frac = 0.985
