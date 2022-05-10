@@ -707,7 +707,7 @@ end
 
 function checkncoeff(v, vname, nr)
     if ncoefficients(v) > 2/3*nr
-        @warn "number of coefficients in $vname is $(ncoefficients(v)), but nr = $nr"
+        @debug "number of coefficients in $vname is $(ncoefficients(v)), but nr = $nr"
     end
 end
 macro checkncoeff(v, nr)
@@ -1357,9 +1357,7 @@ end
 
 function rotationprofile_radialderiv(r, ΔΩ_r, nr, Δr)
     ΔΩ = chop(chebyshevgrid_to_Fun(ΔΩ_r), 1e-3);
-    if ncoefficients(ΔΩ) > 2nr/3
-        @warn "ncoefficients(ΔΩ) = $(ncoefficients(ΔΩ))"
-    end
+    @checkncoeff ΔΩ nr
 
     ΔΩ_spl = Spline1D(r, ΔΩ_r);
     ddrΔΩ_r = derivative(ΔΩ_spl, r);
@@ -1368,13 +1366,9 @@ function rotationprofile_radialderiv(r, ΔΩ_r, nr, Δr)
     zchop!(d2dr2ΔΩ_r, 1e-10*(2/Δr)^2)
 
     ddrΔΩ = chop(chebyshevgrid_to_Fun(ddrΔΩ_r), 1e-2);
-    if ncoefficients(ddrΔΩ) > 2nr/3
-        @warn "ncoefficients(ddrΔΩ) = $(ncoefficients(ddrΔΩ))"
-    end
+    @checkncoeff ddrΔΩ nr
     d2dr2ΔΩ = chop(chebyshevgrid_to_Fun(d2dr2ΔΩ_r), 5e-2);
-    if ncoefficients(d2dr2ΔΩ) > 2nr/3
-        @warn "ncoefficients(d2dr2ΔΩ) = $(ncoefficients(d2dr2ΔΩ))"
-    end
+    @checkncoeff d2dr2ΔΩ nr
 
     (ΔΩ, ddrΔΩ, d2dr2ΔΩ)
 end
