@@ -4,6 +4,7 @@ using MKL
 
 using ApproxFun
 using ApproxFun: DomainSets
+using BandedMatrices
 using BlockArrays
 using BlockBandedMatrices
 using BitFlags
@@ -528,7 +529,7 @@ end
 # coefficients, and Bm are the Heinrichs ones
 αheinrichs(n) = n < 0 ? 0 : n == 0 ? 2 : 1
 function heinrichs_chebyshev_matrix(n)
-    M = zeros(n, n-2)
+    M = BandedMatrix(Zeros(n, n-2), (2, 2))
     Mo = indexedfromzero(M)
     for n in axes(Mo,1), m in intersect(n-2:2:n+2, axes(Mo,2))
         T = 0.0
@@ -545,13 +546,13 @@ function heinrichs_chebyshev_matrix(n)
 end
 
 function chebyshevneumann_chebyshev_matrix(n)
-    M = zeros(n-2, n)
+    M = BandedMatrix(Zeros(n, n-2), (2, 0))
     Mo = indexedfromzero(M)
-    for n in axes(Mo, 1)
+    for n in axes(Mo, 2)
         Mo[n, n] = 1
-        Mo[n, n+2] = -(n/(n+2))^2
+        Mo[n+2, n] = -(n/(n+2))^2
     end
-    permutedims(M)
+    M
 end
 
 deltafn(x, y; scale) = exp(-(x/scale-y/scale)^2/2)
