@@ -123,8 +123,6 @@ datadir(f) = joinpath(DATADIR[], f)
 γ⁺ℓm(ℓ, m) = ℓ * α⁺ℓm(ℓ, m)
 γ⁻ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ, m) - β⁻ℓm(ℓ, m)
 
-chebyshevnodes_lobatto(n) = [cos(pi*j/n) for j in n:-1:0]
-
 function chebyshevnodes(n, a = -1, b = 1)
     nodes = cos.(reverse(pi * ((1:n) .- 0.5) ./ n))
     nodes_scaled = nodes * (b - a) / 2 .+ (b + a) / 2
@@ -140,23 +138,6 @@ function chebyshev_forward_inverse(n, boundaries...)
     Tcfwd = Tcinv' * 2 / n # each row is one node
     Tcfwd[1, :] ./= 2
     r, Tcfwd, Tcinv
-end
-
-function chebyshev_lobatto_forward_inverse(n)
-    Tcinv = zeros(n+1, n+1)
-    Tcfwd = zeros(n+1, n+1)
-    Tcinvo = indexedfromzero(Tcinv)
-    Tcfwdo = indexedfromzero(Tcfwd)
-    for k in axes(Tcinvo, 2), j in axes(Tcinvo, 1)
-        Tcinvo[j, k] = cos(pi*j*k/n)
-    end
-    for j in axes(Tcfwdo, 2), k in axes(Tcfwdo, 1)
-        cj = j == 0 || j == n ? 2 : 1
-        ck = k == 0 || k == n ? 2 : 1
-        Tcfwdo[k, j] = 2/(n*cj*ck) * cos(pi*j*k/n)
-    end
-    # reverse the matrices, as we order the chebyshev nodes in increasing order
-    return reverse(Tcfwd, dims=2), reverse(Tcinv, dims=1)
 end
 
 chebyshevtransform(A::AbstractVector) = chebyshevtransform!(similar(A), A)
@@ -575,69 +556,6 @@ function deltafn_matrix(pts; scale)
     return δ
 end
 
-function Bℓ(ℓ, operators)
-    (; onebyr2) = operators.rad_terms
-
-    # Chebyshev Lobatto points, used in computing the Green function
-    (; r_chebyshev_lobatto) = operators.coordinates
-    (; ddrDDr_lobatto) = operators.diff_operator_matrices
-
-    Bℓ = ddrDDr_lobatto - ℓ * (ℓ + 1) * Diagonal(onebyr2.(r_chebyshev_lobatto))
-    Bℓ .*= Rsun^2
-    scale = maximum(abs, @view Bℓ[2:end-1, 2:end-1])
-    Bℓ ./= scale
-
-    # boundaries
-    Bℓ[1, :] .= 0
-    Bℓ[1, 1] = 1
-    Bℓ[end, :] .= 0
-    Bℓ[end, end] = 1
-
-    return Bℓ, scale
-end
-
-function greenfn_radial_lobatto(ℓ, operators)
-    (;  Δr) = operators.radial_params
-    (; r_lobatto) = operators.coordinates
-    (; deltafn_matrix_radial) = operators
-
-    B, scale = Bℓ(ℓ, operators)
-
-    H = B \ deltafn_matrix_radial
-    H .*= (Δr/2) / scale
-    # the Δr/2 factor is used to convert the subsequent integrals ∫H f dr to ∫(Δr/2)H f dx,
-    # where x = (r - rmid)/(Δr/2)
-    return H
-end
-
-struct UniformRotGfn end
-struct RadDiffRotGfn end
-struct ViscosityGfn end
-
-struct LobattoChebyshev
-    TfGL_nr :: Matrix{Float64}
-    TiGL_nr :: Matrix{Float64}
-    normr :: Vector{Float64}
-    temp1 :: Matrix{Float64}
-    temp2 :: Matrix{Float64}
-    function LobattoChebyshev(TfGL_nr, TiGL_nr, normr)
-        n_lobatto, nr = size(TiGL_nr)
-        temp1 = Matrix{Float64}(undef, n_lobatto, n_lobatto)
-        temp2 = Matrix{Float64}(undef, n_lobatto, nr)
-        new(TfGL_nr, TiGL_nr, normr, temp1, temp2)
-    end
-end
-function (L::LobattoChebyshev)(A::Matrix)
-    L.temp1 .= A .* L.normr'
-    mul!(L.temp2, L.temp1, L.TiGL_nr)
-    L.TfGL_nr * L.temp2
-end
-function lobattochebyshev!(out::Matrix, L::LobattoChebyshev, A::Matrix)
-    L.temp1 .= A .* L.normr'
-    mul!(L.temp2, L.temp1, L.TiGL_nr)
-    mul!(out, L.TfGL_nr, L.temp2)
-end
-
 splderiv(v::Vector, r::Vector, rout = r; nu = 1) = Dierckx.derivative(Spline1D(r, v), rout; nu = 1)
 
 smoothed_spline(r, v; s) = Spline1D(r, v, s = sum(abs2, v) * s)
@@ -740,6 +658,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     ddr = ApproxFun.Derivative() * (2 / Δr)
     rddr = (r_cheby * ddr)::Tmul
+    r2ddr = (r2_cheby * ddr)::Tmul
     d2dr2 = (ddr * ddr)::Tmul
     d3dr3 = (ddr * d2dr2)::Tmul
     d4dr4 = (d2dr2 * d2dr2)::Tmul
@@ -833,6 +752,8 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     onebyr2MCU4 = matCU4(onebyr2);
 
     ddrMCU4 = matCU4(ddr)
+    rMCU4 = matCU4(r_cheby)
+    r2ddrMCU4 = matCU4(r2ddr);
     ddr_minus_2byrMCU4 = @. ddrMCU4 - 2*onebyrMCU4
     d2dr2MCU2 = matCU2(d2dr2)
     d2dr2MCU4 = matCU4(d2dr2)
@@ -894,6 +815,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         onebyr2MCU4, ddr_S0_by_cp_by_r2MCU2, κ_by_r2MCU2,
         gMCU4, ηρ_by_rMCU4, ηρ2_by_r2MCU4, ηρ_by_r3MCU4,
         onebyr2_IplusrηρMCU4, onebyr4_chebyMCU4,
+        r2ddrMCU4, rMCU4,
     )
 
     (;
