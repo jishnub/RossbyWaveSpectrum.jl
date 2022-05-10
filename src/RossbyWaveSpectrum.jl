@@ -642,9 +642,9 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     radial_params = parameters(nr, nℓ; r_in, r_out);
     (; Δr, nchebyr, r_mid) = radial_params;
     r, Tcrfwd, Tcrinv = chebyshev_forward_inverse(nr, r_in, r_out);
+    Tcrinvc = complex.(Tcrinv)
     r_chebyshev = (r .- r_mid) ./ (Δr / 2);
 
-    Tcrfwdc, Tcrinvc = complex.(Tcrfwd), complex.(Tcrinv);
     pseudospectralop_radial = SpectralOperatorForm(Tcrfwd, Tcrinv);
 
     r_cheby = Fun(ApproxFun.Chebyshev(), [r_mid, Δr / 2]);
@@ -790,19 +790,21 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     identities = (; Ir, Iℓ, IU2)
     coordinates = (; r, r_chebyshev)
 
-    transforms = (; Tcrfwd, Tcrinv, Tcrfwdc, Tcrinvc, pseudospectralop_radial)
+    transforms = (; Tcrfwd, Tcrinv, Tcrinvc, pseudospectralop_radial)
 
-    rad_terms = (; onebyr, ηρ, ηT,
+    rad_terms = Dict{Symbol, TFun}();
+    @pack! rad_terms = onebyr, ηρ, ηT,
         onebyr2, onebyr3, onebyr4,
         ddr_lnρT, ddr_S0_by_cp, g, r_cheby, r2_cheby,
         ηρ_by_r, ηρ_by_r2, ηρ2_by_r2, ddr_ηρbyr, ddr_ηρbyr2, ηρ_by_r3,
         ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddr_S0_by_cp_by_r2,
-        ddrηρ_by_r, d2dr2ηρ_by_r)
+        ddrηρ_by_r, d2dr2ηρ_by_r
 
     diff_operators = (; DDr, DDr_minus_2byr, rDDr, rddr, ddrDDr, d2dr2DDr,
         ddr, d2dr2, d3dr3, d4dr4, r2d2dr2, ddr_plus_2byr)
 
-    operator_matrices = (; DDrMCU2,
+    operator_matrices = Dict{Symbol, Matrix{Float64}}();
+    @pack! operator_matrices = DDrMCU2,
         ddrMCU4, d2dr2MCU2, d2dr2MCU4,
         ddrDDrMCU4,
         ddr_minus_2byrMCU4, DDr_minus_2byrMCU2,
@@ -815,8 +817,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         onebyr2MCU4, ddr_S0_by_cp_by_r2MCU2, κ_by_r2MCU2,
         gMCU4, ηρ_by_rMCU4, ηρ2_by_r2MCU4, ηρ_by_r3MCU4,
         onebyr2_IplusrηρMCU4, onebyr4_chebyMCU4,
-        r2ddrMCU4, rMCU4,
-    )
+        r2ddrMCU4, rMCU4
 
     (;
         constants, rad_terms,
@@ -905,7 +906,7 @@ function mass_matrix!(B, m; operators, kw...)
     (; nr, nℓ) = operators.radial_params
     (; IU2) = operators.identities;
     (; nvariables) = operators.constants
-    (; ddrDDrMCU4, onebyr2MCU4) = operators.operator_matrices;
+    @unpack ddrDDrMCU4, onebyr2MCU4 = operators.operator_matrices;
 
     ℓs = range(m, length = nℓ)
 
@@ -944,11 +945,12 @@ end
 function uniform_rotation_matrix!(A::StructArray{<:Complex, 2}, m; operators, kw...)
     (; nvariables, Ω0, scalings) = operators.constants;
     (; nr, nℓ) = operators.radial_params
-    (; ddrMCU4, DDrMCU2, DDr_minus_2byrMCU2, ddrDDrMCU4, κ_∇r2_plus_ddr_lnρT_ddrMCU2,
-        onebyrMCU2, onebyrMCU4, onebyr2MCU4, ηρ_by_rMCU4, ddr_S0_by_cp_by_r2MCU2,
-        κ_by_r2MCU2, gMCU4, ddr_minus_2byrMCU4) = operators.operator_matrices;
     (; Sscaling, Wscaling) = scalings;
     (; IU2) = operators.identities;
+
+    @unpack ddrMCU4, DDrMCU2, DDr_minus_2byrMCU2, ddrDDrMCU4, κ_∇r2_plus_ddr_lnρT_ddrMCU2,
+        onebyrMCU2, onebyrMCU4, onebyr2MCU4, ηρ_by_rMCU4, ddr_S0_by_cp_by_r2MCU2,
+        κ_by_r2MCU2, gMCU4, ddr_minus_2byrMCU4 = operators.operator_matrices;
 
     A.re .= 0
     A.im .= 0
@@ -1018,15 +1020,15 @@ end
 function viscosity_terms!(A::StructArray{<:Complex, 2}, m; operators)
     (; nr, nℓ) = operators.radial_params;
 
-    (; ddrMCU4, d2dr2MCU2, d3dr3MCU4, onebyr2MCU2,
+    @unpack ddrMCU4, d2dr2MCU2, d3dr3MCU4, onebyr2MCU2,
         ηρ_ddr_minus_2byrMCU2, onebyr2_d2dr2MCU4,
         onebyr3_ddrMCU4, onebyr4_chebyMCU4, d4dr4MCU4, ηρ2_by_r2MCU4,
-        ηρ_by_r3MCU4) = operators.operator_matrices;
+        ηρ_by_r3MCU4 = operators.operator_matrices;
 
     (; ddr, d2dr2, d3dr3, DDr, ddrDDr, d2dr2DDr) = operators.diff_operators;
 
-    (; ddr_ηρbyr, ηρ, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddrηρ_by_r, d2dr2ηρ_by_r, ηρ_by_r,
-        ηρ_by_r2, ddr_ηρbyr2, onebyr2, onebyr) = operators.rad_terms;
+    @unpack ddr_ηρbyr, ηρ, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddrηρ_by_r, d2dr2ηρ_by_r, ηρ_by_r,
+        ηρ_by_r2, ddr_ηρbyr2, onebyr2, onebyr = operators.rad_terms;
 
     (; ν, nvariables) = operators.constants;
     (; matCU4, matCU2) = operators;
@@ -1173,14 +1175,16 @@ end
 
 function constant_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
         operators, ΔΩ_by_Ω0 = 0.02, kw...)
+
     (; nr, nℓ) = operators.radial_params;
     (; nvariables, scalings) = operators.constants
-    (; ddrMCU4, DDrMCU2, onebyrMCU2, onebyrMCU4,
-            DDr_minus_2byrMCU2, ηρ_by_rMCU4, ddrDDrMCU4,
-            onebyr2MCU4) = operators.operator_matrices;
     (; IU2) = operators.identities;
-
     (; Wscaling) = scalings
+
+    @unpack ddrMCU4, DDrMCU2, onebyrMCU2, onebyrMCU4,
+            DDr_minus_2byrMCU2, ηρ_by_rMCU4, ddrDDrMCU4,
+            onebyr2MCU4 = operators.operator_matrices;
+
 
     VV = matrix_block(M.re, 1, 1, nvariables)
     VW = matrix_block(M.re, 1, 2, nvariables)
@@ -1338,8 +1342,8 @@ function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
     (; nr, nℓ) = operators.radial_params
     (; nvariables, scalings) = operators.constants;
     (; DDr, ddr, ddrDDr) = operators.diff_operators;
-    (; ddrMCU4) = operators.operator_matrices;
-    (; onebyr, g, ηρ_by_r, onebyr2) = operators.rad_terms;
+    @unpack ddrMCU4 = operators.operator_matrices;
+    @unpack onebyr, g, ηρ_by_r, onebyr2 = operators.rad_terms;
     (; Sscaling, Wscaling) = scalings;
     (; matCU4, matCU2) = operators;
 
@@ -2331,8 +2335,7 @@ end
 
 function eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
     VWS = eigenfunction_cheby_ℓm_spectrum!(F, v, operators)
-    (; transforms) = operators
-    (; Tcrinvc) = transforms
+    (; Tcrinvc) = operators.transforms;
     (; V, W, S) = VWS
 
     Vinv = VWSinvsh.V
@@ -2396,7 +2399,7 @@ end
 
 function eigenfunction_realspace(v, m, operators)
     (; nr, nℓ) = operators.radial_params
-    θ = spharm_θ_grid_uniform(m, nℓ).θ
+    (; θ) = spharm_θ_grid_uniform(m, nℓ)
     nθ = length(θ)
 
     (; VWSinv, VWSinvsh, F) = allocate_field_caches(nr, nθ, nℓ)

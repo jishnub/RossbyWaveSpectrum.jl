@@ -11,6 +11,7 @@ using FastGaussQuadrature
 import ApproxFun
 using DelimitedFiles
 using PerformanceTestTools
+using UnPack
 
 @testset "project quality" begin
     Aqua.test_all(RossbyWaveSpectrum,
@@ -32,8 +33,8 @@ end
             (; sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
                 sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ,
                 sT, sηT) = operators.splines;
-            (; ηρ, ddr_ηρbyr, ddr_ηρbyr2,
-                ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ) = operators.rad_terms;
+            @unpack ηρ, ddr_ηρbyr, ddr_ηρbyr2,
+                ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ = operators.rad_terms;
 
             @test sηρ.(r) ≈ ηρ.(r_chebyshev) rtol=1e-2
             @test ddrsηρ.(r) ≈ ddr_ηρ.(r_chebyshev) rtol=1e-2
@@ -49,8 +50,8 @@ end
             (; sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
                 sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ,
                 sT, sηT) = operators.splines;
-            (; ηρ, ddr_ηρbyr, ddr_ηρbyr2,
-                ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ) = operators.rad_terms;
+            @unpack ηρ, ddr_ηρbyr, ddr_ηρbyr2,
+                ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ = operators.rad_terms;
 
             @test sηρ.(r) ≈ ηρ.(r_chebyshev) rtol=1e-2
             @test ddrsηρ.(r) ≈ ddr_ηρ.(r_chebyshev) rtol=1e-2
@@ -97,10 +98,6 @@ const P11norm = -2/√3
 
 @testset "chebyshev" begin
     n = 10
-    Tcf, Tci = RossbyWaveSpectrum.chebyshev_lobatto_forward_inverse(n)
-    @test Tcf * Tci ≈ Tci * Tcf ≈ I
-    r_chebyshev = RossbyWaveSpectrum.chebyshevnodes_lobatto(n)
-    @test Tcf * r_chebyshev ≈ [0; 1; zeros(length(r_chebyshev)-2)]
 
     r_chebyshev, Tcf, Tci = RossbyWaveSpectrum.chebyshev_forward_inverse(n)
     @test Tcf * Tci ≈ Tci * Tcf ≈ I
@@ -863,9 +860,8 @@ end
         (; Tcrfwd) = transforms;
         (; Iℓ) = identities;
         (; ddr, d2dr2, DDr) = diff_operators;
-        (; onebyr, onebyr2, r2_cheby, r_cheby, ηρ) = rad_terms;
+        @unpack onebyr, onebyr2, r2_cheby, r_cheby, ηρ = rad_terms;
         (; r_in, r_out) = operators.radial_params;
-        # (; mat) = operators;
         chebyfwdnr(f, scalefactor = 5) = chebyfwd(f, r_in, r_out, nr, scalefactor)
 
         ℓ = 2
