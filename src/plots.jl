@@ -41,7 +41,7 @@ function plot_rossby_ridges(mr; ax = gca(), ΔΩ_by_Ω = 0, ridgescalefactor = n
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
             zorder = 0,
-            ls = get(kw, :sectoral_rossby_ridge_ls, "solid")
+            ls = get(kw, :sectoral_rossby_ridge_scaled_ls, "dotted")
         )
     end
 

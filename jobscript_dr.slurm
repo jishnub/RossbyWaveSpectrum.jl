@@ -4,7 +4,6 @@
 #SBATCH --nodes=1
 #SBATCH -C dalma
 #SBATCH --ntasks=20
-#SBATCH --mem-per-cpu=8G
 
 cd $SCRATCH/jobs
 julia="$HOME/.local/bin/julia"

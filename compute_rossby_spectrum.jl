@@ -1,8 +1,8 @@
 @time using RossbyWaveSpectrum
 using LinearAlgebra
 
-nr = 60;
-nℓ = 50;
+nr = 50;
+nℓ = 30;
 mrange = 1:20;
 
 # test

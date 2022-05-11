@@ -357,30 +357,32 @@ function constraintmatrix(operators; entropy_outer_boundary = :neumann)
 
     ZMVn = nullspace(MVn)
 
-    # constraints on W, Dirichlet
-    for n = 0:nr-1
-        # inner boundary
-        # impenetrable, stress-free
-        # equivalently, zero Dirichlet
-        MWno[1, n] = (-1)^n
-        # outer boundary
-        # impenetrable, stress-free
-        # equivalently, zero Dirichlet
-        MWno[2, n] = 1
-    end
+    # # constraints on W, Dirichlet
+    # for n = 0:nr-1
+    #     # inner boundary
+    #     # impenetrable, stress-free
+    #     # equivalently, zero Dirichlet
+    #     MWno[1, n] = (-1)^n
+    #     # outer boundary
+    #     # impenetrable, stress-free
+    #     # equivalently, zero Dirichlet
+    #     MWno[2, n] = 1
+    # end
 
-    ZMWn = nullspace(MWn)
+    # ZMWn = nullspace(MWn);
+    ZMWn = dirichlet_chebyshev_matrix(nr);
 
-    # constraints on S
-    # zero Neumann
-    for n = 0:nr-1
-        # inner boundary
-        MSno[1, n] = (-1)^n*n^2
-        # outer boundary
-        MSno[2, n] = n^2
-    end
+    # # constraints on S
+    # # zero Neumann
+    # for n = 0:nr-1
+    #     # inner boundary
+    #     MSno[1, n] = (-1)^n*n^2
+    #     # outer boundary
+    #     MSno[2, n] = n^2
+    # end
 
-    ZMSn = nullspace(MSn)
+    # ZMSn = nullspace(MSn)
+    ZMSn = neumann_chebyshev_matrix(nr);
 
     # BC = zeros(nvariables * nconstraints, nvariables * nparams);
     rowsB = Fill(nradconstraints, nℓ)
@@ -509,7 +511,7 @@ end
 # converts from Heinrichs basis to Chebyshev, so Cn = Anm Bm where Cn are the Chebyshev
 # coefficients, and Bm are the Heinrichs ones
 αheinrichs(n) = n < 0 ? 0 : n == 0 ? 2 : 1
-function heinrichs_chebyshev_matrix(n)
+function dirichlet_chebyshev_matrix(n)
     M = BandedMatrix(Zeros(n, n-2), (2, 2))
     Mo = indexedfromzero(M)
     for n in axes(Mo,1), m in intersect(n-2:2:n+2, axes(Mo,2))
@@ -526,14 +528,19 @@ function heinrichs_chebyshev_matrix(n)
     return M
 end
 
-function chebyshevneumann_chebyshev_matrix(n)
+n2coeff_neumann(n) = -(n/(n+2))^2
+function neumann_chebyshev_matrix(n)
     M = BandedMatrix(Zeros(n, n-2), (2, 0))
     Mo = indexedfromzero(M)
     for n in axes(Mo, 2)
         Mo[n, n] = 1
-        Mo[n+2, n] = -(n/(n+2))^2
+        Mo[n+2, n] = n2coeff_neumann(n)
     end
     M
+end
+
+function r2neumann_chebyshev_matrix(n, radial_params)
+    M = BandedMatrix(Zeros(n, n-2), (2, 2))
 end
 
 deltafn(x, y; scale) = exp(-(x/scale-y/scale)^2/2)
@@ -1912,16 +1919,18 @@ function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = 1e-
     Wpow = sum(abs2, @view v[nparams .+ (1:nparams)])
     Spow = nvariables == 3 ? sum(abs2, @view(v[2nparams .+ (1:nparams)])) : 0.0
 
+    maxpow = max(Vpow, Wpow, Spow)
+
     filterfields = typeof(coll.V)[]
 
-    if Spow/max(Vpow, Wpow) > filterfieldpowercutoff
+    if Spow/maxpow > filterfieldpowercutoff
         push!(filterfields, coll.S)
     end
-    if Vpow/max(Vpow, Wpow) > filterfieldpowercutoff
+    if Vpow/maxpow > filterfieldpowercutoff
         push!(filterfields, coll.V)
     end
 
-    if Wpow/max(Vpow, Wpow) > filterfieldpowercutoff
+    if Wpow/maxpow > filterfieldpowercutoff
         push!(filterfields, coll.W)
     end
     return filterfields
@@ -2223,13 +2232,20 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     (; nr, nℓ, nparams) = operators.radial_params
     (; nvariables) = operators.constants
     ABs = [(allocate_operator_matrix(operators), allocate_mass_matrix(operators)) for _ in 1:Threads.nthreads()]
+    nthreads = Threads.nthreads();
+    c = Channel(nthreads);
+    for el in ABs
+        put!(c, el)
+    end
 
     λv = @maybe_reduce_blas_threads(Threads.nthreads(),
         Folds.map(zip(λs, vs, mr)) do (λm, vm, m)
-            A, B = ABs[Threads.threadid()]
+            A, B = take!(c)
             matrixfn!(A, m; operators)
             mass_matrix!(B, m; operators)
-            filter_eigenvalues(λm, vm, (A,B), m; operators, constraints, kw...)
+            Y = filter_eigenvalues(λm, vm, (A,B), m; operators, constraints, kw...)
+            put!(c, (A, B))
+            Y
         end
     )
     first.(λv), last.(λv)

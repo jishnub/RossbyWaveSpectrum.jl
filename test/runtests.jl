@@ -73,8 +73,8 @@ d4f(f) = df(d3f(f))
 d4f(f, r) = df(d3f(f))(r)
 
 # define an alias to avoid clashes in the REPL with Chebyshev from ApproxFun
-const ChebyshevT = SpecialPolynomials.Chebyshev
-chebyshevT(n) = n < 0 ? ChebyshevT([0.0]) : ChebyshevT([zeros(n); 1])
+const _ChebyshevT = SpecialPolynomials.Chebyshev
+chebyshevT(n) = n < 0 ? _ChebyshevT([0.0]) : _ChebyshevT([zeros(n); 1])
 chebyshevT(n, x) = chebyshevT(n)(x)
 chebyshevU(n) = n < 0 ? SpecialPolynomials.ChebyshevU([0.0]) : SpecialPolynomials.ChebyshevU([zeros(n); 1])
 chebyshevU(n, x) = chebyshevU(n)(x)
@@ -102,6 +102,40 @@ const P11norm = -2/√3
     r_chebyshev, Tcf, Tci = RossbyWaveSpectrum.chebyshev_forward_inverse(n)
     @test Tcf * Tci ≈ Tci * Tcf ≈ I
     @test Tcf * r_chebyshev ≈ [0; 1; zeros(length(r_chebyshev)-2)]
+
+    @testset "boundary conditions basis" begin
+        @testset for n = [5, 10, 15]
+            @testset "W" begin
+                MW = RossbyWaveSpectrum.dirichlet_chebyshev_matrix(n)'
+                @testset for i in 1:size(MW, 1)
+                    p = SpecialPolynomials.Chebyshev(MW[i, :])
+                    @test p(-1) ≈ 0 atol=1e-14
+                    @test p(1) ≈ 0 atol=1e-14
+                end
+            end
+            @testset "S" begin
+                MS = RossbyWaveSpectrum.neumann_chebyshev_matrix(n)'
+                @testset for i in 1:size(MS, 1)
+                    p = SpecialPolynomials.Chebyshev(MS[i, :])
+                    @test df(p, -1) ≈ 0 atol=1e-12
+                    @test df(p, 1) ≈ 0 atol=1e-12
+                end
+            end
+            # @testset "V" begin
+            #     radial_params = RossbyWaveSpectrum.parameters(2, 2)
+            #     MV = RossbyWaveSpectrum.r2neumann_chebyshev_matrix(n, radial_params)'
+            #     (; Δr, r_mid) = radial_params
+            #     r = x -> r_mid + (Δr/2)*x
+            #     @testset for i in 1:size(MV, 1)-4
+            #         p = SpecialPolynomials.Chebyshev(MV[i, :])
+            #         pbyr² = x -> p(x) / r(x)^2
+            #         ddx_pbyr² = df(pbyr²)
+            #         @test ddx_pbyr²(-1) ≈ 0 atol=1e-12
+            #         @test ddx_pbyr²(1) ≈ 0 atol=1e-12
+            #     end
+            # end
+        end
+    end
 end
 
 @testset "read solar model" begin
