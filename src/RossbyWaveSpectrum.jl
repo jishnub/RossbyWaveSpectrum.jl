@@ -330,8 +330,9 @@ function associatedlegendretransform_matrices(nℓ, m)
     associatedlegendretransform_matrices(nℓ, m, costheta, w)
 end
 
-function constraintmatrix(operators; entropy_outer_boundary = :neumann)
-    (; nr, r_in, r_out, nℓ, Δr, nparams) = operators.radial_params
+function constraintmatrix(operators; V_basis = 1, W_basis = 1, S_basis = 1)
+    (; radial_params) = operators
+    (; nr, r_in, r_out, nℓ, Δr, nparams) = radial_params
     (; nvariables) = operators.constants
 
     nradconstraints = 2;
@@ -355,34 +356,32 @@ function constraintmatrix(operators; entropy_outer_boundary = :neumann)
         MVno[2, n] = n^2 - Δr / r_out
     end
 
-    ZMVn = nullspace(MVn)
+    ZMVn = V_basis == 1 ? nullspace(MVn) : r2neumann_chebyshev_matrix(nr, radial_params);
 
     # # constraints on W, Dirichlet
-    # for n = 0:nr-1
-    #     # inner boundary
-    #     # impenetrable, stress-free
-    #     # equivalently, zero Dirichlet
-    #     MWno[1, n] = (-1)^n
-    #     # outer boundary
-    #     # impenetrable, stress-free
-    #     # equivalently, zero Dirichlet
-    #     MWno[2, n] = 1
-    # end
+    for n = 0:nr-1
+        # inner boundary
+        # impenetrable, stress-free
+        # equivalently, zero Dirichlet
+        MWno[1, n] = (-1)^n
+        # outer boundary
+        # impenetrable, stress-free
+        # equivalently, zero Dirichlet
+        MWno[2, n] = 1
+    end
 
-    # ZMWn = nullspace(MWn);
-    ZMWn = dirichlet_chebyshev_matrix(nr);
+    ZMWn = W_basis == 1 ? nullspace(MWn) : dirichlet_chebyshev_matrix(nr);
 
-    # # constraints on S
-    # # zero Neumann
-    # for n = 0:nr-1
-    #     # inner boundary
-    #     MSno[1, n] = (-1)^n*n^2
-    #     # outer boundary
-    #     MSno[2, n] = n^2
-    # end
+    # constraints on S
+    # zero Neumann
+    for n = 0:nr-1
+        # inner boundary
+        MSno[1, n] = (-1)^n*n^2
+        # outer boundary
+        MSno[2, n] = n^2
+    end
 
-    # ZMSn = nullspace(MSn)
-    ZMSn = neumann_chebyshev_matrix(nr);
+    ZMSn = S_basis == 1 ? nullspace(MSn) : ZMSn = neumann_chebyshev_matrix(nr);
 
     # BC = zeros(nvariables * nconstraints, nvariables * nparams);
     rowsB = Fill(nradconstraints, nℓ)
@@ -539,8 +538,32 @@ function neumann_chebyshev_matrix(n)
     M
 end
 
-function r2neumann_chebyshev_matrix(n, radial_params)
-    M = BandedMatrix(Zeros(n, n-2), (2, 2))
+function r2neumann_chebyshev_matrix(ncheby, radial_params)
+    (; Δr, r_mid) = radial_params
+    M = BandedMatrix(Zeros(ncheby, ncheby-2), (4, 2))
+    Mo = indexedfromzero(M)
+
+    T0 = 1/2*(Δr/2)^2 + r_mid^2
+    T1 = r_mid * (Δr/2)
+    T2 = 1/4*(Δr/2)^2
+    C = OffsetArray([T2, T1, T0, T1, T2] ./ Rsun^2, -2:2)
+
+    # B1
+    Mo[0, 0] = C[0]
+    @views @. Mo[1:2, 0] = 2C[1:2]
+    # B2
+    @views @. Mo[0:3, 1] = C[-1:2]
+    Mo[1, 1] += C[2]
+    @views @. Mo[1:5, 1] -= C[-2:2]/3
+
+    # B3 onwards
+    for n in 2:last(axes(Mo,2))
+        colv = @view Mo[n-2:2:n+2, n]
+        colv[1] = 1/(n-1)
+        colv[2] = -(1/(n-1) + 1/(n+1))
+        colv[3] = 1/(n+1)
+    end
+    return M
 end
 
 deltafn(x, y; scale) = exp(-(x/scale-y/scale)^2/2)
@@ -1718,7 +1741,7 @@ function compute_constrained_matrix(A::AbstractMatrix{<:Complex}, constraints,
         cache = constrained_matmul_cache(constraints))
 
     (; A_constrained) = cache
-    compute_constrained_matrix!(A_constrained, constraints, A)
+    compute_constrained_matrix!(A_constrained, constraints, computesparse(A))
     return A_constrained
 end
 
@@ -1726,40 +1749,8 @@ function compute_constrained_matrix(B::AbstractMatrix{<:Real}, constraints,
         cache = constrained_matmul_cache(constraints))
 
     (; B_constrained) = cache
-    compute_constrained_matrix!(B_constrained, constraints, B)
+    compute_constrained_matrix!(B_constrained, constraints, computesparse(B))
     return B_constrained
-end
-
-function compute_matrix_scales(M, nvariables)
-    blockscalesreal = ones(nvariables, nvariables)
-
-    Mrmax = zeros(nvariables, nvariables)
-    for colind in 1:nvariables, rowind in 1:nvariables
-        Mv = matrix_block(M, rowind, colind, nvariables)
-        Mrmax_i = maximum(abs∘real, Mv)
-        Mrmax[rowind, colind] = Mrmax_i
-    end
-    VW_WV_min, VW_WV_max = minmax(Mrmax[1, 2], Mrmax[2, 1])
-    Wscale = sqrt(VW_WV_max / VW_WV_min)
-    if Mrmax[1, 2] == VW_WV_max
-        blockscalesreal[1, 2] = 1/Wscale
-        blockscalesreal[2, 1] = Wscale
-    else
-        blockscalesreal[1, 2] = Wscale
-        blockscalesreal[2, 1] = 1/Wscale
-    end
-
-    SW_WS_min, SW_WS_max = minmax(Mrmax[3, 2], Mrmax[2, 3])
-    Sscale = sqrt(SW_WS_max / SW_WS_min)
-    if Mrmax[2, 3] == SW_WS_max
-        blockscalesreal[2, 3] = 1/Sscale
-        blockscalesreal[3, 2] = Sscale
-    else
-        blockscalesreal[2, 3] = Sscale
-        blockscalesreal[3, 2] = 1/Sscale
-    end
-
-    (; Wscaling = blockscalesreal[2, 1], Sscaling = blockscalesreal[3, 1])
 end
 
 function balance_matrix!(M, nvariables, scales)

@@ -104,38 +104,43 @@ const P11norm = -2/√3
     @test Tcf * r_chebyshev ≈ [0; 1; zeros(length(r_chebyshev)-2)]
 
     @testset "boundary conditions basis" begin
-        @testset for n = [5, 10, 15]
-            @testset "W" begin
-                MW = RossbyWaveSpectrum.dirichlet_chebyshev_matrix(n)'
-                @testset for i in 1:size(MW, 1)
-                    p = SpecialPolynomials.Chebyshev(MW[i, :])
-                    @test p(-1) ≈ 0 atol=1e-14
-                    @test p(1) ≈ 0 atol=1e-14
-                end
+        @testset "W" begin
+            MW = RossbyWaveSpectrum.dirichlet_chebyshev_matrix(n)'
+            @testset for i in 1:size(MW, 1)
+                p = SpecialPolynomials.Chebyshev(MW[i, :])
+                @test p(-1) ≈ 0 atol=1e-14
+                @test p(1) ≈ 0 atol=1e-14
             end
-            @testset "S" begin
-                MS = RossbyWaveSpectrum.neumann_chebyshev_matrix(n)'
-                @testset for i in 1:size(MS, 1)
-                    p = SpecialPolynomials.Chebyshev(MS[i, :])
-                    @test df(p, -1) ≈ 0 atol=1e-12
-                    @test df(p, 1) ≈ 0 atol=1e-12
-                end
+        end
+        @testset "S" begin
+            MS = RossbyWaveSpectrum.neumann_chebyshev_matrix(n)'
+            @testset for i in 1:size(MS, 1)
+                p = SpecialPolynomials.Chebyshev(MS[i, :])
+                @test df(p, -1) ≈ 0 atol=1e-12
+                @test df(p, 1) ≈ 0 atol=1e-12
             end
-            # @testset "V" begin
-            #     radial_params = RossbyWaveSpectrum.parameters(2, 2)
-            #     MV = RossbyWaveSpectrum.r2neumann_chebyshev_matrix(n, radial_params)'
-            #     (; Δr, r_mid) = radial_params
-            #     r = x -> r_mid + (Δr/2)*x
-            #     @testset for i in 1:size(MV, 1)-4
-            #         p = SpecialPolynomials.Chebyshev(MV[i, :])
-            #         pbyr² = x -> p(x) / r(x)^2
-            #         ddx_pbyr² = df(pbyr²)
-            #         @test ddx_pbyr²(-1) ≈ 0 atol=1e-12
-            #         @test ddx_pbyr²(1) ≈ 0 atol=1e-12
-            #     end
-            # end
+        end
+        @testset "V" begin
+            radial_params = RossbyWaveSpectrum.parameters(2, 2)
+            MV = RossbyWaveSpectrum.r2neumann_chebyshev_matrix(n, radial_params)'
+            (; Δr, r_mid) = radial_params
+            r = x -> r_mid + (Δr/2)*x
+            @testset for i in 1:size(MV, 1)
+                p = SpecialPolynomials.Chebyshev(MV[i, :])
+                pbyr² = x -> p(x) / r(x)^2
+                ddx_pbyr² = df(pbyr²)
+                @test ddx_pbyr²(-1) ≈ 0 atol=1e-12
+                @test ddx_pbyr²(1) ≈ 0 atol=1e-12
+            end
         end
     end
+end
+
+@testset "constraints" begin
+    nr, nℓ = 50, 30
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.5, r_out_frac = 0.985)
+    constraints = RossbyWaveSpectrum.constraintmatrix(operators);
+    @test maximum(abs, constraints.BC * constraints.ZC) < 1e-10
 end
 
 @testset "read solar model" begin
