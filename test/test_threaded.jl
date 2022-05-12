@@ -25,7 +25,8 @@ using Folds
     λs, vs = RossbyWaveSpectrum.filter_eigenvalues(RossbyWaveSpectrum.uniform_rotation_spectrum!,
             mr; operators, constraints);
 
-    for (ind, m) in enumerate(mr)
+    Threads.@threads for ind in eachindex(mr)
+        m = mr[ind]
         λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints);
         λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m; operators, constraints);
 

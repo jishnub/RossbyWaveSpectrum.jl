@@ -7,6 +7,7 @@ using SimpleDelimitedFiles
 using JLD2
 using Printf
 using LinearAlgebra
+using UnPack
 
 plotdir = joinpath(dirname(dirname(@__DIR__)), "plots")
 ticker = pyimport("matplotlib.ticker")
@@ -143,12 +144,12 @@ end
 
 function differential_rotation_spectrum(lam_rad, lam_solar, mr = axes(lam_rad, 1); operators, kw...)
     f, axlist = subplots(2, 2)
-    (; r) = operators.coordinates
+    @unpack r = operators.coordinates
     r_frac = r ./ Rsun
 
     m = 1
     ntheta = RossbyWaveSpectrum.ntheta_ℓmax(nℓ, m)
-    (; thetaGL) = RossbyWaveSpectrum.gausslegendre_theta_grid(ntheta)
+    @unpack thetaGL = RossbyWaveSpectrum.gausslegendre_theta_grid(ntheta)
     ΔΩ_r, _ = RossbyWaveSpectrum.radial_differential_rotation_profile(operators, thetaGL, :solar_equator)
     axlist[1, 1].plot(r_frac, ΔΩ_r / 2pi * 1e9, color = "black")
     axlist[1, 1].set_ylabel(L"\Delta\Omega/2\pi" * " [nHz]")
@@ -195,8 +196,8 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators;
     if scale != 0
         Vr ./= scale
     end
-    (; coordinates) = operators
-    (; r) = coordinates
+    @unpack coordinates = operators
+    @unpack r = coordinates
     r_frac = r ./ Rsun
     nθ = length(θ)
     equator_ind = nθ÷2
@@ -415,12 +416,12 @@ function plot_matrix_block(M, rowind, colind, nr, ℓind, ℓ′ind, nfields = 3
 end
 
 function plot_diffrot_radial(operators, smoothing_param = 1e-5)
-    (; nℓ, r_out) = operators.radial_params
-    (; r) = operators.coordinates
+    @unpack nℓ, r_out = operators.radial_params
+    @unpack r = operators.coordinates
     # arbitrary theta values for the radial profile
     m = 2
     ntheta = RossbyWaveSpectrum.ntheta_ℓmax(nℓ, m)
-    (; thetaGL) = RossbyWaveSpectrum.gausslegendre_theta_grid(ntheta)
+    @unpack thetaGL = RossbyWaveSpectrum.gausslegendre_theta_grid(ntheta)
     ΔΩ_r = RossbyWaveSpectrum.radial_differential_rotation_profile(operators, thetaGL, :solar_equator; smoothing_param)
     ΔΩ_spl = Spline1D(r, ΔΩ_r)
     drΔΩ_real = derivative(ΔΩ_spl, r)

@@ -29,10 +29,9 @@ end
         nr, nℓ = 50, 25
         @testset "shallow" begin
             operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-            (; r, r_chebyshev) = operators.coordinates;
-            (; sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
-                sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ,
-                sT, sηT) = operators.splines;
+            @unpack r, r_chebyshev = operators.coordinates;
+            @unpack sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
+                sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ, sT, sηT = operators.splines;
             @unpack ηρ, ddr_ηρbyr, ddr_ηρbyr2,
                 ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ = operators.rad_terms;
 
@@ -46,10 +45,9 @@ end
 
         @testset "deep" begin
             operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.5);
-            (; r, r_chebyshev) = operators.coordinates;
-            (; sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
-                sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ,
-                sT, sηT) = operators.splines;
+            @unpack r, r_chebyshev = operators.coordinates;
+            @unpack sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
+                sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ, sT, sηT = operators.splines;
             @unpack ηρ, ddr_ηρbyr, ddr_ηρbyr2,
                 ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ = operators.rad_terms;
 
@@ -123,7 +121,7 @@ const P11norm = -2/√3
         @testset "V" begin
             radial_params = RossbyWaveSpectrum.parameters(2, 2)
             MV = RossbyWaveSpectrum.r2neumann_chebyshev_matrix(n, radial_params)'
-            (; Δr, r_mid) = radial_params
+            @unpack Δr, r_mid = radial_params
             r = x -> r_mid + (Δr/2)*x
             @testset for i in 1:size(MV, 1)
                 p = SpecialPolynomials.Chebyshev(MV[i, :])
@@ -148,10 +146,10 @@ end
     r_out_frac = 0.985
     r_in = r_in_frac * Rsun
     r_out = r_out_frac * Rsun
-    (; sρ, sT, sg, sηρ, sηT) = RossbyWaveSpectrum.read_solar_model(; r_in, r_out).splines;
+    @unpack sρ, sT, sg, sηρ, sηT = RossbyWaveSpectrum.read_solar_model(; r_in, r_out).splines;
 
     operators = RossbyWaveSpectrum.radial_operators(50, 2; r_in_frac, r_out_frac);
-    (; r, r_chebyshev) = operators.coordinates;
+    @unpack r, r_chebyshev = operators.coordinates;
 
     ModelS = readdlm(joinpath(@__DIR__,"../src", "ModelS.detailed"))
     r_modelS = @view ModelS[:, 1];
@@ -173,8 +171,8 @@ end
 #     nparams = nr * nℓ
 #     m = 1
 #     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-#     (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators;
-#     (; r, r_chebyshev) = coordinates;
+#     @unpack transforms, diff_operators, rad_terms, coordinates, radial_params, identities = operators;
+#     @unpack r, r_chebyshev = coordinates;
 #     (; nvariables, ν, Ω0) = operators.constants;
 #     r_mid = radial_params.r_mid::Float64;
 #     Δr = radial_params.Δr::Float64;
@@ -182,9 +180,9 @@ end
 #     b = -r_mid / (Δr / 2);
 #     r̄(r) = clamp(a * r + b, -1.0, 1.0);
 
-#     (; Tcrfwd) = operators.transforms;
+#     @unpack Tcrfwd = operators.transforms;
 
-#     (; ddr, d2dr2, DDr) = operators.diff_operators;
+#     @unpack ddr, d2dr2, DDr = operators.diff_operators;
 
 #     (; DDrM, onebyr2M, ddrM, onebyrM, gM,
 #         κ_∇r2_plus_ddr_lnρT_ddrM, onebyr2_ddr_S0_by_cpM,
@@ -193,10 +191,10 @@ end
 #     (; onebyr, onebyr2, r2_cheby, r_cheby, ηρ, ηT,
 #             g_cheby, ddr_lnρT, ddr_S0_by_cp) = operators.rad_terms;
 
-#     (; r_in, r_out, nchebyr) = operators.radial_params;
+#     @unpack r_in, r_out, nchebyr = operators.radial_params;
 
-#     (; mat) = operators;
-#     (; Wscaling, Sscaling) = operators.constants.scalings;
+#     @unpack mat = operators;
+#     @unpack Wscaling, Sscaling = operators.constants.scalings;
 
 #     @test isapprox(onebyr(-1), 1/r_in, rtol=1e-4)
 #     @test isapprox(onebyr(1), 1/r_out, rtol=1e-4)
@@ -406,20 +404,20 @@ end
 #     nparams = nr * nℓ
 #     m = 1
 #     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-#     (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators;
-#     (; r, r_chebyshev) = coordinates;
-#     (; nvariables, ν) = operators.constants;
+#     @unpack transforms, diff_operators, rad_terms, coordinates, radial_params, identities = operators;
+#     @unpack r, r_chebyshev = coordinates;
+#     @unpack nvariables, ν = operators.constants;
 #     r_mid = radial_params.r_mid::Float64;
 #     Δr = radial_params.Δr::Float64;
 #     a = 1 / (Δr / 2);
 #     b = -r_mid / (Δr / 2);
 #     r̄(r) = clamp(a * r + b, -1.0, 1.0);
-#     (; Tcrfwd) = transforms;
-#     (; Iℓ) = identities;
-#     (; ddr, d2dr2, DDr) = diff_operators;
+#     @unpack Tcrfwd = transforms;
+#     @unpack Iℓ = identities;
+#     @unpack ddr, d2dr2, DDr = diff_operators;
 #     (; onebyr, onebyr2, r2_cheby, r_cheby, ηρ, ηρ_by_r, ηρ_by_r2, ηρ2_by_r2) = rad_terms;
-#     (; r_in, r_out) = operators.radial_params;
-#     (; mat) = operators;
+#     @unpack r_in, r_out = operators.radial_params;
+#     @unpack mat = operators;
 
 #     chebyfwdnr(f, scalefactor = 5) = chebyfwd(f, r_in, r_out, nr, scalefactor)
 
@@ -686,7 +684,7 @@ end
     nr, nℓ = 50, 2
     m = 5
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-    (; nvariables) = operators.constants;
+    @unpack nvariables = operators.constants;
     M1 = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators);
     operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
     M2 = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators = operators2);
@@ -750,8 +748,8 @@ end
     end
 end
 
-function rossby_ridge_eignorm(λ, v, (A, B), m, nparams; ΔΩ_by_Ω = 0)
-    matchind = argmin(abs.(real(λ) .- RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_by_Ω)))
+function rossby_ridge_eignorm(λ, v, (A, B), m, nparams; ΔΩ_frac = 0)
+    matchind = argmin(abs.(real(λ) .- RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_frac)))
     vi = v[:, matchind];
     λi = λ[matchind]
     normsden = [norm(λi * @view(vi[i*nparams .+ (1:nparams)])) for i in 0:2]
@@ -764,8 +762,8 @@ end
     nparams = nr * nℓ
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
     constraints = RossbyWaveSpectrum.constraintmatrix(operators);
-    (; r_in, r_out, Δr) = operators.radial_params
-    (; BC) = constraints;
+    @unpack r_in, r_out, Δr = operators.radial_params
+    @unpack BC = constraints;
     @testset for m in [1, 10, 20]
         λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints);
         λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
@@ -782,7 +780,7 @@ end
             #     vi = vuf[:, ind];
             #     (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(vi, m, operators);
             #     nθ = length(θ)
-            #     (; V) = VWSinv;
+            #     @unpack V = VWSinv;
             #     Vr = real(V);
             #     equator_ind = argmin(abs.(θ .- pi/2))
             #     Δθ_scan = div(nθ, 5)
@@ -851,7 +849,7 @@ end
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
     Mu = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators);
     Mc = RossbyWaveSpectrum.differential_rotation_matrix(m;
-            rotation_profile = :constant, operators, ΔΩ_by_Ω0 = 0);
+            rotation_profile = :constant, operators, ΔΩ_frac = 0);
     @test Mu.re ≈ Mc.re
     @test Mu.im ≈ Mu.im
 end
@@ -860,7 +858,7 @@ end
     @testset "compare with constant" begin
         nr, nℓ = 30, 2
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-        (; nvariables) = operators.constants;
+        @unpack nvariables = operators.constants;
 
         m = 1
 
@@ -888,19 +886,19 @@ end
         nparams = nr * nℓ
         m = 1
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-        (; transforms, diff_operators, rad_terms, coordinates, radial_params, identities) = operators;
-        (; r, r_chebyshev) = coordinates;
-        (; nvariables, ν) = operators.constants;
+        @unpack transforms, diff_operators, rad_terms, coordinates, radial_params, identities = operators;
+        @unpack r, r_chebyshev = coordinates;
+        @unpack nvariables, ν = operators.constants;
         r_mid = radial_params.r_mid::Float64;
         Δr = radial_params.Δr::Float64;
         a = 1 / (Δr / 2);
         b = -r_mid / (Δr / 2);
         r̄(r) = clamp(a * r + b, -1.0, 1.0)
-        (; Tcrfwd) = transforms;
-        (; Iℓ) = identities;
-        (; ddr, d2dr2, DDr) = diff_operators;
+        @unpack Tcrfwd = transforms;
+        @unpack Iℓ = identities;
+        @unpack ddr, d2dr2, DDr = diff_operators;
         @unpack onebyr, onebyr2, r2_cheby, r_cheby, ηρ = rad_terms;
-        (; r_in, r_out) = operators.radial_params;
+        @unpack r_in, r_out = operators.radial_params;
         chebyfwdnr(f, scalefactor = 5) = chebyfwd(f, r_in, r_out, nr, scalefactor)
 
         ℓ = 2
@@ -1084,7 +1082,7 @@ end
             nr, nℓ = 50, 10
             m = 5
             operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-            (; nvariables) = operators.constants;
+            @unpack nvariables = operators.constants;
             operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
             operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
             @testset for rotation_profile in [:radial_linear, :radial]
@@ -1159,11 +1157,11 @@ end
         #     m = 5
 
         #     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-        #     (; Δr) = operators.radial_params;
-        #     (; r_chebyshev) = operators.coordinates;
+        #     @unpack Δr = operators.radial_params;
+        #     @unpack r_chebyshev = operators.coordinates;
         #     (; g, ηρ) = operators.rad_terms;
-        #     (; DDr) = operators.diff_operators;
-        #     (; matCU2) = operators;
+        #     @unpack DDr = operators.diff_operators;
+        #     @unpack matCU2 = operators;
 
         #     @testset for rotation_profile in [:linear, :solar_equator]
         #         ΔΩprofile_deriv =
@@ -1207,19 +1205,19 @@ end
     nr, nℓ = 50, 15
     nparams = nr * nℓ
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
-    (; r_in, r_out, Δr) = operators.radial_params
-    (; BC) = constraints;
+    @unpack r_in, r_out, Δr = operators.radial_params
+    @unpack BC = constraints;
     @testset for m in [1, 10, 20]
         @testset "constant" begin
             λr, vr, Mr = RossbyWaveSpectrum.differential_rotation_spectrum(m; operators, constraints,
-                rotation_profile = :constant, ΔΩ_by_Ω = 0.02);
+                rotation_profile = :constant, ΔΩ_frac = 0.02);
             λrf, vrf = RossbyWaveSpectrum.filter_eigenvalues(λr, vr, Mr, m;
-                operators, constraints, Δl_cutoff = 7, n_cutoff = 9, ΔΩ_by_Ω_low = -0.01,
-                ΔΩ_by_Ω_high = 0.03, eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
+                operators, constraints, Δl_cutoff = 7, n_cutoff = 9, ΔΩ_frac_low = -0.01,
+                ΔΩ_frac_high = 0.03, eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
             @info "$(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
             @testset "ℓ == m" begin
-                ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_by_Ω = 0.02)
+                ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_frac = 0.02)
                 @test findmin(abs.(real(λrf) .- ω0))[1] < 1e-4
             end
             vfn = zeros(eltype(vrf), size(vrf, 1))
@@ -1273,12 +1271,12 @@ end
             λr, vr, Mr = RossbyWaveSpectrum.differential_rotation_spectrum(m; operators, constraints,
                 rotation_profile = :radial_constant);
             λrf, vrf = RossbyWaveSpectrum.filter_eigenvalues(λr, vr, Mr, m;
-                operators, constraints, Δl_cutoff = 7, n_cutoff = 9, ΔΩ_by_Ω_low = -0.01,
-                ΔΩ_by_Ω_high = 0.03, eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
+                operators, constraints, Δl_cutoff = 7, n_cutoff = 9, ΔΩ_frac_low = -0.01,
+                ΔΩ_frac_high = 0.03, eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
             @info "$(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
             @testset "ℓ == m" begin
-                ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_by_Ω = 0.02)
+                ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_frac = 0.02)
                 @test findmin(abs.(real(λrf) .- ω0))[1] < 1e-4
             end
             vfn = zeros(eltype(vrf), size(vrf, 1))
