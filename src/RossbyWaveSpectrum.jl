@@ -22,6 +22,7 @@ using LinearAlgebra
 using LinearAlgebra: BLAS
 using LegendrePolynomials
 using OffsetArrays
+using OffsetArrays: Origin
 using SimpleDelimitedFiles: readdlm
 using SparseArrays
 using StructArrays
@@ -58,8 +59,6 @@ function __init__()
         mkdir(RossbyWaveSpectrum.DATADIR[])
     end
 end
-
-indexedfromzero(A) = OffsetArray(A, OffsetArrays.Origin(0))
 
 # Assume v is evaluated on an grid that is in increasing order (default in this project)
 chebyshevgrid_to_Fun(v) = Fun(Chebyshev(), ApproxFun.transform(Chebyshev(), reverse(v)))
@@ -183,27 +182,6 @@ function operatormatrix(A, nr, rangespace)::Matrix{Float64}
     C[1:nr, 1:nr]
 end
 
-# differentiation operator using N+1 points, with 2 extremal points
-function chebyderivGaussLobatto(n)
-    D = zeros(n+1, n+1)
-    Do = indexedfromzero(D)
-    Do[0,0] = (2n^2 + 1)/6
-    Do[n,n] = -Do[0,0]
-    for j in 0:n, k in 0:n
-        k == j && (k == 0 || k == n) && continue
-        xk = cos(π*k/n)
-        if k == j
-            Do[k,k] = -1/2 * xk/(1-xk^2)
-        else
-            xj = cos(π*j/n)
-            cj = 1 + (j == 0) + (j == n)
-            ck = 1 + (k == 0) + (k == n)
-            Do[k, j] = ck/cj * (-1)^(j+k)/(xk - xj)
-        end
-    end
-    return D
-end
-
 # Legendre
 
 function legendretransform!(v::AbstractVector, PC = plan_chebyshevtransform!(v), PC2L = plan_cheb2leg(v))
@@ -222,7 +200,7 @@ function legendretransform2(A::AbstractMatrix)
 end
 
 function normalizelegendre!(v)
-    vo = indexedfromzero(v)
+    vo = Origin(0)(v)
     for l in eachindex(vo)
         vo[l] *= √(2 / (2l + 1))
     end
@@ -330,24 +308,16 @@ function associatedlegendretransform_matrices(nℓ, m)
     associatedlegendretransform_matrices(nℓ, m, costheta, w)
 end
 
-function constraintmatrix(operators; V_basis = 1, W_basis = 1, S_basis = 1)
-    @unpack radial_params = operators
-    @unpack nr, r_in, r_out, nℓ, Δr, nparams = radial_params
-    @unpack nvariables = operators.constants
+for f in [:Vboundary, :Wboundary, :Sboundary]
+    f! = Symbol("$(f)!")
+    @eval $(f)(nchebyr, args...) = ($f!)(zeros(2, nchebyr), args...)
+end
 
-    nradconstraints = 2;
-    nconstraints = nradconstraints * nℓ;
-
-    # Radial constraint
-    MVn = zeros(nradconstraints, nr);
-    MVno = OffsetArray(MVn, :, 0:nr-1);
-    MWn = zeros(nradconstraints, nr);
-    MWno = OffsetArray(MWn, :, 0:nr-1);
-    MSn = zeros(nradconstraints, nr);
-    MSno = OffsetArray(MSn, :, 0:nr-1);
-
+function Vboundary!(MVn, radial_params)
+    @unpack r_in, r_out, Δr = radial_params;
+    MVno = Origin(1,0)(MVn);
     # constraints on V, Robin
-    for n = 0:nr-1
+    for n in axes(MVno, 2)
         # inner boundary
         # impenetrable, stress-free
         MVno[1, n] = (-1)^n * (n^2 + Δr / r_in)
@@ -355,11 +325,13 @@ function constraintmatrix(operators; V_basis = 1, W_basis = 1, S_basis = 1)
         # impenetrable, stress-free
         MVno[2, n] = n^2 - Δr / r_out
     end
+    return MVn
+end
 
-    ZMVn = V_basis == 1 ? nullspace(MVn) : r2neumann_chebyshev_matrix(nr, radial_params);
-
-    # # constraints on W, Dirichlet
-    for n = 0:nr-1
+function Wboundary!(MWn, args...)
+    # constraints on W, Dirichlet
+    MWno = Origin(1,0)(MWn);
+    for n in axes(MWno, 2)
         # inner boundary
         # impenetrable, stress-free
         # equivalently, zero Dirichlet
@@ -369,27 +341,46 @@ function constraintmatrix(operators; V_basis = 1, W_basis = 1, S_basis = 1)
         # equivalently, zero Dirichlet
         MWno[2, n] = 1
     end
+    return MWn
+end
 
-    ZMWn = W_basis == 1 ? nullspace(MWn) : dirichlet_chebyshev_matrix(nr);
-
+function Sboundary!(MSn, args...)
+    # constraints on W, Dirichlet
+    MSno = Origin(1,0)(MSn);
     # constraints on S
     # zero Neumann
-    for n = 0:nr-1
+    for n in axes(MSno, 2)
         # inner boundary
         MSno[1, n] = (-1)^n*n^2
         # outer boundary
         MSno[2, n] = n^2
     end
 
-    ZMSn = S_basis == 1 ? nullspace(MSn) : neumann_chebyshev_matrix(nr);
+    return MSn
+end
 
-    # BC = zeros(nvariables * nconstraints, nvariables * nparams);
+function constraintmatrix(operators; V_basis = 1, W_basis = 1, S_basis = 1)
+    @unpack radial_params = operators;
+    @unpack nr, nℓ = radial_params;
+    @unpack nvariables = operators.constants;
+
+    nradconstraints = 2;
+    nconstraints = nradconstraints * nℓ;
+
+    MVn = Vboundary(nr, radial_params)
+    ZMVn = V_basis == 1 ? nullspace(MVn) : normalizecols!(r2neumann_chebyshev_matrix(nr, radial_params));
+
+    MWn = Wboundary(nr)
+    ZMWn = W_basis == 1 ? nullspace(MWn) : normalizecols!(dirichlet_chebyshev_matrix(nr));
+
+    MSn = Sboundary(nr)
+    ZMSn = S_basis == 1 ? nullspace(MSn) : normalizecols!(neumann_chebyshev_matrix(nr));
+
     rowsB = Fill(nradconstraints, nℓ)
     colsB = Fill(nr, nℓ)
     BC_block = mortar(reshape([BlockBandedMatrix(Zeros(sum(rowsB),sum(colsB)), rowsB, colsB, (0,0)) for _ in 1:nvariables^2],
             nvariables, nvariables))
 
-    # ZC = zeros(nr*nℓ*nvariables, (nr-nradconstraints)*nℓ*nvariables)
     rowsZ = Fill(nr, nℓ)
     colsZ = Fill(nr - nradconstraints, nℓ)
     ZC_block = mortar(reshape([BlockBandedMatrix(Zeros(sum(rowsZ),sum(colsZ)), rowsZ, colsZ, (0,0)) for _ in 1:nvariables^2],
@@ -402,7 +393,7 @@ function constraintmatrix(operators; V_basis = 1, W_basis = 1, S_basis = 1)
             BCi[Block(ℓind, ℓind)] = M
         end
     end
-    nullspacematrices = [ZMVn, ZMWn, ZMSn][1:nvariables]
+    nullspacematrices = [ZMVn, ZMWn, ZMSn][1:nvariables];
     for (Zind, Z) in enumerate(nullspacematrices)
         ZCi = ZC_block[Block(Zind, Zind)]
         for ℓind = 1:nℓ
@@ -487,7 +478,7 @@ end
 # defined for normalized Legendre polynomials
 function invsintheta_dtheta_operator(nℓ)
     M = zeros(nℓ, nℓ)
-    Mo = indexedfromzero(M)
+    Mo = Origin(0)(M)
     for n in 0:nℓ-1, k in n-1:-2:0
         Mo[n, k] = -√((2n + 1) * (2k + 1))
     end
@@ -497,7 +488,7 @@ end
 # defined for normalized Legendre polynomials
 function cottheta_dtheta_operator(nℓ)
     M = zeros(nℓ, nℓ)
-    Mo = indexedfromzero(M)
+    Mo = Origin(0)(M)
     for n in 0:nℓ-1
         Mo[n, n] = -n
         for k in n-2:-2:0
@@ -507,12 +498,28 @@ function cottheta_dtheta_operator(nℓ)
     Matrix(M')
 end
 
+function normalizecols!(M)
+    foreach(normalize!, eachcol(M))
+    return M
+end
+function chebynormalize!(M)
+    for col in eachcol(M)
+        N2 = col[1]^2 * pi
+        for ind in 2:lastindex(col)
+            N2 += col[ind]^2 * pi/2
+        end
+        N = sqrt(N2)
+        col ./= N
+    end
+    return M
+end
+
 # converts from Heinrichs basis to Chebyshev, so Cn = Anm Bm where Cn are the Chebyshev
 # coefficients, and Bm are the Heinrichs ones
 αheinrichs(n) = n < 0 ? 0 : n == 0 ? 2 : 1
 function dirichlet_chebyshev_matrix(n)
     M = BandedMatrix(Zeros(n, n-2), (2, 2))
-    Mo = indexedfromzero(M)
+    Mo = Origin(0)(M)
     for n in axes(Mo,1), m in intersect(n-2:2:n+2, axes(Mo,2))
         T = 0.0
         if m == n-2
@@ -530,7 +537,7 @@ end
 n2coeff_neumann(n) = -(n/(n+2))^2
 function neumann_chebyshev_matrix(n)
     M = BandedMatrix(Zeros(n, n-2), (2, 0))
-    Mo = indexedfromzero(M)
+    Mo = Origin(0)(M)
     for n in axes(Mo, 2)
         Mo[n, n] = 1
         Mo[n+2, n] = n2coeff_neumann(n)
@@ -541,7 +548,7 @@ end
 function r2neumann_chebyshev_matrix(ncheby, radial_params)
     @unpack Δr, r_mid = radial_params
     M = BandedMatrix(Zeros(ncheby, ncheby-2), (4, 2))
-    Mo = indexedfromzero(M)
+    Mo = Origin(0)(M)
 
     T0 = 1/2*(Δr/2)^2 + r_mid^2
     T1 = r_mid * (Δr/2)
@@ -814,7 +821,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     scalings = Dict{Symbol, Float64}()
     Sscaling = 1e6
-    Wscaling = 1
+    Wscaling = 1e1
     @pack! scalings = Sscaling, Wscaling
 
     constants = (; κ, ν, nvariables, Ω0, scalings)
