@@ -890,21 +890,29 @@ function matrix_block(M::AbstractMatrix, rowind, colind, nvariables = 3)
     @view M[inds]
 end
 
-matrix_block_maximum(f, M::AbstractMatrix, nvariables = 3) = [maximum(f, matrix_block(M, i, j)) for i in 1:nvariables, j in 1:nvariables]
+matrix_block_maximum(f, M::AbstractMatrix, nvariables = 3) = [maximum(f, matrix_block(M, i, j, nvariables)) for i in 1:nvariables, j in 1:nvariables]
+function matrix_block_maximum(f, M::BlockMatrix, nvariables = 3)
+    [matrix_block_maximum(f, Mb, 1)[] for Mb in blocks(M)]
+end
+function matrix_block_maximum(M::StructArray{<:Complex,2}, nvariables = 3)
+    R = matrix_block_maximum(abs, M.re, nvariables)
+    I = matrix_block_maximum(abs, M.im, nvariables)
+    [R I]
+end
 function matrix_block_maximum(M::AbstractMatrix, nvariables = 3)
-    R = RossbyWaveSpectrum.matrix_block_maximum(abs∘real, M, nvariables)
-    I = RossbyWaveSpectrum.matrix_block_maximum(abs∘imag, M, nvariables)
+    R = matrix_block_maximum(abs∘real, M, nvariables)
+    I = matrix_block_maximum(abs∘imag, M, nvariables)
     [R I]
 end
 
 
-function computesparse(M::StructArray{ComplexF64})
+function computesparse(M::StructArray{<:Complex,2})
     SR = computesparse(M.re)
     SI = computesparse(M.im)
-    StructArray{ComplexF64}((SR, SI))
+    StructArray{eltype(M)}((SR, SI))
 end
 
-function computesparse(M::BlockArray)
+function computesparse(M::BlockMatrix)
     hvcat((3,3,3), [sparse(M[j, i]) for (i,j) in Iterators.product(blockaxes(M)...)]...)
 end
 
