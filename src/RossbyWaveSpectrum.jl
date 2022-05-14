@@ -52,6 +52,8 @@ const Tplus = PlusOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}
 const TFun = Fun{Chebyshev{ChebyshevInterval{Float64},Float64},Float64,Vector{Float64}}
 const TFunDeriv = ApproxFunBase.Fun{ApproxFunOrthogonalPolynomials.Ultraspherical{Int64, DomainSets.ChebyshevInterval{Float64}, Float64}, Float64, Vector{Float64}}
 
+const StructMatrix{T} = StructArray{T,2}
+
 function __init__()
     SCRATCH[] = get(ENV, "SCRATCH", homedir())
     DATADIR[] = get(ENV, "DATADIR", joinpath(SCRATCH[], "RossbyWaves"))
@@ -894,7 +896,7 @@ matrix_block_maximum(f, M::AbstractMatrix, nvariables = 3) = [maximum(f, matrix_
 function matrix_block_maximum(f, M::BlockMatrix, nvariables = 3)
     [matrix_block_maximum(f, Mb, 1)[] for Mb in blocks(M)]
 end
-function matrix_block_maximum(M::StructArray{<:Complex,2}, nvariables = 3)
+function matrix_block_maximum(M::StructMatrix{<:Complex}, nvariables = 3)
     R = matrix_block_maximum(abs, M.re, nvariables)
     I = matrix_block_maximum(abs, M.im, nvariables)
     [R I]
@@ -906,7 +908,7 @@ function matrix_block_maximum(M::AbstractMatrix, nvariables = 3)
 end
 
 
-function computesparse(M::StructArray{<:Complex,2})
+function computesparse(M::StructMatrix{<:Complex})
     SR = computesparse(M.re)
     SI = computesparse(M.im)
     StructArray{eltype(M)}((SR, SI))
@@ -990,7 +992,7 @@ function uniform_rotation_matrix(m; operators, kw...)
     return A
 end
 
-function uniform_rotation_matrix!(A::StructArray{<:Complex, 2}, m; operators, kw...)
+function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, kw...)
     (; nvariables, Ω0, scalings) = operators.constants;
     @unpack nr, nℓ = operators.radial_params
     @unpack Sscaling, Wscaling = scalings
@@ -1065,7 +1067,7 @@ function uniform_rotation_matrix!(A::StructArray{<:Complex, 2}, m; operators, kw
     return A
 end
 
-function viscosity_terms!(A::StructArray{<:Complex, 2}, m; operators)
+function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators)
     @unpack nr, nℓ = operators.radial_params;
 
     @unpack ddrMCU4, d2dr2MCU2, d3dr3MCU4, onebyr2MCU2,
@@ -1221,7 +1223,7 @@ function laplacian_operator(nℓ, m)
     Diagonal(@. -ℓs * (ℓs + 1))
 end
 
-function constant_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
+function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, ΔΩ_frac = 0.02, kw...)
 
     @unpack nr, nℓ = operators.radial_params;
@@ -1383,7 +1385,7 @@ function radial_differential_rotation_terms_inner!((VWterm, WVterm), (ℓ, ℓ�
     VWterm, WVterm
 end
 
-function radial_differential_rotation_terms!(M::StructArray{<:Complex, 2}, m;
+function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, rotation_profile = :radial, kw...)
 
     @unpack nr, nℓ = operators.radial_params
@@ -1749,7 +1751,7 @@ function compute_constrained_matrix!(out, constraints, A)
     out .= ZC' * A * ZC
     return out
 end
-function compute_constrained_matrix!(out, constraints, A::StructArray{<:Complex,2})
+function compute_constrained_matrix!(out, constraints, A::StructMatrix{<:Complex})
     @unpack ZC = constraints
     out .= (ZC' * A.re * ZC) .+ im .* (ZC' * A.im * ZC)
     return out
@@ -1906,7 +1908,7 @@ function boundary_condition_filter(v, BC, BCVcache, atol = 1e-5)
     norm(BCVcache) < atol
 end
 function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
-        (A, B)::Tuple{StructArray{<:Complex,2}, AbstractMatrix{<:Real}},
+        (A, B)::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
         (Av, λBv)::NTuple{2, StructArray{<:Complex,1}}, rtol = 1e-1)
 
     mul!(Av.re, A.re, v.re)
