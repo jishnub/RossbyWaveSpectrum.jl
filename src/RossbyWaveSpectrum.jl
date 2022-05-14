@@ -947,18 +947,18 @@ function allocate_mass_matrix(operators)
                 nvariables, nvariables))
 end
 
+ℓrange(m, nℓ, symmetric) = range(m + !symmetric, length = nℓ, step = 2)
+
 function mass_matrix(m; operators, kw...)
     B = allocate_mass_matrix(operators)
     mass_matrix!(B, m; operators, kw...)
     return B
 end
-function mass_matrix!(B, m; operators, kw...)
+function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
     @unpack nr, nℓ = operators.radial_params
     @unpack IU2 = operators.identities;
     @unpack nvariables = operators.constants
     @unpack ddrDDrMCU4, onebyr2MCU4 = operators.operator_matrices;
-
-    ℓs = range(m, length = nℓ)
 
     B .= 0
 
@@ -968,19 +968,25 @@ function mass_matrix!(B, m; operators, kw...)
         SS = matrix_block(B, 3, 3)
     end
 
-    ddrDDr_minus_ℓℓp1_by_r2MCU4 = similar(ddrDDrMCU4);
+    # V terms
+    V_ℓs = ℓrange(m, nℓ, V_symmetric)
 
-    @views for (ℓind, ℓ) in enumerate(ℓs)
-        ℓℓp1 = ℓ * (ℓ+1)
+    # W, S terms
+    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
 
+    @views for ℓind in 1:nℓ
         VV[Block(ℓind, ℓind)] .= IU2
-
-        @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
-        WW[Block(ℓind, ℓind)] .= Rsun^2 .* ddrDDr_minus_ℓℓp1_by_r2MCU4
-
         if nvariables == 3
             SS[Block(ℓind, ℓind)] .= IU2
         end
+    end
+
+    ddrDDr_minus_ℓℓp1_by_r2MCU4 = similar(ddrDDrMCU4);
+    @views for (ℓind, ℓ) in enumerate(W_ℓs)
+        ℓℓp1 = ℓ * (ℓ+1)
+
+        @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
+        WW[Block(ℓind, ℓind)] .= Rsun^2 .* ddrDDr_minus_ℓℓp1_by_r2MCU4
     end
 
     return B
@@ -992,7 +998,7 @@ function uniform_rotation_matrix(m; operators, kw...)
     return A
 end
 
-function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, kw...)
+function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_symmetric = true, kw...)
     (; nvariables, Ω0, scalings) = operators.constants;
     @unpack nr, nℓ = operators.radial_params
     @unpack Sscaling, Wscaling = scalings
@@ -1016,23 +1022,39 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, kw..
         SS = matrix_block(A.im, 3, 3)
     end
 
-    ℓs = range(m, length = nℓ)
-    cosθ = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs);
-    sinθdθ = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs);
-
-    SWterm = zeros(nr, nr);
-    SSterm = zeros(nr, nr);
+    nCS = 2nℓ+1
+    ℓs = range(m, length = nCS)
+    cosθ = OffsetArray(costheta_operator(nCS, m), ℓs, ℓs);
+    sinθdθ = OffsetArray(sintheta_dtheta_operator(nCS, m), ℓs, ℓs);
 
     ddrDDr_minus_ℓℓp1_by_r2MCU4 = similar(ddrDDrMCU4);
     T = zeros(nr, nr)
 
-    @views for (ℓind, ℓ) in enumerate(ℓs)
+    # V terms
+    V_ℓs = ℓrange(m, nℓ, V_symmetric)
+    # W, S terms
+    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
 
+    @views for (ℓind, ℓ) in enumerate(V_ℓs)
         ℓℓp1 = ℓ * (ℓ + 1)
 
         twom_by_ℓℓp1 = 2m/ℓℓp1
 
         VV[Block(ℓind, ℓind)] .= twom_by_ℓℓp1 .* IU2
+
+        for ℓ′ in intersect(W_ℓs, ℓ-1:2:ℓ+1)
+            ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
+            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
+
+            @. T = (-2/ℓℓp1) * (ℓ′ℓ′p1 * DDr_minus_2byrMCU2 * cosθ[ℓ, ℓ′] +
+                    (DDrMCU2 - ℓ′ℓ′p1 * onebyrMCU2) * sinθdθ[ℓ, ℓ′]) * Rsun / Wscaling
+            VW[Block(ℓind, ℓ′ind)] .= T
+        end
+    end
+
+    @views for (ℓind, ℓ) in enumerate(W_ℓs)
+        ℓℓp1 = ℓ * (ℓ + 1)
+        twom_by_ℓℓp1 = 2m/ℓℓp1
 
         @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
 
@@ -1047,13 +1069,9 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, kw..
             SS[Block(ℓind, ℓind)] .= T
         end
 
-        for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
-            ℓ′ind = findfirst(isequal(ℓ′), ℓs)
+        for ℓ′ in intersect(V_ℓs, ℓ-1:2:ℓ+1)
+            ℓ′ind = findfirst(isequal(ℓ′), V_ℓs)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-
-            @. T = (-2/ℓℓp1) * (ℓ′ℓ′p1 * DDr_minus_2byrMCU2 * cosθ[ℓ, ℓ′] +
-                    (DDrMCU2 - ℓ′ℓ′p1 * onebyrMCU2) * sinθdθ[ℓ, ℓ′]) * Rsun / Wscaling
-            VW[Block(ℓind, ℓ′ind)] .= T
 
             @. T = (-2/ℓℓp1) * (ℓ′ℓ′p1 * ddr_minus_2byrMCU4 * cosθ[ℓ, ℓ′] +
                     (ddrMCU4 - ℓ′ℓ′p1 * onebyrMCU4) * sinθdθ[ℓ, ℓ′]) * Rsun * Wscaling
@@ -1062,12 +1080,12 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, kw..
         end
     end
 
-    viscosity_terms!(A, m; operators)
+    viscosity_terms!(A, m; operators, V_symmetric, kw...)
 
     return A
 end
 
-function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators)
+function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric = true, kw...)
     @unpack nr, nℓ = operators.radial_params;
 
     @unpack ddrMCU4, d2dr2MCU2, d3dr3MCU4, onebyr2MCU2,
@@ -1120,13 +1138,22 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators)
     ηρd2dr2DDrMCU4 = matCU4(ηρ * d2dr2DDr);
     ddr_ηρbyr_DDrMCU4 = matCU4(ddr_ηρbyr * DDr);
 
-    @views for (ℓind, ℓ) in enumerate(ℓs)
-        ℓℓp1 = ℓ * (ℓ + 1)
-        neg2by3_ℓℓp1 = -2ℓℓp1 / 3
+    # V terms
+    V_ℓs = ℓrange(m, nℓ, V_symmetric)
 
+    @views for (ℓind, ℓ) in enumerate(V_ℓs)
+        ℓℓp1 = ℓ * (ℓ + 1)
         @. T1_1 = -ν * (d2dr2MCU2 - ℓℓp1 * onebyr2MCU2 + ηρ_ddr_minus_2byrMCU2) * Rsun^2
 
         VVim[Block(ℓind, ℓind)] .= T1_1
+    end
+
+    # W, S terms
+    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
+
+    @views for (ℓind, ℓ) in enumerate(W_ℓs)
+        ℓℓp1 = ℓ * (ℓ + 1)
+        neg2by3_ℓℓp1 = -2ℓℓp1 / 3
 
         ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
         @. T1_1 = ((d3dr3ηρMCU4 -4*d2dr2ηρ_by_rMCU4 + 8*ddrηρ_by_r2MCU4 - 8*ηρ_by_r3MCU4)
@@ -1224,7 +1251,7 @@ function laplacian_operator(nℓ, m)
 end
 
 function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
-        operators, ΔΩ_frac = 0.02, kw...)
+        operators, ΔΩ_frac = 0.02, V_symmetric = true, kw...)
 
     @unpack nr, nℓ = operators.radial_params;
     @unpack nvariables, scalings = operators.constants
@@ -1243,9 +1270,11 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         SS = matrix_block(M.re, 3, 3, nvariables)
     end
 
-    ℓs = range(m, length = nℓ)
-    cosθo = OffsetArray(costheta_operator(nℓ, m), ℓs, ℓs)
-    sinθdθo = OffsetArray(sintheta_dtheta_operator(nℓ, m), ℓs, ℓs)
+    nCS = 2nℓ+1
+    ℓs = range(m, length = nCS)
+
+    cosθo = OffsetArray(costheta_operator(nCS, m), ℓs, ℓs)
+    sinθdθo = OffsetArray(sintheta_dtheta_operator(nCS, m), ℓs, ℓs)
     laplacian_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * parent(sinθdθo), ℓs, ℓs)
 
     DDr_minus_2byrMCU2 = @. DDrMCU2 - 2 * onebyrMCU2
@@ -1256,7 +1285,12 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
     T = zeros(nr, nr);
 
-    @views for (ℓind, ℓ) in enumerate(ℓs)
+    # V terms
+    V_ℓs = ℓrange(m, nℓ, V_symmetric)
+    # W, S terms
+    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
+
+    @views for (ℓind, ℓ) in enumerate(V_ℓs)
         # numerical green function
         ℓℓp1 = ℓ * (ℓ + 1)
         two_over_ℓℓp1 = 2 / ℓℓp1
@@ -1266,17 +1300,9 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
         VV[Block(ℓind, ℓind)] .+= diagterm .* IU2
 
-        @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4;
-
-        WW[Block(ℓind, ℓind)] .+= Rsun^2 .* (diagterm .* ddrDDr_minus_ℓℓp1_by_r2MCU4 .+ 2dopplerterm .* ηρ_by_rMCU4)
-
-        if nvariables == 3
-            SS[Block(ℓind, ℓind)] .+= dopplerterm .* IU2
-        end
-
-        for ℓ′ in intersect(ℓ-1:2:ℓ+1, ℓs)
+        for ℓ′ in intersect(ℓ-1:2:ℓ+1, W_ℓs)
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-            ℓ′ind = findfirst(isequal(ℓ′), ℓs)
+            ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
 
             @. T = -two_over_ℓℓp1 *
                                     ΔΩ_frac * (
@@ -1285,6 +1311,28 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
                                     ) * Rsun / Wscaling
 
             VW[Block(ℓind, ℓ′ind)] .+= T
+        end
+    end
+
+    @views for (ℓind, ℓ) in enumerate(W_ℓs)
+        # numerical green function
+        ℓℓp1 = ℓ * (ℓ + 1)
+        two_over_ℓℓp1 = 2 / ℓℓp1
+
+        dopplerterm = -m * ΔΩ_frac
+        diagterm = m * two_over_ℓℓp1 * ΔΩ_frac + dopplerterm
+
+        @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4;
+
+        WW[Block(ℓind, ℓind)] .+= Rsun^2 .* (diagterm .* ddrDDr_minus_ℓℓp1_by_r2MCU4 .+ 2dopplerterm .* ηρ_by_rMCU4)
+
+        if nvariables == 3
+            SS[Block(ℓind, ℓind)] .+= dopplerterm .* IU2
+        end
+
+        for ℓ′ in intersect(ℓ-1:2:ℓ+1, V_ℓs)
+            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
+            ℓ′ind = findfirst(isequal(ℓ′), V_ℓs)
 
             @. T = -Rsun * ΔΩ_frac / ℓℓp1 *
                                     ((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * ddrMCU4
@@ -1294,6 +1342,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
             WV[Block(ℓind, ℓ′ind)] .+= T
         end
     end
+
     return M
 end
 
@@ -1386,7 +1435,7 @@ function radial_differential_rotation_terms_inner!((VWterm, WVterm), (ℓ, ℓ�
 end
 
 function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
-        operators, rotation_profile = :radial, kw...)
+        operators, rotation_profile = :radial, V_symmetric = true, kw...)
 
     @unpack nr, nℓ = operators.radial_params
     @unpack nvariables, scalings = operators.constants;
@@ -1420,13 +1469,14 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     ddrΔΩ_over_g_DDrMCU2 = matCU2(ddrΔΩ_over_g_DDr);
     ddrΔΩ_plus_ΔΩddr = (ddrΔΩ + (ΔΩ * ddr)::Tmul)::Tplus;
 
-    ℓs = range(m, length = nℓ);
+    nCS = 2nℓ+1
+    ℓs = range(m, length = nCS)
+    cosθ = OffsetArray(costheta_operator(nCS, m), ℓs, ℓs);
+    sinθdθ = OffsetArray(sintheta_dtheta_operator(nCS, m), ℓs, ℓs);
 
-    cosθ = costheta_operator(nℓ, m);
     cosθo = OffsetArray(cosθ, ℓs, ℓs);
-    sinθdθ = sintheta_dtheta_operator(nℓ, m);
     sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs);
-    cosθsinθdθ = (costheta_operator(nℓ + 1, m)*sintheta_dtheta_operator(nℓ + 1, m))[1:end-1, 1:end-1];
+    cosθsinθdθ = (costheta_operator(nCS + 1, m)*sintheta_dtheta_operator(nCS + 1, m))[1:end-1, 1:end-1];
     cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
     ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs);
 
@@ -1449,9 +1499,12 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4 = zeros(nr, nr);
     T = zeros(nr, nr);
 
-    @views for (ℓind, ℓ) in enumerate(ℓs)
-        # numerical green function
+    # V terms
+    V_ℓs = ℓrange(m, nℓ, V_symmetric)
+    # W, S terms
+    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
 
+    @views for (ℓind, ℓ) in enumerate(V_ℓs)
         inds_ℓℓ = blockinds((m, nr), ℓ, ℓ);
 
         ℓℓp1 = ℓ * (ℓ + 1)
@@ -1462,19 +1515,8 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
         VV[Block(ℓind, ℓind)] .+= T
 
-        @. ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4 = ΔΩ_ddrDDrMCU4 - ℓℓp1 * ΔΩ_by_r2MCU4
-
-        @. T = m * Rsun^2 * (two_over_ℓℓp1_min_1 * (ddrΔΩ_DDrMCU4 + ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4)
-                - 2ΔΩ_ηρ_by_rMCU4 + d2dr2ΔΩMCU4 + ddrΔΩ_ddr_plus_2byrMCU4)
-
-        WW[Block(ℓind, ℓind)] .+= T
-
-        if nvariables == 3
-            SS[Block(ℓind, ℓind)] .+= -m .* ΔΩMCU2
-        end
-
-        for ℓ′ in intersect(ℓs, ℓ-1:2:ℓ+1)
-            ℓ′ind = findfirst(isequal(ℓ′), ℓs)
+        for ℓ′ in intersect(W_ℓs, ℓ-1:2:ℓ+1)
+            ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
 
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
 
@@ -1487,6 +1529,35 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
                     sinθdθ_ℓℓ′ * ((ΔΩ_DDrMCU2 - ℓ′ℓ′p1 * ΔΩ_by_rMCU2) - ℓ′ℓ′p1 / 2 * ddrΔΩMCU2)) / Wscaling
 
             VW[Block(ℓind, ℓ′ind)] .+= T
+        end
+    end
+
+    @views for (ℓind, ℓ) in enumerate(W_ℓs)
+        inds_ℓℓ = blockinds((m, nr), ℓ, ℓ);
+
+        ℓℓp1 = ℓ * (ℓ + 1)
+        two_over_ℓℓp1 = 2/ℓℓp1
+        two_over_ℓℓp1_min_1 = two_over_ℓℓp1 - 1
+
+        @. ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4 = ΔΩ_ddrDDrMCU4 - ℓℓp1 * ΔΩ_by_r2MCU4
+
+        @. T = m * Rsun^2 * (two_over_ℓℓp1_min_1 * (ddrΔΩ_DDrMCU4 + ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4)
+                - 2ΔΩ_ηρ_by_rMCU4 + d2dr2ΔΩMCU4 + ddrΔΩ_ddr_plus_2byrMCU4)
+
+        WW[Block(ℓind, ℓind)] .+= T
+
+        if nvariables == 3
+            SS[Block(ℓind, ℓind)] .+= -m .* ΔΩMCU2
+        end
+
+        for ℓ′ in intersect(V_ℓs, ℓ-1:2:ℓ+1)
+            ℓ′ind = findfirst(isequal(ℓ′), V_ℓs)
+
+            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
+
+            cosθ_ℓℓ′ = cosθo[ℓ, ℓ′]
+            sinθdθ_ℓℓ′ = sinθdθo[ℓ, ℓ′]
+            ∇²_sinθdθ_ℓℓ′ = ∇²_sinθdθo[ℓ, ℓ′]
 
             @. T = -1/ℓℓp1 * Rsun * (
                         (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * ddrΔΩ_plus_ΔΩddrMCU4 +
@@ -1501,8 +1572,8 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
             end
         end
 
-        for ℓ′ in intersect(ℓs, ℓ-2:2:ℓ+2)
-            ℓ′ind = findfirst(isequal(ℓ′), ℓs)
+        for ℓ′ in intersect(W_ℓs, ℓ-2:2:ℓ+2)
+            ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
             if nvariables == 3
                 @. T = (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrMCU2 * Sscaling/Wscaling;
                 SW[Block(ℓind, ℓ′ind)] .+= T
@@ -1949,7 +2020,7 @@ end
 function sphericalharmonic_filter!(VWSinvsh, F, v, operators,
         Δl_cutoff = 7, power_cutoff = 0.9, filterfieldpowercutoff = 1e-4)
     eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
-    l_cutoff_ind = 1 + Δl_cutoff
+    l_cutoff_ind = 1 + Δl_cutoff÷2
 
     flag = true
 
@@ -1967,7 +2038,7 @@ end
 
 function chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff = 7, n_power_cutoff = 0.9;
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = zeros(rnage(m, length=nℓ)),
+    Plcosθ = zeros(rnage(m, length = 2nℓ + 1)),
     filterfieldpowercutoff = 1e-4)
 
     eigenfunction_n_theta!(VWSinv, F, v, m, operators; nℓ, Plcosθ)
@@ -1999,7 +2070,7 @@ end
 function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     θ_cutoff = deg2rad(75), equator_power_cutoff_frac = 0.3;
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = zeros(range(m, length=nℓ)),
+    Plcosθ = zeros(range(m, length = 2nℓ + 1)),
     filterfieldpowercutoff = 1e-4)
 
     (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators; nℓ, Plcosθ)
@@ -2025,7 +2096,7 @@ end
 
 function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = zeros(range(m, length=nℓ)),
+    Plcosθ = zeros(range(m, length = 2nℓ + 1)),
     filterfieldpowercutoff = 1e-4,
     nnodesmax = 7)
 
@@ -2157,7 +2228,7 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
 
     @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nθ, nℓ)
 
-    Plcosθ = zeros(range(m, length=nℓ))
+    Plcosθ = zeros(range(m, length = 2nℓ + 1))
 
     return (; MVcache, Vcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F)
 end
@@ -2376,7 +2447,7 @@ function eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
 end
 
 function spharm_θ_grid_uniform(m, nℓ, ℓmax_mul = 4)
-    ℓs = range(m, length = nℓ)
+    ℓs = range(m, length = 2nℓ+1)
     ℓmax = maximum(ℓs)
 
     θ, _ = sph_points(ℓmax_mul * ℓmax)
@@ -2385,11 +2456,12 @@ end
 
 function invshtransform2!(VWSinv, VWS, m;
     nℓ = size(VWS.V, 2),
-    Plcosθ = zeros(range(m, length = nℓ)))
+    Plcosθ = zeros(range(m, length = 2nℓ+1)),
+    V_symmetric = true)
 
-    V_r_lm = VWS.V
-    W_r_lm = VWS.W
-    S_r_lm = VWS.S
+    V_lm = VWS.V
+    W_lm = VWS.W
+    S_lm = VWS.S
 
     (; ℓs, θ) = spharm_θ_grid_uniform(m, nℓ)
 
@@ -2400,15 +2472,23 @@ function invshtransform2!(VWSinv, VWS, m;
     S = VWSinv.S
     S .= 0
 
-    for (θind, θi) in enumerate(θ)
+    V_ℓs = range(m + !V_symmetric, length = nℓ, step = 2)
+
+    W_symmetric = !V_symmetric
+    W_ℓs = range(m + !W_symmetric, length = nℓ, step = 2)
+
+    @views for (θind, θi) in enumerate(θ)
         collectPlm!(Plcosθ, cos(θi); m, norm = Val(:normalized))
-        for (ℓind, ℓ) in enumerate(ℓs)
+        # V
+        for (ℓind, ℓ) in enumerate(V_ℓs)
             Plmcosθ = Plcosθ[ℓ]
-            for r_ind in axes(V, 1)
-                V[r_ind, θind] += V_r_lm[r_ind, ℓind] * Plmcosθ
-                W[r_ind, θind] += W_r_lm[r_ind, ℓind] * Plmcosθ
-                S[r_ind, θind] += S_r_lm[r_ind, ℓind] * Plmcosθ
-            end
+            @. V[:, θind] += V_lm[:, ℓind] * Plmcosθ
+        end
+        # W, S
+        for (ℓind, ℓ) in enumerate(W_ℓs)
+            Plmcosθ = Plcosθ[ℓ]
+            @. W[:, θind] += W_lm[:, ℓind] * Plmcosθ
+            @. S[:, θind] += S_lm[:, ℓind] * Plmcosθ
         end
     end
 
@@ -2417,7 +2497,7 @@ end
 
 function eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators;
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = zeros(range(m, length=nℓ)))
+    Plcosθ = zeros(range(m, length = 2nℓ + 1)))
 
     eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
     invshtransform2!(VWSinv, VWSinvsh, m; nℓ, Plcosθ)
@@ -2437,7 +2517,7 @@ end
 
 function eigenfunction_n_theta!(VWSinv, F, v, m, operators;
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = zeros(range(m, length=nℓ)))
+    Plcosθ = zeros(range(m, length = 2nℓ + 1)))
 
     VW = eigenfunction_cheby_ℓm_spectrum!(F, v, operators)
     invshtransform2!(VWSinv, VW, m; nℓ, Plcosθ)
