@@ -675,10 +675,11 @@ macro checkncoeff(v, nr)
     :(checkncoeff($(esc(v)), $(String(v)), $(esc(nr))))
 end
 
-function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10)
-    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν)
+function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
+    scalings = (; Wscaling = 1e1, Sscaling = 1e6))
+    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, (scalings.Wscaling, scalings.Sscaling))
 end
-function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν)
+function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, (Wscaling, Sscaling))
     r_in = r_in_frac * Rsun;
     r_out = r_out_frac * Rsun;
     radial_params = parameters(nr, nℓ; r_in, r_out);
@@ -822,8 +823,6 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     IU2 = matCU2(I);
 
     scalings = Dict{Symbol, Float64}()
-    Sscaling = 1e6
-    Wscaling = 1e1
     @pack! scalings = Sscaling, Wscaling
 
     constants = (; κ, ν, nvariables, Ω0, scalings)
@@ -883,27 +882,30 @@ function blockinds((m, nr), ℓ, ℓ′ = ℓ)
     CartesianIndices((rowinds, colinds))
 end
 
-matrix_block(M::AbstractBlockMatrix, rowind, colind, nvariables = 3) = M[Block(rowind, colind)]
-function matrix_block(M::AbstractMatrix, rowind, colind, nvariables = 3)
-    nparams = div(size(M, 1), nvariables)
+matrix_block(M::AbstractBlockMatrix, rowind, colind, nblocks = 3) = M[Block(rowind, colind)]
+function matrix_block(M::AbstractMatrix, rowind, colind, nblocks = 3)
+    nparams = div(size(M, 1), nblocks)
     inds1 = (rowind - 1) * nparams .+ (1:nparams)
     inds2 = (colind - 1) * nparams .+ (1:nparams)
     inds = CartesianIndices((inds1, inds2))
     @view M[inds]
 end
 
-matrix_block_maximum(f, M::AbstractMatrix, nvariables = 3) = [maximum(f, matrix_block(M, i, j, nvariables)) for i in 1:nvariables, j in 1:nvariables]
-function matrix_block_maximum(f, M::BlockMatrix, nvariables = 3)
-    [matrix_block_maximum(f, Mb, 1)[] for Mb in blocks(M)]
+matrix_block_maximum(f, M::AbstractMatrix, nblocks = 3) = [maximum(f, matrix_block(M, i, j, nblocks)) for i in 1:nblocks, j in 1:nblocks]
+function matrix_block_maximum(f, M::BlockBandedMatrix, nblocks = 3)
+    maximum(f, (maximum(f, b) for b in blocks(M)))
 end
-function matrix_block_maximum(M::StructMatrix{<:Complex}, nvariables = 3)
-    R = matrix_block_maximum(abs, M.re, nvariables)
-    I = matrix_block_maximum(abs, M.im, nvariables)
+function matrix_block_maximum(f, M::BlockMatrix, nblocks = 3)
+    [matrix_block_maximum(f, Mb, nblocks) for Mb in blocks(M)]
+end
+function matrix_block_maximum(M::StructMatrix{<:Complex}, nblocks = 3)
+    R = matrix_block_maximum(abs, M.re, nblocks)
+    I = matrix_block_maximum(abs, M.im, nblocks)
     [R I]
 end
-function matrix_block_maximum(M::AbstractMatrix, nvariables = 3)
-    R = matrix_block_maximum(abs∘real, M, nvariables)
-    I = matrix_block_maximum(abs∘imag, M, nvariables)
+function matrix_block_maximum(M::AbstractMatrix, nblocks = 3)
+    R = matrix_block_maximum(abs∘real, M, nblocks)
+    I = matrix_block_maximum(abs∘imag, M, nblocks)
     [R I]
 end
 
@@ -1346,7 +1348,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
-function equatorial_radial_rotation_profile(operators, thetaGL; smoothing_param = 1e-3)
+function equatorial_radial_rotation_profile(operators, thetaGL; smoothing_param = 5e-3)
     @unpack r = operators.coordinates
     ΔΩ_rθ, Ω0 = read_angular_velocity(operators, thetaGL; smoothing_param)
     s = Spline2D(r, thetaGL, ΔΩ_rθ)
@@ -1354,7 +1356,7 @@ function equatorial_radial_rotation_profile(operators, thetaGL; smoothing_param 
 end
 
 function radial_differential_rotation_profile(operators, thetaGL, model = :solar_equator;
-    smoothing_param = 1e-3)
+    smoothing_param = 5e-3)
 
     @unpack r = operators.coordinates
     @unpack r_out, nr, r_in = operators.radial_params
@@ -1377,17 +1379,19 @@ function radial_differential_rotation_profile(operators, thetaGL, model = :solar
     else
         error("$model is not a valid rotation model")
     end
+    ΔΩ_r ./= Ω0
     return ΔΩ_r, Ω0
 end
 
 function rotationprofile_radialderiv(r, ΔΩ_r, nr, Δr)
-    ΔΩ = chop(chebyshevgrid_to_Fun(ΔΩ_r), 1e-3);
+    ΔΩ = chop(chebyshevgrid_to_Fun(ΔΩ_r), 1e-2);
     @checkncoeff ΔΩ nr
 
     ΔΩ_spl = Spline1D(r, ΔΩ_r);
     ddrΔΩ_r = derivative(ΔΩ_spl, r);
-    zchop!(ddrΔΩ_r, 1e-10*(2/Δr))
     d2dr2ΔΩ_r = derivative(ΔΩ_spl, r, nu=2);
+
+    zchop!(ddrΔΩ_r, 1e-10*(2/Δr))
     zchop!(d2dr2ΔΩ_r, 1e-10*(2/Δr)^2)
 
     ddrΔΩ = chop(chebyshevgrid_to_Fun(ddrΔΩ_r), 1e-2);
@@ -1399,7 +1403,7 @@ function rotationprofile_radialderiv(r, ΔΩ_r, nr, Δr)
 end
 
 function radial_differential_rotation_profile_derivatives(m; operators,
-        rotation_profile = :radial, smoothing_param = 1e-3)
+        rotation_profile = :solar_equator, smoothing_param = 5e-3)
     @unpack r = operators.coordinates;
     @unpack nr, nℓ, Δr = operators.radial_params;
 
@@ -1407,7 +1411,6 @@ function radial_differential_rotation_profile_derivatives(m; operators,
     @unpack thetaGL = gausslegendre_theta_grid(ntheta);
 
     ΔΩ_r, Ω0 = radial_differential_rotation_profile(operators, thetaGL, rotation_profile; smoothing_param);
-    ΔΩ_r ./= Ω0;
 
     (ΔΩ, ddrΔΩ, d2dr2ΔΩ) = replaceemptywitheps.(rotationprofile_radialderiv(r, ΔΩ_r, nr, Δr))
     (; Ω0, ΔΩ, ddrΔΩ, d2dr2ΔΩ)
@@ -1505,8 +1508,6 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     W_ℓs = ℓrange(m, nℓ, !V_symmetric)
 
     @views for (ℓind, ℓ) in enumerate(V_ℓs)
-        inds_ℓℓ = blockinds((m, nr), ℓ, ℓ);
-
         ℓℓp1 = ℓ * (ℓ + 1)
         two_over_ℓℓp1 = 2/ℓℓp1
         two_over_ℓℓp1_min_1 = two_over_ℓℓp1 - 1
@@ -1566,19 +1567,19 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
             WV[Block(ℓind, ℓ′ind)] .+= T
 
-            if nvariables == 3
-                @. T = -(Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gMCU2 * Sscaling;
-                SV[Block(ℓind, ℓ′ind)] .+= T
-            end
+            # if nvariables == 3
+            #     @. T = -(Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gMCU2 * Sscaling;
+            #     SV[Block(ℓind, ℓ′ind)] .+= T
+            # end
         end
 
-        for ℓ′ in intersect(W_ℓs, ℓ-2:2:ℓ+2)
-            ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
-            if nvariables == 3
-                @. T = (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrMCU2 * Sscaling/Wscaling;
-                SW[Block(ℓind, ℓ′ind)] .+= T
-            end
-        end
+        # for ℓ′ in intersect(W_ℓs, ℓ-2:2:ℓ+2)
+        #     ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
+        #     if nvariables == 3
+        #         @. T = (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrMCU2 * Sscaling/Wscaling;
+        #         SW[Block(ℓind, ℓ′ind)] .+= T
+        #     end
+        # end
     end
     return M
 end
@@ -2036,12 +2037,14 @@ function sphericalharmonic_filter!(VWSinvsh, F, v, operators,
     flag
 end
 
+allocate_Pl(m, nℓ) = zeros(range(m, length = 2nℓ + 1))
+
 function chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff = 7, n_power_cutoff = 0.9;
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = zeros(rnage(m, length = 2nℓ + 1)),
+    Plcosθ = allocate_Pl(m, nℓ),
     filterfieldpowercutoff = 1e-4)
 
-    eigenfunction_n_theta!(VWSinv, F, v, m, operators; nℓ, Plcosθ)
+    eigenfunction_n_theta!(VWSinv, F, v, m; operators, nℓ, Plcosθ)
 
     @unpack V = VWSinv
     n_cutoff_ind = 1 + n_cutoff
@@ -2070,10 +2073,10 @@ end
 function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     θ_cutoff = deg2rad(75), equator_power_cutoff_frac = 0.3;
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = zeros(range(m, length = 2nℓ + 1)),
+    Plcosθ = allocate_Pl(m, nℓ),
     filterfieldpowercutoff = 1e-4)
 
-    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators; nℓ, Plcosθ)
+    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, nℓ, Plcosθ)
 
     eqfilter = true
 
@@ -2096,7 +2099,7 @@ end
 
 function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = zeros(range(m, length = 2nℓ + 1)),
+    Plcosθ = allocate_Pl(m, nℓ),
     filterfieldpowercutoff = 1e-4,
     nnodesmax = 7)
 
@@ -2106,7 +2109,7 @@ function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
     @unpack nvariables = operators.constants
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
-    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators; nℓ, Plcosθ)
+    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, nℓ, Plcosθ)
     eqind = argmin(abs.(θ .- pi/2))
 
     for X in fields
@@ -2228,7 +2231,7 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
 
     @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nθ, nℓ)
 
-    Plcosθ = zeros(range(m, length = 2nℓ + 1))
+    Plcosθ = allocate_Pl(m, nℓ)
 
     return (; MVcache, Vcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F)
 end
@@ -2456,7 +2459,7 @@ end
 
 function invshtransform2!(VWSinv, VWS, m;
     nℓ = size(VWS.V, 2),
-    Plcosθ = zeros(range(m, length = 2nℓ+1)),
+    Plcosθ = allocate_Pl(m, nℓ),
     V_symmetric = true)
 
     V_lm = VWS.V
@@ -2495,35 +2498,37 @@ function invshtransform2!(VWSinv, VWS, m;
     (; VWSinv, θ)
 end
 
-function eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators;
+function eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m;
+    operators,
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = zeros(range(m, length = 2nℓ + 1)))
+    Plcosθ = allocate_Pl(m, nℓ))
 
     eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
     invshtransform2!(VWSinv, VWSinvsh, m; nℓ, Plcosθ)
 end
 
-function eigenfunction_realspace(v, m, operators)
+function eigenfunction_realspace(v, m; operators)
     @unpack nr, nℓ = operators.radial_params
     (; θ) = spharm_θ_grid_uniform(m, nℓ)
     nθ = length(θ)
 
     @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nθ, nℓ)
 
-    eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m, operators)
+    eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators)
 
     return (; VWSinv, θ)
 end
 
-function eigenfunction_n_theta!(VWSinv, F, v, m, operators;
+function eigenfunction_n_theta!(VWSinv, F, v, m;
+    operators,
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = zeros(range(m, length = 2nℓ + 1)))
+    Plcosθ = allocate_Pl(m, nℓ))
 
     VW = eigenfunction_cheby_ℓm_spectrum!(F, v, operators)
     invshtransform2!(VWSinv, VW, m; nℓ, Plcosθ)
 end
 
 # precompile
-precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64))
+precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64, NTuple{2,Float64}))
 
 end # module

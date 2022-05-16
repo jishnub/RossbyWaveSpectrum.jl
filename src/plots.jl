@@ -268,12 +268,12 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators;
 end
 
 function eigenfunction(v::AbstractVector, m, operators; theory = false, f = figure(), kw...)
-    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m, operators)
+    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
     eigenfunction(VWSinv, θ, m, operators; theory, f, kw...)
 end
 
 function eigenfunctions_all(v::AbstractVector, m, operators; theory = false, kw...)
-    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m, operators)
+    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
     eigenfunctions_all(VWSinv, θ, m, operators; theory, kw...)
 end
 function eigenfunctions_all(VWSinv::NamedTuple, θ, m, operators; theory = false, kw...)
