@@ -1,4 +1,4 @@
-using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun, operatormatrix, Msun, G
+using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun, operatormatrix, Msun, G, StructMatrix
 using Test
 using LinearAlgebra
 using OffsetArrays
@@ -12,6 +12,8 @@ import ApproxFun
 using DelimitedFiles
 using PerformanceTestTools
 using UnPack
+using StructArrays
+using BlockArrays
 
 @testset "project quality" begin
     Aqua.test_all(RossbyWaveSpectrum,
@@ -155,7 +157,7 @@ const P11norm = -2/√3
 end
 
 @testset "constraints" begin
-    nr, nℓ = 50, 30
+    nr, nℓ = 30, 8
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.5, r_out_frac = 0.985)
     constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     @test maximum(abs, constraints.BC * constraints.ZC) < 1e-10
@@ -700,6 +702,39 @@ end
 #     end
 # end
 
+function matrix_subsample!(M_subsample::BlockArray{<:Real}, M::BlockArray{<:Real}, nr_M, nr, nℓ, nvariables)
+    nparams = nr*nℓ
+    @views for colind in 1:nvariables, rowind in 1:nvariables
+        Mblock = matrix_block(M, rowind, colind)
+        M_subsample_block = matrix_block(M_subsample, rowind, colind)
+        for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
+            Mblock_ℓℓ′ = Mblock[Block(ℓind, ℓ′ind)]
+            M_subsample_block_ℓℓ′ = M_subsample_block[Block(ℓind, ℓ′ind)]
+            M_subsample_block_ℓℓ′ .= Mblock_ℓℓ′[axes(M_subsample_block_ℓℓ′)...]
+        end
+    end
+    return M_subsample
+end
+
+function matrix_subsample!(M_subsample::StructArray{<:Complex,2}, M::StructArray{<:Complex,2}, args...)
+    matrix_subsample!(M_subsample.re, M.re, args...)
+    matrix_subsample!(M_subsample.im, M.im, args...)
+    return M_subsample
+end
+
+blockwise_cmp(f, x, y) = f(x,y)
+function blockwise_cmp(f, S1::StructMatrix{<:Complex}, S2::StructMatrix{<:Complex})
+    blockwise_cmp(f, S1.re, S2.re) && blockwise_cmp(f, S1.im, S2.im)
+end
+function blockwise_cmp(f, B1::BlockMatrix{<:Real}, B2::BlockMatrix{<:Real})
+    all(zip(blocks(B1), blocks(B2))) do (x, y)
+        blockwise_cmp(f, x, y)
+    end
+end
+
+blockwise_isequal(x, y) = blockwise_cmp(==, x, y)
+blockwise_isapprox(x, y; kw...) = blockwise_cmp((x, y) -> isapprox(x, y; kw...), x, y)
+
 @testset "matrix convergence with resolution: uniform rotation" begin
     nr, nℓ = 50, 2
     m = 5
@@ -711,59 +746,51 @@ end
     operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
     M3 = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators = operators3);
 
-    function matrix_subsample(M, nr_M, nr, nℓ, nvariables)
-        nparams = nr*nℓ
-        M_subsample = zeros(eltype(M), nvariables*nparams, nvariables*nparams)
-        for colind in 1:nvariables, rowind in 1:nvariables
-            Mv = matrix_block(M, rowind, colind, nvariables)
-            M_subsample_v = matrix_block(M_subsample, rowind, colind, nvariables)
-            for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
-                indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
-                indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
-                @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
-            end
-        end
-        return M_subsample
+    M_subsample = RossbyWaveSpectrum.allocate_operator_matrix(operators);
+
+    @testset "same size" begin
+        matrix_subsample!(M_subsample, M1, nr, nr, nℓ, nvariables)
+        @test blockwise_isequal(M_subsample, M1);
     end
 
-    @test matrix_subsample(M1, nr, nr, nℓ, nvariables) == M1;
-    M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nvariables);
+    matrix_subsample!(M_subsample, M2, nr+5, nr, nℓ, nvariables);
     @testset for rowind in 1:nvariables, colind in 1:nvariables
-        M2_ssv = matrix_block(M2_subsampled, rowind, colind, nvariables);
-        M1v = matrix_block(M1, rowind, colind, nvariables);
         @testset "real" begin
-            if rowind == 3 && colind == 2
-                @test real(M2_ssv) ≈ real(M1v) rtol=5e-3
-            else
-                @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
-            end
+            M2_ssv = matrix_block(M_subsample.re, rowind, colind);
+            M1v = matrix_block(M1.re, rowind, colind);
+
+            rtol = rowind == 3 && colind == 2 ? 5e-3 : 2e-3
+
+            @test blockwise_isapprox(M2_ssv, M1v; rtol)
         end
+
         @testset "imag" begin
-            if rowind == colind == 2
-                @test imag(M2_ssv) ≈ imag(M1v) rtol=2e-3
-            elseif rowind == colind == 3
-                @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
-            end
+            M2_ssv = matrix_block(M_subsample.im, rowind, colind);
+            M1v = matrix_block(M1.im, rowind, colind);
+
+            rtol = rowind == colind == 2 ? 2e-3 : 1e-4
+
+            @test blockwise_isapprox(M2_ssv, M1v; rtol)
         end
     end
 
-    M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nvariables);
+    matrix_subsample!(M_subsample, M3, nr+5, nr, nℓ, nvariables);
     @testset for rowind in 1:nvariables, colind in 1:nvariables
-        M3_ssv = matrix_block(M3_subsampled, rowind, colind, nvariables)
-        M1v = matrix_block(M1, rowind, colind, nvariables)
         @testset "real" begin
-            if rowind == 3 && colind == 2
-                @test real(M3_ssv) ≈ real(M1v) rtol=5e-3
-            else
-                @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
-            end
+            M3_ssv = matrix_block(M_subsample.re, rowind, colind, nvariables)
+            M1v = matrix_block(M1.re, rowind, colind, nvariables)
+
+            rtol = rowind == 3 && colind == 2 ? 5e-3 : 2e-3
+
+            @test blockwise_isapprox(M3_ssv, M1v; rtol)
         end
         @testset "imag" begin
-            if rowind == colind == 2
-                @test imag(M3_ssv) ≈ imag(M1v) rtol=2e-3
-            else
-                @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
-            end
+            M3_ssv = matrix_block(M_subsample.im, rowind, colind, nvariables)
+            M1v = matrix_block(M1.im, rowind, colind, nvariables)
+
+            rtol = rowind == colind == 2 ? 2e-3 : 1e-4
+
+            @test blockwise_isapprox(M3_ssv, M1v; rtol)
         end
     end
 end
@@ -778,7 +805,7 @@ function rossby_ridge_eignorm(λ, v, (A, B), m, nparams; ΔΩ_frac = 0)
 end
 
 @testset "uniform rotation solution" begin
-    nr, nℓ = 45, 15
+    nr, nℓ = 40, 8
     nparams = nr * nℓ
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
     constraints = RossbyWaveSpectrum.constraintmatrix(operators);
@@ -790,7 +817,7 @@ end
             operators, constraints, Δl_cutoff = 7, n_cutoff = 9,
             eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
             scale_eigenvectors = false);
-        @info "$(length(λuf)) eigenmode$(length(λuf) > 1 ? "s" : "") found for m = $m"
+        @info "uniform rot: $(length(λuf)) eigenmode$(length(λuf) > 1 ? "s" : "") found for m = $m"
         @testset "ℓ == m" begin
             res, ind = findmin(abs.(real(λuf) .- 2/(m+1)))
             @testset "eigenvalue" begin
@@ -864,14 +891,13 @@ end
 end
 
 @testset "constant differential rotation and uniform rotation" begin
-    nr, nℓ = 20, 15
+    nr, nℓ = 20, 8
     m = 3
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
     Mu = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators);
     Mc = RossbyWaveSpectrum.differential_rotation_matrix(m;
             rotation_profile = :constant, operators, ΔΩ_frac = 0);
-    @test Mu.re ≈ Mc.re
-    @test Mu.im ≈ Mu.im
+    @test blockwise_isapprox(Mu, Mc)
 end
 
 @testset "radial differential rotation" begin
@@ -892,10 +918,10 @@ end
                 Rc = matrix_block(Mr, rowind, colind, nvariables)
                 C = matrix_block(Mc, rowind, colind, nvariables)
                 @testset "real" begin
-                    @test real(Rc) ≈ real(C) atol = 1e-10 rtol = 1e-3
+                    @test blockwise_isapprox(Rc.re, C.re, atol = 1e-10, rtol = 1e-3)
                 end
                 @testset "imag" begin
-                    @test imag(Rc) ≈ imag(C) atol = 1e-10 rtol = 1e-3
+                    @test blockwise_isapprox(Rc.im, C.im, atol = 1e-10, rtol = 1e-3)
                 end
             end
         end
@@ -1105,68 +1131,59 @@ end
             @unpack nvariables = operators.constants;
             operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
             operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
+            M_subsample = RossbyWaveSpectrum.allocate_operator_matrix(operators);
+            M1 = RossbyWaveSpectrum.allocate_operator_matrix(operators);
+            M2 = RossbyWaveSpectrum.allocate_operator_matrix(operators2);
+            M3 = RossbyWaveSpectrum.allocate_operator_matrix(operators3);
+
             @testset for rotation_profile in [:radial_linear, :radial]
-                M1 = RossbyWaveSpectrum.differential_rotation_matrix(m; operators, rotation_profile);
-                M2 = RossbyWaveSpectrum.differential_rotation_matrix(m; operators = operators2, rotation_profile);
-                M3 = RossbyWaveSpectrum.differential_rotation_matrix(m; operators = operators3, rotation_profile);
+                RossbyWaveSpectrum.differential_rotation_matrix!(M1, m; operators, rotation_profile);
+                RossbyWaveSpectrum.differential_rotation_matrix!(M2, m; operators = operators2, rotation_profile);
+                RossbyWaveSpectrum.differential_rotation_matrix!(M3, m; operators = operators3, rotation_profile);
 
-                function matrix_subsample(M, nr_M, nr, nℓ, nvariables)
-                    nparams = nr*nℓ
-                    M_subsample = zeros(eltype(M), nvariables*nparams, nvariables*nparams)
-                    for colind in 1:nvariables, rowind in 1:nvariables
-                        Mv = matrix_block(M, rowind, colind, nvariables)
-                        M_subsample_v = matrix_block(M_subsample, rowind, colind, nvariables)
-                        for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
-                            indscheb_M = CartesianIndices(((ℓind - 1)*nr_M .+ (1:nr), (ℓ′ind - 1)*nr_M .+ (1:nr)))
-                            indscheb_Mss = CartesianIndices(((ℓind - 1)*nr .+ (1:nr), (ℓ′ind - 1)*nr .+ (1:nr)))
-                            @views M_subsample_v[indscheb_Mss] = Mv[indscheb_M]
-                        end
-                    end
-                    return M_subsample
+                @testset "same size" begin
+                    matrix_subsample!(M_subsample, M1, nr, nr, nℓ, nvariables)
+                    @test blockwise_isequal(M_subsample, M1);
                 end
 
-                @test matrix_subsample(M1, nr, nr, nℓ, nvariables) == M1;
-                @testset "nr+5, nℓ" begin
-                    M2_subsampled = matrix_subsample(M2, nr+5, nr, nℓ, nvariables);
-                    @testset for rowind in 1:nvariables, colind in 1:nvariables
-                        M2_ssv = matrix_block(M2_subsampled, rowind, colind, nvariables);
-                        M1v = matrix_block(M1, rowind, colind, nvariables);
-                        @testset "real" begin
-                            if rowind == 3 && colind == 2
-                                @test real(M2_ssv) ≈ real(M1v) rtol=5e-3
-                            else
-                                @test real(M2_ssv) ≈ real(M1v) rtol=2e-3
-                            end
-                        end
-                        @testset "imag" begin
-                            if rowind == colind == 2
-                                @test imag(M2_ssv) ≈ imag(M1v) rtol=2e-3
-                            else
-                                @test imag(M2_ssv) ≈ imag(M1v) rtol=1e-4
-                            end
-                        end
+                matrix_subsample!(M_subsample, M2, nr+5, nr, nℓ, nvariables);
+                @testset for rowind in 1:nvariables, colind in 1:nvariables
+                    @testset "real" begin
+                        M2_ssv = matrix_block(M_subsample.re, rowind, colind);
+                        M1v = matrix_block(M1.re, rowind, colind);
+
+                        rtol = rowind == 3 && colind == 2 ? 5e-3 : 2e-3
+
+                        @test blockwise_isapprox(M2_ssv, M1v; rtol)
+                    end
+
+                    @testset "imag" begin
+                        M2_ssv = matrix_block(M_subsample.im, rowind, colind);
+                        M1v = matrix_block(M1.im, rowind, colind);
+
+                        rtol = rowind == colind == 2 ? 2e-3 : 1e-4
+
+                        @test blockwise_isapprox(M2_ssv, M1v; rtol)
                     end
                 end
 
-                @testset "nr+5, nℓ+5" begin
-                    M3_subsampled = matrix_subsample(M3, nr+5, nr, nℓ, nvariables);
-                    @testset for rowind in 1:nvariables, colind in 1:nvariables
-                        M3_ssv = matrix_block(M3_subsampled, rowind, colind, nvariables)
-                        M1v = matrix_block(M1, rowind, colind, nvariables)
-                        @testset "real" begin
-                            if rowind == 3 && colind == 2
-                                @test real(M3_ssv) ≈ real(M1v) rtol=5e-3
-                            else
-                                @test real(M3_ssv) ≈ real(M1v) rtol=2e-3
-                            end
-                        end
-                        @testset "imag" begin
-                            if rowind == colind == 2
-                                @test imag(M3_ssv) ≈ imag(M1v) rtol=2e-3
-                            else
-                                @test imag(M3_ssv) ≈ imag(M1v) rtol=1e-4
-                            end
-                        end
+                matrix_subsample!(M_subsample, M3, nr+5, nr, nℓ, nvariables);
+                @testset for rowind in 1:nvariables, colind in 1:nvariables
+                    @testset "real" begin
+                        M3_ssv = matrix_block(M_subsample.re, rowind, colind)
+                        M1v = matrix_block(M1.re, rowind, colind)
+
+                        rtol = rowind == 3 && colind == 2 ? 5e-3 : 2e-3
+
+                        @test blockwise_isapprox(M3_ssv, M1v; rtol)
+                    end
+                    @testset "imag" begin
+                        M3_ssv = matrix_block(M_subsample.im, rowind, colind)
+                        M1v = matrix_block(M1.im, rowind, colind)
+
+                        rtol = rowind == colind == 2 ? 2e-3 : 1e-4
+
+                        @test blockwise_isapprox(M3_ssv, M1v; rtol)
                     end
                 end
             end
@@ -1222,7 +1239,7 @@ end
 end
 
 @testset "constant differential rotation solution" begin
-    nr, nℓ = 50, 15
+    nr, nℓ = 45, 8
     nparams = nr * nℓ
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     @unpack r_in, r_out, Δr = operators.radial_params
@@ -1294,7 +1311,7 @@ end
                 operators, constraints, Δl_cutoff = 7, n_cutoff = 9, ΔΩ_frac_low = -0.01,
                 ΔΩ_frac_high = 0.03, eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
-            @info "$(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
+            @info "const diff rot: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
             @testset "ℓ == m" begin
                 ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_frac = 0.02)
                 @test findmin(abs.(real(λrf) .- ω0))[1] < 1e-4

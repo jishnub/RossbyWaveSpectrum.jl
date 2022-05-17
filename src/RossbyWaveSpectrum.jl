@@ -883,6 +883,11 @@ function blockinds((m, nr), ℓ, ℓ′ = ℓ)
 end
 
 matrix_block(M::AbstractBlockMatrix, rowind, colind, nblocks = 3) = M[Block(rowind, colind)]
+function matrix_block(M::StructMatrix{<:Complex}, rowind, colind, nblocks = 3)
+    Mr = matrix_block(M.re, rowind, colind, nblocks)
+    Mi = matrix_block(M.im, rowind, colind, nblocks)
+    StructArray{eltype(M)}((Mr, Mi))
+end
 function matrix_block(M::AbstractMatrix, rowind, colind, nblocks = 3)
     nparams = div(size(M, 1), nblocks)
     inds1 = (rowind - 1) * nparams .+ (1:nparams)
