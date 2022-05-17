@@ -371,6 +371,24 @@ function eigenfunctions_rossbyridge_all(λs, vs, m, operators; kw...)
     end
 end
 
+function eigenfunction_spectrum(v, nr, nℓ; V_symmetric = true)
+    Vr = reshape(v.re[1:nr*nℓ], nr, nℓ)
+    Vi = reshape(v.im[1:nr*nℓ], nr, nℓ)
+    Wr = reshape(v.re[nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
+    Wi = reshape(v.im[nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
+    Sr = reshape(v.re[2nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
+    Si = reshape(v.im[2nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
+
+    Vℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
+    Wℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, !V_symmetric)
+    Sℓ = Wℓ
+
+    compare_terms(Vr, Wr, Sr, Vi, Wi, Si; nrows = 2,
+        titles = ["Vr", "Wr", "Sr", "Vi", "Wi", "Si"],
+        xlabel = "spharm ℓ", ylabel = "chebyshev order",
+        x = [Vℓ, Wℓ, Sℓ, Vℓ, Wℓ, Sℓ], y = 0:nr-1)
+end
+
 function plot_matrix(M, nfields = 3)
     f, axlist = subplots(3, 3)
     for colind in 1:3, rowind in 1:3
@@ -451,22 +469,34 @@ function plot_diffrot_radial(operators, smoothing_param = 1e-5)
     f.tight_layout()
 end
 
-function compare_terms(terms...; x = nothing, y = nothing, titles = ["" for _ in terms])
-    n = length(terms)
+function compare_terms(terms...; x = nothing, y = nothing,
+        titles = ["" for _ in terms], nrows = 1, cmap = "RdBu",
+        xlabel = "", ylabel = "")
+    ncols = ceil(Int, length(terms)/nrows)
     f = figure()
     for (ind, (term, title)) in enumerate(zip(terms, titles))
-        ax = subplot(1, n, ind)
+        ax = subplot(nrows, ncols, ind)
         ax.xaxis.set_major_locator(ticker.MaxNLocator(4))
         ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
+        vmax = maximum(abs, term)
+        kwargs = Dict(:cmap => cmap, :vmax => vmax, :vmin => -vmax)
         p = if isnothing(x) && isnothing(y)
-            ax.pcolormesh(term)
+            ax.pcolormesh(term; kwargs...)
+        elseif x isa AbstractVector{<:AbstractVector} && y isa AbstractVector{<:AbstractVector}
+            ax.pcolormesh(x[ind], y[ind], term, shading = "auto"; kwargs...)
+        elseif x isa AbstractVector{<:AbstractVector}
+            ax.pcolormesh(x[ind], y, term, shading = "auto"; kwargs...)
+        elseif y isa AbstractVector{<:AbstractVector}
+            ax.pcolormesh(x, y[ind], term, shading = "auto"; kwargs...)
         else
-            ax.pcolormesh(x, y, term, shading = "auto")
+            ax.pcolormesh(x, y, term, shading = "auto"; kwargs...)
         end
         ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
         cb = colorbar(mappable = p)
         cb.ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
     end
-    f.set_size_inches(4n, 4)
+    f.set_size_inches(4ncols, 3nrows)
     f.tight_layout()
 end
