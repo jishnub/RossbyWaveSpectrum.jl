@@ -1252,7 +1252,7 @@ end
                 operators, constraints, Δl_cutoff = 7, n_cutoff = 9, ΔΩ_frac_low = -0.01,
                 ΔΩ_frac_high = 0.03, eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
-            @info "$(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
+            @info "constant diff rot: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
             @testset "ℓ == m" begin
                 ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_frac = 0.02)
                 @test findmin(abs.(real(λrf) .- ω0))[1] < 1e-4
@@ -1311,7 +1311,7 @@ end
                 operators, constraints, Δl_cutoff = 7, n_cutoff = 9, ΔΩ_frac_low = -0.01,
                 ΔΩ_frac_high = 0.03, eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
-            @info "const diff rot: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
+            @info "radial_constant diff rot: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
             @testset "ℓ == m" begin
                 ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_frac = 0.02)
                 @test findmin(abs.(real(λrf) .- ω0))[1] < 1e-4

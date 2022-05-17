@@ -928,30 +928,27 @@ end
 computesparse(M::AbstractMatrix) = sparse(M)
 computesparse(S::SparseMatrixCSC) = S
 
-function allocate_operator_matrix(operators, bandwidth = 2)
-    @unpack nr, nℓ, nparams = operators.radial_params
-    @unpack nvariables = operators.constants
-    # individual BlockBandedMatrix
+function allocate_block_matrix(nr, nℓ, nvariables, bandwidth)
+    nparams = nr*nℓ
     cols = rows = Fill(nr, nℓ) # block sizes
     l,u = bandwidth, bandwidth # block bandwidths
+    mortar(reshape(
+            [BlockBandedMatrix(Zeros(nparams,nparams), rows,cols, (l,u)) for _ in 1:nvariables^2],
+                nvariables, nvariables))
+end
 
-    R = mortar(reshape(
-            [BlockBandedMatrix(Zeros(nparams,nparams), rows,cols, (l,u)) for i in 1:nvariables^2],
-                nvariables, nvariables))
-    I = mortar(reshape(
-            [BlockBandedMatrix(Zeros(nparams,nparams), rows,cols, (0,0)) for i in 1:nvariables^2],
-                nvariables, nvariables))
+function allocate_operator_matrix(operators, bandwidth = 2)
+    @unpack nr, nℓ = operators.radial_params
+    @unpack nvariables = operators.constants
+    R = allocate_block_matrix(nr, nℓ, nvariables, bandwidth)
+    I = allocate_block_matrix(nr, nℓ, nvariables, 0)
     StructArray{ComplexF64}((R, I))
 end
 
 function allocate_mass_matrix(operators)
-    @unpack nr, nℓ, nparams = operators.radial_params
+    @unpack nr, nℓ = operators.radial_params
     @unpack nvariables = operators.constants
-    # individual BlockBandedMatrix
-    cols = rows = Fill(nr, nℓ) # block sizes
-    mortar(reshape(
-            [BlockBandedMatrix(Zeros(nparams,nparams), rows,cols, (0,0)) for i in 1:nvariables^2],
-                nvariables, nvariables))
+    allocate_block_matrix(nr, nℓ, nvariables, 0)
 end
 
 ℓrange(m, nℓ, symmetric) = range(m + !symmetric, length = nℓ, step = 2)
