@@ -2020,7 +2020,7 @@ end
 
 function sphericalharmonic_filter!(VWSinvsh, F, v, operators,
         Δl_cutoff = 7, power_cutoff = 0.9, filterfieldpowercutoff = 1e-4)
-    eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
+    eigenfunction_rad_sh!(VWSinvsh, F, v; operators)
     l_cutoff_ind = 1 + Δl_cutoff÷2
 
     flag = true
@@ -2029,8 +2029,8 @@ function sphericalharmonic_filter!(VWSinvsh, F, v, operators,
     @unpack nvariables = operators.constants
     fields = filterfields(VWSinvsh, v, nparams, nvariables; filterfieldpowercutoff)
 
-    for X in fields
-        PV_frac = sum(abs2, @view X[:, 1:l_cutoff_ind]) / sum(abs2, X)
+    @views for X in fields
+        PV_frac = sum(abs2, X[:, 1:l_cutoff_ind]) / sum(abs2, X)
         flag &= PV_frac > power_cutoff
     end
 
@@ -2061,9 +2061,9 @@ function chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff = 7, n_power_cut
     @unpack nvariables = operators.constants
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
-    for X in fields
-        Xrange = view(X, :, rangescan)
-        PV_frac = sum(abs2, @view X[1:n_cutoff_ind, rangescan]) / sum(abs2, @view X[:, rangescan])
+    @views for X in fields
+        Xrange = X[:, rangescan]
+        PV_frac = sum(abs2, X[1:n_cutoff_ind, rangescan]) / sum(abs2, X[:, rangescan])
         flag &= PV_frac > n_power_cutoff
     end
 
@@ -2417,7 +2417,7 @@ function save_eigenvalues(f, mr; operators, kw...)
     jldsave(fname; lam, vec, mr, nr, nℓ, kw)
 end
 
-function eigenfunction_cheby_ℓm_spectrum!(F, v, operators)
+function eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
     @unpack radial_params = operators
     @unpack nparams, nr, nℓ = radial_params
     @unpack nvariables = operators.constants
@@ -2433,8 +2433,8 @@ function eigenfunction_cheby_ℓm_spectrum!(F, v, operators)
     (; V, W, S)
 end
 
-function eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
-    VWS = eigenfunction_cheby_ℓm_spectrum!(F, v, operators)
+function eigenfunction_rad_sh!(VWSinvsh, F, v; operators, n_cutoff = -1, kw...)
+    VWS = eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
     @unpack Tcrinvc = operators.transforms;
     @unpack V, W, S = VWS
 
@@ -2442,9 +2442,22 @@ function eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
     Winv = VWSinvsh.W
     Sinv = VWSinvsh.S
 
-    mul!(Vinv, Tcrinvc, V)
-    mul!(Winv, Tcrinvc, W)
-    mul!(Sinv, Tcrinvc, S)
+    if n_cutoff >= 0
+        temp = similar(V)
+        temp .= V
+        temp[n_cutoff+1:end, :] .= 0
+        mul!(Vinv, Tcrinvc, temp)
+        temp .= W
+        temp[n_cutoff+1:end, :] .= 0
+        mul!(Winv, Tcrinvc, temp)
+        temp .= S
+        temp[n_cutoff+1:end, :] .= 0
+        mul!(Sinv, Tcrinvc, temp)
+    else
+        mul!(Vinv, Tcrinvc, V)
+        mul!(Winv, Tcrinvc, W)
+        mul!(Sinv, Tcrinvc, S)
+    end
 
     return VWSinvsh
 end
@@ -2460,7 +2473,9 @@ end
 function invshtransform2!(VWSinv, VWS, m;
     nℓ = size(VWS.V, 2),
     Plcosθ = allocate_Pl(m, nℓ),
-    V_symmetric = true)
+    V_symmetric = true,
+    Δl_cutoff = lastindex(Plcosθ),
+    kw...)
 
     V_lm = VWS.V
     W_lm = VWS.W
@@ -2475,20 +2490,22 @@ function invshtransform2!(VWSinv, VWS, m;
     S = VWSinv.S
     S .= 0
 
-    V_ℓs = range(m + !V_symmetric, length = nℓ, step = 2)
+    V_ℓs = ℓrange(m, nℓ, V_symmetric)
 
     W_symmetric = !V_symmetric
-    W_ℓs = range(m + !W_symmetric, length = nℓ, step = 2)
+    W_ℓs = ℓrange(m, nℓ, W_symmetric)
 
     @views for (θind, θi) in enumerate(θ)
         collectPlm!(Plcosθ, cos(θi); m, norm = Val(:normalized))
         # V
         for (ℓind, ℓ) in enumerate(V_ℓs)
+            ℓ > m + Δl_cutoff && continue
             Plmcosθ = Plcosθ[ℓ]
             @. V[:, θind] += V_lm[:, ℓind] * Plmcosθ
         end
         # W, S
         for (ℓind, ℓ) in enumerate(W_ℓs)
+            ℓ > m + Δl_cutoff && continue
             Plmcosθ = Plcosθ[ℓ]
             @. W[:, θind] += W_lm[:, ℓind] * Plmcosθ
             @. S[:, θind] += S_lm[:, ℓind] * Plmcosθ
@@ -2501,20 +2518,21 @@ end
 function eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m;
     operators,
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = allocate_Pl(m, nℓ))
+    Plcosθ = allocate_Pl(m, nℓ),
+    kw...)
 
-    eigenfunction_rad_sh!(VWSinvsh, F, v, operators)
-    invshtransform2!(VWSinv, VWSinvsh, m; nℓ, Plcosθ)
+    eigenfunction_rad_sh!(VWSinvsh, F, v; operators, kw...)
+    invshtransform2!(VWSinv, VWSinvsh, m; nℓ, Plcosθ, kw...)
 end
 
-function eigenfunction_realspace(v, m; operators)
+function eigenfunction_realspace(v, m; operators, kw...)
     @unpack nr, nℓ = operators.radial_params
     (; θ) = spharm_θ_grid_uniform(m, nℓ)
     nθ = length(θ)
 
     @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nθ, nℓ)
 
-    eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators)
+    eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, kw...)
 
     return (; VWSinv, θ)
 end
@@ -2522,10 +2540,11 @@ end
 function eigenfunction_n_theta!(VWSinv, F, v, m;
     operators,
     nℓ = operators.radial_params.nℓ,
-    Plcosθ = allocate_Pl(m, nℓ))
+    Plcosθ = allocate_Pl(m, nℓ),
+    kw...)
 
-    VW = eigenfunction_cheby_ℓm_spectrum!(F, v, operators)
-    invshtransform2!(VWSinv, VW, m; nℓ, Plcosθ)
+    VW = eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
+    invshtransform2!(VWSinv, VW, m; nℓ, Plcosθ, kw...)
 end
 
 # precompile
