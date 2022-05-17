@@ -677,6 +677,7 @@ end
 
 function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
     scalings = (; Wscaling = 1e1, Sscaling = 1e6))
+    scalings = merge((; Wscaling = 1e1, Sscaling = 1e6), scalings)
     _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, (scalings.Wscaling, scalings.Sscaling))
 end
 function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, (Wscaling, Sscaling))
