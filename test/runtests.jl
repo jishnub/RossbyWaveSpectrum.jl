@@ -158,7 +158,7 @@ end
 
 @testset "constraints" begin
     nr, nℓ = 30, 8
-    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.5, r_out_frac = 0.985)
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.5, r_out_frac = 0.985);
     constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     @test maximum(abs, constraints.BC * constraints.ZC) < 1e-10
 end

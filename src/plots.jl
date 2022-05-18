@@ -1,7 +1,7 @@
 using PyCall
 using PyPlot
 using RossbyWaveSpectrum
-using RossbyWaveSpectrum: Rsun, rossbyeigenfilename
+using RossbyWaveSpectrum: Rsun, rossbyeigenfilename, StructMatrix
 using LaTeXStrings
 using SimpleDelimitedFiles
 using JLD2
@@ -13,9 +13,18 @@ plotdir = joinpath(dirname(dirname(@__DIR__)), "plots")
 ticker = pyimport("matplotlib.ticker")
 axes_grid1 = pyimport("mpl_toolkits.axes_grid1")
 
+realview(M::StructMatrix{<:Complex}) = M.re
 function realview(M::AbstractMatrix{Complex{T}}) where {T}
     @view reinterpret(reshape, T, M)[1, :, :]
 end
+realview(M::AbstractMatrix{<:Real}) = M
+function imagview(M::AbstractMatrix{Complex{T}}) where {T}
+    @view reinterpret(reshape, T, M)[2, :, :]
+end
+imagview(M::StructMatrix{<:Complex}) = M.im
+imagview(M::AbstractMatrix{<:Real}) = M
+
+axlistvector(_axlist) = reshape([_axlist;], Val(1))
 
 function cbformat(x, _)
     a, b = split((@sprintf "%.1e" x), 'e')
@@ -372,27 +381,35 @@ function eigenfunctions_rossbyridge_all(λs, vs, m, operators; kw...)
 end
 
 function eigenfunction_spectrum(v, nr, nℓ; V_symmetric = true)
+    nvariables = length(v) ÷ (nr*nℓ)
     Vr = reshape(v.re[1:nr*nℓ], nr, nℓ)
     Vi = reshape(v.im[1:nr*nℓ], nr, nℓ)
     Wr = reshape(v.re[nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
     Wi = reshape(v.im[nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
-    Sr = reshape(v.re[2nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
-    Si = reshape(v.im[2nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
+    terms = [Vr, Wr, Vi, Wi]
+    if nvariables == 3
+        Sr = reshape(eltype(v.re)[], 0, 0)
+        Si = reshape(eltype(v.im)[], 0, 0)
+        terms = [Vr, Wr, Sr, Vi, Wi, Si]
+    end
 
     Vℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
     Wℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, !V_symmetric)
     Sℓ = Wℓ
 
-    compare_terms(Vr, Wr, Sr, Vi, Wi, Si; nrows = 2,
-        titles = ["Vr", "Wr", "Sr", "Vi", "Wi", "Si"],
+    x = nvariables == 3 ? [Vℓ, Wℓ, Sℓ, Vℓ, Wℓ, Sℓ] : [Vℓ, Wℓ, Vℓ, Wℓ]
+    titles = nvariables == 3 ? ["Vr", "Wr", "Sr", "Vi", "Wi", "Si"] : ["Vr", "Wr", "Vi", "Wi"]
+
+    compare_terms(terms; nrows = 2,
+        titles,
         xlabel = "spharm ℓ", ylabel = "chebyshev order",
-        x = [Vℓ, Wℓ, Sℓ, Vℓ, Wℓ, Sℓ], y = 0:nr-1)
+        x, y = 0:nr-1)
 end
 
-function plot_matrix(M, nfields = 3)
+function plot_matrix(M, nvariables = 3)
     f, axlist = subplots(3, 3)
     for colind in 1:3, rowind in 1:3
-        Mv = abs.(RossbyWaveSpectrum.matrix_block(M, rowind, colind, nfields))
+        Mv = abs.(RossbyWaveSpectrum.matrix_block(M, rowind, colind, nvariables))
         vmax = max(maximum(Mv), 1e-200)
         ax = axlist[rowind, colind]
         p = ax.imshow(Mv, vmax = vmax, vmin = -vmax, cmap = "RdBu_r")
@@ -403,33 +420,48 @@ function plot_matrix(M, nfields = 3)
     f.tight_layout()
 end
 
-function plot_matrix_block(M, rowind, colind, nfields = 3)
-    f, axlist = subplots(1, 2)
-    M = RossbyWaveSpectrum.matrix_block(M, rowind, colind, nfields)
-    A = realview(M)
-    Amax = maximum(abs, A)
-    p1 = axlist[1].pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
-    cb1 = colorbar(mappable = p1, ax = axlist[1])
-    A = imag(M)
-    Amax = maximum(abs, A)
-    p2 = axlist[2].pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
-    cb2 = colorbar(mappable = p2, ax = axlist[2])
+function plot_matrix_block(M, rowind, colind, nvariables = 3; reim = :reim)
+    f, _axlist = subplots(1, reim == :reim ? 2 : 1)
+    axlist = Iterators.Stateful(axlistvector(_axlist))
+
+    Mblock = RossbyWaveSpectrum.matrix_block(M, rowind, colind, nvariables)
+    if reim ∈ (:re, :reim)
+        A = realview(Mblock)
+        Amax = maximum(abs, A)
+        ax = popfirst!(axlist)
+        p1 = ax.pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
+        cb1 = colorbar(mappable = p1, ax = ax)
+    end
+    if reim ∈ (:im, :reim)
+        A = imagview(Mblock)
+        Amax = maximum(abs, A)
+        ax = popfirst!(axlist)
+        p2 = ax.pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
+        cb2 = colorbar(mappable = p2, ax = ax)
+    end
     f.tight_layout()
 end
 
-function plot_matrix_block(M, rowind, colind, nr, ℓind, ℓ′ind, nfields = 3)
-    f, axlist = subplots(1, 2)
-    M = RossbyWaveSpectrum.matrix_block(M, rowind, colind, nfields)
-    ℓinds = (ℓind - 1) * nr .+ (1:nr)
-    ℓ′inds = (ℓ′ind - 1) * nr .+ (1:nr)
-    A = realview(M)[ℓinds, ℓ′inds]
-    Amax = maximum(abs, A)
-    p1 = axlist[1].pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
-    cb1 = colorbar(mappable = p1, ax = axlist[1])
-    A = imag(M)[ℓinds, ℓ′inds]
-    Amax = maximum(abs, A)
-    p2 = axlist[2].pcolormesh(A, cmap = "RdBu", vmax = Amax, vmin = -Amax)
-    cb2 = colorbar(mappable = p2, ax = axlist[2])
+function plot_matrix_block(M, rowind, colind, nℓ, ℓind, ℓ′ind, nvariables = 3; reim = :reim)
+    f, _axlist = subplots(1, reim == :reim ? 2 : 1)
+    axlist = Iterators.Stateful(axlistvector(_axlist))
+
+    Mblock = RossbyWaveSpectrum.matrix_block(M, rowind, colind, nvariables)
+
+    if reim ∈ (:re, :reim)
+        Mblockℓℓ′ = RossbyWaveSpectrum.matrix_block(realview(Mblock), ℓind, ℓ′ind, nℓ)
+        Amax = maximum(abs, Mblockℓℓ′)
+        ax = popfirst!(axlist)
+        p1 = ax.pcolormesh(Mblockℓℓ′, cmap = "RdBu", vmax = Amax, vmin = -Amax)
+        cb1 = colorbar(mappable = p1, ax = ax)
+    end
+    if reim ∈ (:im, :reim)
+        Mblockℓℓ′ = RossbyWaveSpectrum.matrix_block(imagview(Mblock), ℓind, ℓ′ind, nℓ)
+        Amax = maximum(abs, Mblockℓℓ′)
+        ax = popfirst!(axlist)
+        p2 = ax.pcolormesh(Mblockℓℓ′, cmap = "RdBu", vmax = Amax, vmin = -Amax)
+        cb2 = colorbar(mappable = p2, ax = ax)
+    end
     f.tight_layout()
 end
 
@@ -469,7 +501,7 @@ function plot_diffrot_radial(operators, smoothing_param = 1e-5)
     f.tight_layout()
 end
 
-function compare_terms(terms...; x = nothing, y = nothing,
+function compare_terms(@nospecialize(terms); x = nothing, y = nothing,
         titles = ["" for _ in terms], nrows = 1, cmap = "RdBu",
         xlabel = "", ylabel = "")
     ncols = ceil(Int, length(terms)/nrows)

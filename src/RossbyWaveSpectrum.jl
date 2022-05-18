@@ -406,7 +406,7 @@ function constraintmatrix(operators; V_basis = 1, W_basis = 1, S_basis = 1)
     BC = computesparse(BC_block)
     ZC = computesparse(ZC_block)
 
-    (; BC, ZC, nvariables)
+    (; BC, ZC, nvariables, ZC_block)
 end
 
 """
@@ -676,11 +676,12 @@ macro checkncoeff(v, nr)
 end
 
 function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
-    scalings = (; Wscaling = 1e1, Sscaling = 1e6))
-    scalings = merge((; Wscaling = 1e1, Sscaling = 1e6), scalings)
-    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, (scalings.Wscaling, scalings.Sscaling))
+    scalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3))
+    scalings = merge((; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3), scalings)
+    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν,
+        (scalings.Wscaling, scalings.Sscaling, scalings.Weqglobalscaling))
 end
-function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, (Wscaling, Sscaling))
+function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, (Wscaling, Sscaling, Weqglobalscaling))
     r_in = r_in_frac * Rsun;
     r_out = r_out_frac * Rsun;
     radial_params = parameters(nr, nℓ; r_in, r_out);
@@ -824,9 +825,9 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     IU2 = matCU2(I);
 
     scalings = Dict{Symbol, Float64}()
-    @pack! scalings = Sscaling, Wscaling
+    @pack! scalings = Sscaling, Wscaling, Weqglobalscaling
 
-    constants = (; κ, ν, nvariables, Ω0, scalings)
+    constants = (; κ, ν, nvariables, Ω0)
     identities = (; Ir, Iℓ, IU2)
 
     coordinates = Dict{Symbol, Vector{Float64}}()
@@ -863,6 +864,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     (;
         constants, rad_terms,
+        scalings,
         splines,
         diff_operators,
         transforms, coordinates,
@@ -909,12 +911,14 @@ function matrix_block_maximum(M::StructMatrix{<:Complex}, nblocks = 3)
     I = matrix_block_maximum(abs, M.im, nblocks)
     [R I]
 end
-function matrix_block_maximum(M::AbstractMatrix, nblocks = 3)
+function matrix_block_maximum(M::AbstractMatrix{<:Complex}, nblocks = 3)
     R = matrix_block_maximum(abs∘real, M, nblocks)
     I = matrix_block_maximum(abs∘imag, M, nblocks)
     [R I]
 end
-
+function matrix_block_maximum(M::AbstractMatrix{<:Real}, nblocks = 3)
+    matrix_block_maximum(abs∘real, M, nblocks)
+end
 
 function computesparse(M::StructMatrix{<:Complex})
     SR = computesparse(M.re)
@@ -923,7 +927,8 @@ function computesparse(M::StructMatrix{<:Complex})
 end
 
 function computesparse(M::BlockMatrix)
-    hvcat((3,3,3), [sparse(M[j, i]) for (i,j) in Iterators.product(blockaxes(M)...)]...)
+    rows = ntuple(_ -> blocksize(M,2), blocksize(M,1))
+    hvcat(rows, [sparse(M[j, i]) for (i,j) in Iterators.product(blockaxes(M)...)]...)
 end
 
 computesparse(M::AbstractMatrix) = sparse(M)
@@ -964,6 +969,7 @@ function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
     @unpack IU2 = operators.identities;
     @unpack nvariables = operators.constants
     @unpack ddrDDrMCU4, onebyr2MCU4 = operators.operator_matrices;
+    @unpack Weqglobalscaling = operators.scalings
 
     B .= 0
 
@@ -991,7 +997,7 @@ function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
         ℓℓp1 = ℓ * (ℓ+1)
 
         @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
-        WW[Block(ℓind, ℓind)] .= Rsun^2 .* ddrDDr_minus_ℓℓp1_by_r2MCU4
+        WW[Block(ℓind, ℓind)] .= (Weqglobalscaling * Rsun^2) .* ddrDDr_minus_ℓℓp1_by_r2MCU4
     end
 
     return B
@@ -1004,9 +1010,9 @@ function uniform_rotation_matrix(m; operators, kw...)
 end
 
 function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_symmetric = true, kw...)
-    (; nvariables, Ω0, scalings) = operators.constants;
+    @unpack nvariables, Ω0 = operators.constants;
     @unpack nr, nℓ = operators.radial_params
-    @unpack Sscaling, Wscaling = scalings
+    @unpack Sscaling, Wscaling, Weqglobalscaling = operators.scalings
     @unpack IU2 = operators.identities;
 
     @unpack ddrMCU4, DDrMCU2, DDr_minus_2byrMCU2, ddrDDrMCU4, κ_∇r2_plus_ddr_lnρT_ddrMCU2,
@@ -1063,11 +1069,12 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
 
         @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
 
-        WW[Block(ℓind, ℓind)] .= twom_by_ℓℓp1 * Rsun^2 .* (ddrDDr_minus_ℓℓp1_by_r2MCU4 .- ℓℓp1 .* ηρ_by_rMCU4)
+        WW[Block(ℓind, ℓind)] .= (Weqglobalscaling * twom_by_ℓℓp1 * Rsun^2) .*
+                                (ddrDDr_minus_ℓℓp1_by_r2MCU4 .- ℓℓp1 .* ηρ_by_rMCU4)
 
         if nvariables == 3
             @. T = - gMCU4 / (Ω0^2 * Rsun)  * Wscaling/Sscaling
-            WS[Block(ℓind, ℓind)] .= T
+            WS[Block(ℓind, ℓind)] .= Weqglobalscaling .* T
             @. T = ℓℓp1 * ddr_S0_by_cp_by_r2MCU2 * (Rsun^3 * Sscaling/Wscaling)
             SW[Block(ℓind, ℓind)] .= T
             @. T = -(κ_∇r2_plus_ddr_lnρT_ddrMCU2 - ℓℓp1 * κ_by_r2MCU2) * Rsun^2
@@ -1081,7 +1088,7 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
             @. T = (-2/ℓℓp1) * (ℓ′ℓ′p1 * ddr_minus_2byrMCU4 * cosθ[ℓ, ℓ′] +
                     (ddrMCU4 - ℓ′ℓ′p1 * onebyrMCU4) * sinθdθ[ℓ, ℓ′]) * Rsun * Wscaling
 
-            WV[Block(ℓind, ℓ′ind)] .= T
+            WV[Block(ℓind, ℓ′ind)] .= Weqglobalscaling .* T
         end
     end
 
@@ -1105,6 +1112,7 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
 
     @unpack ν, nvariables = operators.constants;
     @unpack matCU4, matCU2 = operators;
+    @unpack Weqglobalscaling = operators.scalings;
 
     VVim = matrix_block(A.im, 1, 1)
     WWim = matrix_block(A.im, 2, 2)
@@ -1180,7 +1188,7 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
 
         @. WWop = -ν * (T1_1 + T1_2 + T3_1 + T3_2 + T4) * Rsun^4
 
-        WWim[Block(ℓind, ℓind)] .= WWop
+        WWim[Block(ℓind, ℓind)] .= Weqglobalscaling .* WWop
     end
 
     return A
@@ -1259,9 +1267,9 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, ΔΩ_frac = 0.02, V_symmetric = true, kw...)
 
     @unpack nr, nℓ = operators.radial_params;
-    @unpack nvariables, scalings = operators.constants
+    @unpack nvariables = operators.constants
     @unpack IU2 = operators.identities;
-    @unpack Wscaling = scalings
+    @unpack Wscaling, Weqglobalscaling = operators.scalings
 
     @unpack ddrMCU4, DDrMCU2, onebyrMCU2, onebyrMCU4,
             DDr_minus_2byrMCU2, ηρ_by_rMCU4, ddrDDrMCU4,
@@ -1329,7 +1337,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
         @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4;
 
-        WW[Block(ℓind, ℓind)] .+= Rsun^2 .* (diagterm .* ddrDDr_minus_ℓℓp1_by_r2MCU4 .+ 2dopplerterm .* ηρ_by_rMCU4)
+        WW[Block(ℓind, ℓind)] .+= (Weqglobalscaling * Rsun^2) .* (diagterm .* ddrDDr_minus_ℓℓp1_by_r2MCU4 .+ 2dopplerterm .* ηρ_by_rMCU4)
 
         if nvariables == 3
             SS[Block(ℓind, ℓind)] .+= dopplerterm .* IU2
@@ -1344,7 +1352,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
                                         +
                                         ddr_plus_2byrMCU4 * laplacian_sinθdθo[ℓ, ℓ′]) * Wscaling
 
-            WV[Block(ℓind, ℓ′ind)] .+= T
+            WV[Block(ℓind, ℓ′ind)] .+= Weqglobalscaling .* T
         end
     end
 
@@ -1444,11 +1452,11 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, rotation_profile = :radial, V_symmetric = true, kw...)
 
     @unpack nr, nℓ = operators.radial_params
-    @unpack nvariables, scalings = operators.constants;
+    @unpack nvariables = operators.constants;
     @unpack DDr, ddr, ddrDDr = operators.diff_operators;
     @unpack ddrMCU4 = operators.operator_matrices;
     @unpack onebyr, g, ηρ_by_r, onebyr2 = operators.rad_terms;
-    @unpack Sscaling, Wscaling = scalings
+    @unpack Sscaling, Wscaling, Weqglobalscaling = operators.scalings
     @unpack matCU4, matCU2 = operators;
 
     VV = matrix_block(M.re, 1, 1)
@@ -1548,7 +1556,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         @. T = m * Rsun^2 * (two_over_ℓℓp1_min_1 * (ddrΔΩ_DDrMCU4 + ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4)
                 - 2ΔΩ_ηρ_by_rMCU4 + d2dr2ΔΩMCU4 + ddrΔΩ_ddr_plus_2byrMCU4)
 
-        WW[Block(ℓind, ℓind)] .+= T
+        WW[Block(ℓind, ℓind)] .+= Weqglobalscaling .* T
 
         if nvariables == 3
             SS[Block(ℓind, ℓind)] .+= -m .* ΔΩMCU2
@@ -1568,7 +1576,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
                         ∇²_sinθdθ_ℓℓ′ * twoΔΩ_by_rMCU4
                     ) * Wscaling
 
-            WV[Block(ℓind, ℓ′ind)] .+= T
+            WV[Block(ℓind, ℓ′ind)] .+= Weqglobalscaling .* T
 
             # if nvariables == 3
             #     @. T = -(Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gMCU2 * Sscaling;
@@ -1977,14 +1985,17 @@ function eigenvalue_filter(x, m;
 
     realfilter && imagfilter
 end
-function boundary_condition_filter(v, BC, BCVcache, atol = 1e-5)
+function boundary_condition_filter(v, BC, BCVcache = allocate_BCcache(size(BC,1)), atol = 1e-5)
     mul!(BCVcache.re, BC, v.re)
     mul!(BCVcache.im, BC, v.im)
     norm(BCVcache) < atol
 end
 function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
-        (A, B)::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
-        (Av, λBv)::NTuple{2, StructArray{<:Complex,1}}, rtol = 1e-1)
+        AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
+        MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1)), rtol = 1e-1)
+
+    A, B = AB
+    Av, λBv = MVcache
 
     mul!(Av.re, A.re, v.re)
     mul!(Av.re, A.im, v.im, -1.0, 1.0)
@@ -2023,6 +2034,7 @@ end
 
 function sphericalharmonic_filter!(VWSinvsh, F, v, operators,
         Δl_cutoff = 7, power_cutoff = 0.9, filterfieldpowercutoff = 1e-4)
+
     eigenfunction_rad_sh!(VWSinvsh, F, v; operators)
     l_cutoff_ind = 1 + Δl_cutoff÷2
 
@@ -2218,17 +2230,25 @@ function allocate_field_caches(nr, nθ, nℓ)
     (; VWSinv, VWSinvsh, F)
 end
 
+function allocate_MVcache(nrows)
+    StructArray{ComplexF64}((zeros(nrows), zeros(nrows))),
+        StructArray{ComplexF64}((zeros(nrows), zeros(nrows)))
+end
+
+function allocate_BCcache(n_bc)
+    StructArray{ComplexF64}((zeros(n_bc), zeros(n_bc)))
+end
+
 function allocate_filter_caches(m; operators, constraints = constraintmatrix(operators))
     @unpack BC, nvariables = constraints
     @unpack nr, nℓ, nparams = operators.radial_params
     # temporary cache arrays
     nrows = nvariables * nparams
-    MVcache = (StructArray{ComplexF64}((zeros(nrows), zeros(nrows))),
-                StructArray{ComplexF64}((zeros(nrows), zeros(nrows))))
+    MVcache = allocate_MVcache(nrows)
     Vcache = StructArray{ComplexF64}((zeros(nrows), zeros(nrows)))
 
     n_bc = size(BC, 1)
-    BCVcache = StructArray{ComplexF64}((zeros(n_bc), zeros(n_bc)))
+    BCVcache = allocate_BCcache(n_bc)
 
     nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
 
@@ -2551,6 +2571,6 @@ function eigenfunction_n_theta!(VWSinv, F, v, m;
 end
 
 # precompile
-precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64, NTuple{2,Float64}))
+precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64, NTuple{3,Float64}))
 
 end # module
