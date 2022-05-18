@@ -367,7 +367,6 @@ function constraintmatrix(operators; V_basis = 1, W_basis = 1, S_basis = 1)
     @unpack nvariables = operators.constants;
 
     nradconstraints = 2;
-    nconstraints = nradconstraints * nℓ;
 
     MVn = Vboundary(nr, radial_params)
     ZMVn = V_basis == 1 ? nullspace(MVn) : normalizecols!(r2neumann_chebyshev_matrix(nr, radial_params));
@@ -380,13 +379,11 @@ function constraintmatrix(operators; V_basis = 1, W_basis = 1, S_basis = 1)
 
     rowsB = Fill(nradconstraints, nℓ)
     colsB = Fill(nr, nℓ)
-    BC_block = mortar(reshape([BlockBandedMatrix(Zeros(sum(rowsB),sum(colsB)), rowsB, colsB, (0,0)) for _ in 1:nvariables^2],
-            nvariables, nvariables))
+    BC_block = allocate_block_matrix(nvariables, 0, rowsB, colsB)
 
     rowsZ = Fill(nr, nℓ)
     colsZ = Fill(nr - nradconstraints, nℓ)
-    ZC_block = mortar(reshape([BlockBandedMatrix(Zeros(sum(rowsZ),sum(colsZ)), rowsZ, colsZ, (0,0)) for _ in 1:nvariables^2],
-            nvariables, nvariables))
+    ZC_block = allocate_block_matrix(nvariables, 0, rowsZ, colsZ)
 
     fieldmatrices = [MVn, MWn, MSn][1:nvariables]
     for (Mind, M) in enumerate(fieldmatrices)
@@ -934,27 +931,27 @@ end
 computesparse(M::AbstractMatrix) = sparse(M)
 computesparse(S::SparseMatrixCSC) = S
 
-function allocate_block_matrix(nr, nℓ, nvariables, bandwidth)
-    nparams = nr*nℓ
-    cols = rows = Fill(nr, nℓ) # block sizes
+function allocate_block_matrix(nvariables, bandwidth, rows, cols = rows)
     l,u = bandwidth, bandwidth # block bandwidths
     mortar(reshape(
-            [BlockBandedMatrix(Zeros(nparams,nparams), rows,cols, (l,u)) for _ in 1:nvariables^2],
+            [BlockBandedMatrix(Zeros(sum(rows), sum(cols)), rows, cols, (l,u)) for _ in 1:nvariables^2],
                 nvariables, nvariables))
 end
 
 function allocate_operator_matrix(operators, bandwidth = 2)
     @unpack nr, nℓ = operators.radial_params
     @unpack nvariables = operators.constants
-    R = allocate_block_matrix(nr, nℓ, nvariables, bandwidth)
-    I = allocate_block_matrix(nr, nℓ, nvariables, 0)
+    rows = Fill(nr, nℓ) # block sizes
+    R = allocate_block_matrix(nvariables, bandwidth, rows)
+    I = allocate_block_matrix(nvariables, 0, rows)
     StructArray{ComplexF64}((R, I))
 end
 
 function allocate_mass_matrix(operators)
     @unpack nr, nℓ = operators.radial_params
     @unpack nvariables = operators.constants
-    allocate_block_matrix(nr, nℓ, nvariables, 0)
+    rows = Fill(nr, nℓ) # block sizes
+    allocate_block_matrix(nvariables, 0, rows)
 end
 
 ℓrange(m, nℓ, symmetric) = range(m + !symmetric, length = nℓ, step = 2)
