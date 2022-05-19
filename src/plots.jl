@@ -388,8 +388,8 @@ function eigenfunction_spectrum(v, nr, nℓ; V_symmetric = true)
     Wi = reshape(v.im[nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
     terms = [Vr, Wr, Vi, Wi]
     if nvariables == 3
-        Sr = reshape(eltype(v.re)[], 0, 0)
-        Si = reshape(eltype(v.im)[], 0, 0)
+        Sr = reshape(v.re[2nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
+        Si = reshape(v.im[2nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
         terms = [Vr, Wr, Sr, Vi, Wi, Si]
     end
 

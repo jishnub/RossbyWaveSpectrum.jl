@@ -312,7 +312,7 @@ end
 
 for f in [:Vboundary, :Wboundary, :Sboundary]
     f! = Symbol("$(f)!")
-    @eval $(f)(nchebyr, args...) = ($f!)(zeros(2, nchebyr), args...)
+    @eval $(f)(nconstraints, nchebyr, args...) = ($f!)(zeros(nconstraints, nchebyr), args...)
 end
 
 function Vboundary!(MVn, radial_params)
@@ -342,6 +342,9 @@ function Wboundary!(MWn, args...)
         # impenetrable, stress-free
         # equivalently, zero Dirichlet
         MWno[2, n] = 1
+
+        MWno[3, n] = (-1)^n * n^2
+        MWno[4, n] = n^2
     end
     return MWn
 end
@@ -361,38 +364,55 @@ function Sboundary!(MSn, args...)
     return MSn
 end
 
-function constraintmatrix(operators; V_basis = 1, W_basis = 1, S_basis = 1)
+function constraintmatrix(operators; W_basis = 1, S_basis = 1)
     @unpack radial_params = operators;
     @unpack nr, nℓ = radial_params;
     @unpack nvariables = operators.constants;
 
-    nradconstraints = 2;
+    nradconstraintsVS = 2;
+    nradconstraintsW = 4;
 
-    MVn = Vboundary(nr, radial_params)
-    ZMVn = V_basis == 1 ? nullspace(MVn) : normalizecols!(r2neumann_chebyshev_matrix(nr, radial_params));
+    MVn = Vboundary(nradconstraintsVS, nr, radial_params)
+    ZMVn = nullspace(MVn)
 
-    MWn = Wboundary(nr)
-    ZMWn = W_basis == 1 ? nullspace(MWn) : normalizecols!(dirichlet_chebyshev_matrix(nr));
+    MWn = Wboundary(nradconstraintsW, nr)
+    ZMWn = W_basis == 1 ? nullspace(MWn) : normalizecols!(dirichlet_neumann_chebyshev_matrix(nr));
 
-    MSn = Sboundary(nr)
+    MSn = Sboundary(nradconstraintsVS, nr)
     ZMSn = S_basis == 1 ? nullspace(MSn) : normalizecols!(neumann_chebyshev_matrix(nr));
 
-    rowsB = Fill(nradconstraints, nℓ)
+    rowsB_VS = Fill(nradconstraintsVS, nℓ)
+    rowsB_W = Fill(nradconstraintsW, nℓ)
     colsB = Fill(nr, nℓ)
-    BC_block = allocate_block_matrix(nvariables, 0, rowsB, colsB)
+    rows = hvcatrows(nvariables)
+    B_blocks = if nvariables == 3
+        [blockdiagzero(rowsB_VS, colsB), blockdiagzero(rowsB_W, colsB), blockdiagzero(rowsB_VS, colsB)]
+    else
+        [blockdiagzero(rowsB_VS, colsB), blockdiagzero(rowsB_W, colsB)]
+    end
+
+    BC_block = mortar(Diagonal(B_blocks))
+    # BC_block = allocate_block_matrix(nvariables, 0, rowsB, colsB)
 
     rowsZ = Fill(nr, nℓ)
-    colsZ = Fill(nr - nradconstraints, nℓ)
-    ZC_block = allocate_block_matrix(nvariables, 0, rowsZ, colsZ)
+    colsZ_VS = Fill(nr - nradconstraintsVS, nℓ)
+    colsZ_W = Fill(nr - nradconstraintsW, nℓ)
+    Z_blocks = if nvariables == 3
+        [blockdiagzero(rowsZ, colsZ_VS), blockdiagzero(rowsZ, colsZ_W), blockdiagzero(rowsZ, colsZ_VS)]
+    else
+        [blockdiagzero(rowsZ, colsZ_VS), blockdiagzero(rowsZ, colsZ_W)]
+    end
+    ZC_block = mortar(Diagonal(Z_blocks))
+    # ZC_block = allocate_block_matrix(nvariables, 0, rowsZ, colsZ)
 
-    fieldmatrices = [MVn, MWn, MSn][1:nvariables]
+    fieldmatrices = nvariables == 3 ? [MVn, MWn, MSn] : [MVn, MWn]
     for (Mind, M) in enumerate(fieldmatrices)
         BCi = BC_block[Block(Mind, Mind)]
         for ℓind = 1:nℓ
             BCi[Block(ℓind, ℓind)] = M
         end
     end
-    nullspacematrices = [ZMVn, ZMWn, ZMSn][1:nvariables];
+    nullspacematrices = nvariables == 3 ? [ZMVn, ZMWn, ZMSn] : [ZMVn, ZMWn];
     for (Zind, Z) in enumerate(nullspacematrices)
         ZCi = ZC_block[Block(Zind, Zind)]
         for ℓind = 1:nℓ
@@ -529,6 +549,21 @@ function dirichlet_chebyshev_matrix(n)
             T = -1/4
         end
         Mo[n, m] = T
+    end
+    return M
+end
+
+function dirichlet_neumann_chebyshev_matrix(n)
+    M = BandedMatrix(Zeros(n, n-4), (4, 4))
+    Mo = Origin(0)(M)
+    pT4coeffs = OffsetArray([1/16, 0, -1/4, 0, 3/8, 0, -1/4, 0, 1/16], -4:4)
+    for n in 0:3
+        for (ind, pc) in pairs(pT4coeffs)
+            Mo[abs(n + ind), n] += pc
+        end
+    end
+    for n in 4:lastindex(Mo,2)
+        Mo[n .+ (-4:4), n] = parent(pT4coeffs)
     end
     return M
 end
@@ -923,18 +958,25 @@ function computesparse(M::StructMatrix{<:Complex})
     StructArray{eltype(M)}((SR, SI))
 end
 
+hvcatrows(n::Int) = hvcatrows((n, n))
+hvcatrows(sz::NTuple{2,Integer}) = ntuple(_ -> sz[2], sz[1])
+hvcatrows(M::BlockMatrix) = hvcatrows(blocksize(M))
+
 function computesparse(M::BlockMatrix)
-    rows = ntuple(_ -> blocksize(M,2), blocksize(M,1))
+    rows = hvcatrows(M)
     hvcat(rows, [sparse(M[j, i]) for (i,j) in Iterators.product(blockaxes(M)...)]...)
 end
 
 computesparse(M::AbstractMatrix) = sparse(M)
 computesparse(S::SparseMatrixCSC) = S
 
+blockbandedzero(rows, cols, (l, u)) = BlockBandedMatrix(Zeros(sum(rows), sum(cols)), rows, cols, (l,u))
+blockdiagzero(rows, cols) = blockbandedzero(rows, cols, (0, 0))
+
 function allocate_block_matrix(nvariables, bandwidth, rows, cols = rows)
     l,u = bandwidth, bandwidth # block bandwidths
     mortar(reshape(
-            [BlockBandedMatrix(Zeros(sum(rows), sum(cols)), rows, cols, (l,u)) for _ in 1:nvariables^2],
+            [blockbandedzero(rows, cols, (l,u)) for _ in 1:nvariables^2],
                 nvariables, nvariables))
 end
 

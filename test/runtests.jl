@@ -105,17 +105,21 @@ const P11norm = -2/√3
 
     @testset "boundary conditions basis" begin
         @testset "W" begin
-            MW = RossbyWaveSpectrum.dirichlet_chebyshev_matrix(n)
+            MW = RossbyWaveSpectrum.dirichlet_neumann_chebyshev_matrix(n)
             @testset for i in 1:size(MW, 2)
                 p = SpecialPolynomials.Chebyshev(MW[:, i])
                 @test p(-1) ≈ 0 atol=1e-14
                 @test p(1) ≈ 0 atol=1e-14
+                @test df(p, -1) ≈ 0 atol=1e-12
+                @test df(p, 1) ≈ 0 atol=1e-12
             end
-            MW = nullspace(RossbyWaveSpectrum.Wboundary(n))
+            MW = nullspace(RossbyWaveSpectrum.Wboundary(4, n))
             @testset for i in 1:size(MW, 2)
                 p = SpecialPolynomials.Chebyshev(MW[:, i])
                 @test p(-1) ≈ 0 atol=1e-14
                 @test p(1) ≈ 0 atol=1e-14
+                @test df(p, -1) ≈ 0 atol=1e-12
+                @test df(p, 1) ≈ 0 atol=1e-12
             end
         end
         @testset "S" begin
@@ -125,7 +129,7 @@ const P11norm = -2/√3
                 @test df(p, -1) ≈ 0 atol=1e-12
                 @test df(p, 1) ≈ 0 atol=1e-12
             end
-            MS = nullspace(RossbyWaveSpectrum.Sboundary(n))
+            MS = nullspace(RossbyWaveSpectrum.Sboundary(2, n))
             @testset for i in 1:size(MS, 2)
                 p = SpecialPolynomials.Chebyshev(MS[:, i])
                 @test df(p, -1) ≈ 0 atol=1e-12
@@ -144,7 +148,7 @@ const P11norm = -2/√3
                 @test ddx_pbyr²(-1) ≈ 0 atol=1e-12
                 @test ddx_pbyr²(1) ≈ 0 atol=1e-12
             end
-            MV = nullspace(RossbyWaveSpectrum.Vboundary(n, radial_params))
+            MV = nullspace(RossbyWaveSpectrum.Vboundary(2, n, radial_params))
             @testset for i in 1:size(MV, 2)
                 p = SpecialPolynomials.Chebyshev(MV[:, i])
                 pbyr² = x -> p(x) / r(x)^2
@@ -811,7 +815,7 @@ end
     constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     @unpack r_in, r_out, Δr = operators.radial_params
     @unpack BC = constraints;
-    @testset for m in [1, 10, 20]
+    @testset for m in [1, 5, 10]
         λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints);
         λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
             operators, constraints, Δl_cutoff = 7, n_cutoff = 9,
@@ -1244,7 +1248,7 @@ end
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     @unpack r_in, r_out, Δr = operators.radial_params
     @unpack BC = constraints;
-    @testset for m in [1, 10, 20]
+    @testset for m in [1, 5, 10]
         @testset "constant" begin
             λr, vr, Mr = RossbyWaveSpectrum.differential_rotation_spectrum(m; operators, constraints,
                 rotation_profile = :constant, ΔΩ_frac = 0.02);
