@@ -32,11 +32,11 @@ function cbformat(x, _)
     a * L"\times10^{%$c}"
 end
 
-function plot_rossby_ridges(mr; ax = gca(), ΔΩ_by_Ω = 0, ridgescalefactor = nothing, kw...)
+function plot_rossby_ridges(mr; ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
-        ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_by_Ω),
-            label = ΔΩ_by_Ω == 0 ? "Sectoral" :
-                    L"\Delta\Omega/\Omega_0 = " * string(round(ΔΩ_by_Ω, sigdigits = 1)),
+        ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac),
+            label = ΔΩ_frac == 0 ? "Sectoral" :
+                    L"\Delta\Omega/\Omega_0 = " * string(round(ΔΩ_frac, sigdigits = 1)),
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
             zorder = 0,
@@ -45,9 +45,9 @@ function plot_rossby_ridges(mr; ax = gca(), ΔΩ_by_Ω = 0, ridgescalefactor = n
     end
 
     if !isnothing(ridgescalefactor)
-        ax.plot(mr, ridgescalefactor .* RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_by_Ω),
-            label = ΔΩ_by_Ω == 0 ? "Sectoral x $ridgescalefactor" :
-                    L"\Delta\Omega/\Omega_0 = " * string(round(ΔΩ_by_Ω, sigdigits = 1)),
+        ax.plot(mr, ridgescalefactor .* RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac),
+            label = ΔΩ_frac == 0 ? "Sectoral x $ridgescalefactor" :
+                    L"\Delta\Omega/\Omega_0 = " * string(round(ΔΩ_frac, sigdigits = 1)),
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
             zorder = 0,
@@ -315,8 +315,8 @@ end
 function eigenfunction_rossbyridge(λs::AbstractVector{<:Number},
     vs::AbstractMatrix{<:Number}, m, operators; kw...)
 
-    ΔΩ_by_Ω = get(kw, :ΔΩ_by_Ω, 0)
-    minind = findmin(abs, real(λs) .- RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_by_Ω))[2]
+    ΔΩ_frac = get(kw, :ΔΩ_frac, 0)
+    minind = findmin(abs, real(λs) .- RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_frac))[2]
     eigenfunction(vs[:, minind], m, operators; theory = true, kw...)
 end
 

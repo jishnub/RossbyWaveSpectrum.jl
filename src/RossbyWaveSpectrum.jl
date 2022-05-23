@@ -707,13 +707,14 @@ macro checkncoeff(v, nr)
     :(checkncoeff($(esc(v)), $(String(v)), $(esc(nr))))
 end
 
-function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
-    scalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3))
-    scalings = merge((; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3), scalings)
-    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν,
-        (scalings.Wscaling, scalings.Sscaling, scalings.Weqglobalscaling))
+const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0)
+function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e11,
+    scalings = DefaultScalings)
+    scalings = merge(DefaultScalings, scalings)
+    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, Tuple(scalings))
 end
-function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, (Wscaling, Sscaling, Weqglobalscaling))
+function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν,
+        (Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling))
     r_in = r_in_frac * Rsun;
     r_out = r_out_frac * Rsun;
     radial_params = parameters(nr, nℓ; r_in, r_out);
@@ -857,7 +858,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     IU2 = matCU2(I);
 
     scalings = Dict{Symbol, Float64}()
-    @pack! scalings = Sscaling, Wscaling, Weqglobalscaling
+    @pack! scalings = Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling
 
     constants = (; κ, ν, nvariables, Ω0)
     identities = (; Ir, Iℓ, IU2)
@@ -1051,7 +1052,7 @@ end
 function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_symmetric = true, kw...)
     @unpack nvariables, Ω0 = operators.constants;
     @unpack nr, nℓ = operators.radial_params
-    @unpack Sscaling, Wscaling, Weqglobalscaling = operators.scalings
+    @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
     @unpack IU2 = operators.identities;
 
     @unpack ddrMCU4, DDrMCU2, DDr_minus_2byrMCU2, ddrDDrMCU4, κ_∇r2_plus_ddr_lnρT_ddrMCU2,
@@ -1115,9 +1116,9 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
             @. T = - gMCU4 / (Ω0^2 * Rsun)  * Wscaling/Sscaling
             WS[Block(ℓind, ℓind)] .= Weqglobalscaling .* T
             @. T = ℓℓp1 * ddr_S0_by_cp_by_r2MCU2 * (Rsun^3 * Sscaling/Wscaling)
-            SW[Block(ℓind, ℓind)] .= T
+            SW[Block(ℓind, ℓind)] .= Seqglobalscaling .* T
             @. T = -(κ_∇r2_plus_ddr_lnρT_ddrMCU2 - ℓℓp1 * κ_by_r2MCU2) * Rsun^2
-            SS[Block(ℓind, ℓind)] .= T
+            SS[Block(ℓind, ℓind)] .= Seqglobalscaling .* T
         end
 
         for ℓ′ in intersect(V_ℓs, ℓ-1:2:ℓ+1)
@@ -1308,7 +1309,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     @unpack nr, nℓ = operators.radial_params;
     @unpack nvariables = operators.constants
     @unpack IU2 = operators.identities;
-    @unpack Wscaling, Weqglobalscaling = operators.scalings
+    @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
 
     @unpack ddrMCU4, DDrMCU2, onebyrMCU2, onebyrMCU4,
             DDr_minus_2byrMCU2, ηρ_by_rMCU4, ddrDDrMCU4,
@@ -1379,7 +1380,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         WW[Block(ℓind, ℓind)] .+= (Weqglobalscaling * Rsun^2) .* (diagterm .* ddrDDr_minus_ℓℓp1_by_r2MCU4 .+ 2dopplerterm .* ηρ_by_rMCU4)
 
         if nvariables == 3
-            SS[Block(ℓind, ℓind)] .+= dopplerterm .* IU2
+            SS[Block(ℓind, ℓind)] .+= Seqglobalscaling .* dopplerterm .* IU2
         end
 
         for ℓ′ in intersect(ℓ-1:2:ℓ+1, V_ℓs)
@@ -1495,7 +1496,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     @unpack DDr, ddr, ddrDDr = operators.diff_operators;
     @unpack ddrMCU4 = operators.operator_matrices;
     @unpack onebyr, g, ηρ_by_r, onebyr2 = operators.rad_terms;
-    @unpack Sscaling, Wscaling, Weqglobalscaling = operators.scalings
+    @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
     @unpack matCU4, matCU2 = operators;
 
     VV = matrix_block(M.re, 1, 1)
@@ -1598,7 +1599,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         WW[Block(ℓind, ℓind)] .+= Weqglobalscaling .* T
 
         if nvariables == 3
-            SS[Block(ℓind, ℓind)] .+= -m .* ΔΩMCU2
+            SS[Block(ℓind, ℓind)] .+= Seqglobalscaling .* (-m) .* ΔΩMCU2
         end
 
         for ℓ′ in intersect(V_ℓs, ℓ-1:2:ℓ+1)
@@ -1619,7 +1620,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
             # if nvariables == 3
             #     @. T = -(Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gMCU2 * Sscaling;
-            #     SV[Block(ℓind, ℓ′ind)] .+= T
+            #     SV[Block(ℓind, ℓ′ind)] .+= Seqglobalscaling .* T
             # end
         end
 
@@ -1627,7 +1628,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         #     ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
         #     if nvariables == 3
         #         @. T = (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrMCU2 * Sscaling/Wscaling;
-        #         SW[Block(ℓind, ℓ′ind)] .+= T
+        #         SW[Block(ℓind, ℓ′ind)] .+= Seqglobalscaling .* T
         #     end
         # end
     end
@@ -2125,7 +2126,7 @@ function chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff = 7, n_power_cut
 end
 
 function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
-    θ_cutoff = deg2rad(75), equator_power_cutoff_frac = 0.3;
+    θ_cutoff = deg2rad(60), equator_power_cutoff_frac = 0.3;
     nℓ = operators.radial_params.nℓ,
     Plcosθ = allocate_Pl(m, nℓ),
     filterfieldpowercutoff = 1e-4)
@@ -2146,9 +2147,10 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
         powflag = powfrac > equator_power_cutoff_frac
         peakflag = maximum(abs2, @view peak_latprofile[θlowind:θhighind]) == maximum(abs2, peak_latprofile)
         eqfilter &= powflag & peakflag
+        eqfilter || break
     end
 
-    eqfilter
+    return eqfilter
 end
 
 function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
@@ -2307,10 +2309,10 @@ const DefaultFilterParams = Dict(
     :n_power_cutoff => 0.9,
     :eig_imag_unstable_cutoff => -1e-3,
     :eig_imag_to_real_ratio_cutoff => 1e-1,
-    :eig_imag_damped_cutoff => 5e-3,
+    :eig_imag_damped_cutoff => 1e-2,
     :ΔΩ_frac_low => -5,
     :ΔΩ_frac_high => 5,
-    :θ_cutoff => deg2rad(75),
+    :θ_cutoff => deg2rad(60),
     :equator_power_cutoff_frac => 0.3,
     :nnodesmax => 10,
     :filterfieldpowercutoff => 1e-4,
@@ -2610,6 +2612,6 @@ function eigenfunction_n_theta!(VWSinv, F, v, m;
 end
 
 # precompile
-precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64, NTuple{3,Float64}))
+precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64, NTuple{4,Float64}))
 
 end # module
