@@ -708,7 +708,7 @@ macro checkncoeff(v, nr)
 end
 
 const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0)
-function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e11,
+function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
     scalings = DefaultScalings)
     scalings = merge(DefaultScalings, scalings)
     _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, Tuple(scalings))
@@ -2007,8 +2007,8 @@ rossby_ridge(m; ΔΩ_frac = 0) = 2 / (m + 1) * (1 + ΔΩ_frac) - m * ΔΩ_frac
 
 function eigenvalue_filter(x, m;
     eig_imag_unstable_cutoff = -1e-3,
-    eig_imag_to_real_ratio_cutoff = 1e-1,
-    eig_imag_damped_cutoff = 5e-3,
+    eig_imag_to_real_ratio_cutoff = 5e-1,
+    eig_imag_damped_cutoff = 2e-2,
     ΔΩ_frac_low = -5,
     ΔΩ_frac_high = 5)
 
@@ -2034,7 +2034,7 @@ function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
         AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
         MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1)), rtol = 1e-1)
 
-    A, B = AB
+    A, B = computesparse.(AB)
     Av, λBv = MVcache
 
     mul!(Av.re, A.re, v.re)
@@ -2192,7 +2192,8 @@ Base.:(!)(F::FilterFlag) = FilterFlag(Int(typemax(UInt8) >> 1) - Int(F))
 Base.in(t::FilterFlag, F::FilterFlag) = (t & F) != F_NONE
 Base.broadcastable(x::FilterFlag) = Ref(x)
 
-function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any}, filterflags)
+function filterfn(λ::Number, v::StructVector{<:Complex},
+        m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any}, filterflags)
 
     @unpack BC = constraints
     @unpack nℓ = operators.radial_params;
@@ -2218,14 +2219,16 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
 
     FILTERS = FilterFlag(filterflags)
 
-    if F_EIGEN in FILTERS
+    if F_EIGVAL in FILTERS
         f1 = eigenvalue_filter(λ, m;
         eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
         ΔΩ_frac_low, ΔΩ_frac_high, eig_imag_damped_cutoff)
         f1 || return false
     end
 
-    Vcache .= v
+    Vcache.re .= v.re
+    Vcache.im .= v.im
+
     if F_SPHARM in FILTERS
         f2 = sphericalharmonic_filter!(VWSinvsh, F, Vcache, operators,
             Δl_cutoff, Δl_power_cutoff, filterfieldpowercutoff)
