@@ -382,14 +382,14 @@ end
 
 function eigenfunction_spectrum(v, nr, nℓ; V_symmetric = true)
     nvariables = length(v) ÷ (nr*nℓ)
-    Vr = reshape(v.re[1:nr*nℓ], nr, nℓ)
-    Vi = reshape(v.im[1:nr*nℓ], nr, nℓ)
-    Wr = reshape(v.re[nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
-    Wi = reshape(v.im[nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
+    Vr = reshape(@view(v.re[1:nr*nℓ]), nr, nℓ)
+    Vi = reshape(@view(v.im[1:nr*nℓ]), nr, nℓ)
+    Wr = reshape(@view(v.re[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
+    Wi = reshape(@view(v.im[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
     terms = [Vr, Wr, Vi, Wi]
     if nvariables == 3
-        Sr = reshape(v.re[2nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
-        Si = reshape(v.im[2nr*nℓ .+ (1:nr*nℓ)], nr, nℓ)
+        Sr = reshape(@view(v.re[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
+        Si = reshape(@view(v.im[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
         terms = [Vr, Wr, Sr, Vi, Wi, Si]
     end
 
@@ -400,10 +400,8 @@ function eigenfunction_spectrum(v, nr, nℓ; V_symmetric = true)
     x = nvariables == 3 ? [Vℓ, Wℓ, Sℓ, Vℓ, Wℓ, Sℓ] : [Vℓ, Wℓ, Vℓ, Wℓ]
     titles = nvariables == 3 ? ["Vr", "Wr", "Sr", "Vi", "Wi", "Si"] : ["Vr", "Wr", "Vi", "Wi"]
 
-    compare_terms(terms; nrows = 2,
-        titles,
-        xlabel = "spharm ℓ", ylabel = "chebyshev order",
-        x, y = 0:nr-1)
+    compare_terms(terms; nrows = 2, titles,
+        xlabel = "spharm ℓ", ylabel = "chebyshev order", x, y = 0:nr-1)
 end
 
 function plot_matrix(M, nvariables = 3)

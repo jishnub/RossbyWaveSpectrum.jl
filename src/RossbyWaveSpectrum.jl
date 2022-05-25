@@ -7,7 +7,6 @@ using ApproxFun: DomainSets
 using BandedMatrices
 using BlockArrays
 using BlockBandedMatrices
-using BitFlags
 using Dierckx
 using FastGaussQuadrature
 using FastTransforms
@@ -31,13 +30,7 @@ using UnPack
 using ZChop
 
 export datadir
-export F_EIGVAL
-export F_EIGEN
-export F_SPHARM
-export F_CHEBY
-export F_BC
-export F_SPATIAL
-export F_NODES
+export Filters
 
 const SCRATCH = Ref("")
 const DATADIR = Ref("")
@@ -1930,24 +1923,11 @@ function constrained_eigensystem((A, B);
     operators,
     constraints = constraintmatrix(operators),
     cache = constrained_matmul_cache(constraints),
-    rebalance_matrix = false,
-    scalings = (; Wscaling = 1, Sscaling = 1),
     temp_projectback = allocate_projectback_temp_matrices(size(constraints.ZC)),
     timer = TimerOutput(),
     kw...
     )
 
-    @unpack nvariables = operators.constants
-    @unpack nparams = operators.radial_params
-    @unpack Wscaling, Sscaling = merge((; Wscaling = 1, Sscaling = 1), scalings)
-    scales = [
-        1               1/Wscaling              1/Sscaling
-        Wscaling        1                       Wscaling/Sscaling
-        Sscaling        Sscaling/Wscaling           1
-    ]
-    if rebalance_matrix
-        balance_matrix!(A, nvariables, scales)
-    end
     @timeit timer "basis" begin
         A_constrained = compute_constrained_matrix(A, constraints, cache)
         B_constrained = compute_constrained_matrix(B, constraints, cache)
@@ -1970,6 +1950,11 @@ function uniform_rotation_spectrum!((A, B), m; operators, kw...)
     end
     constrained_eigensystem_timed((A, B); operators, timer, kw...)
 end
+
+uniformrotmatrixfn!(V_symmetric = true) =
+    (x...; kw...) -> uniform_rotation_matrix!(x...; V_symmetric, kw...)
+uniformrotspectrumfn!(V_symmetric = true) =
+    (x...; kw...) -> uniform_rotation_spectrum!(x...; V_symmetric, kw...)
 
 function real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop)
     @unpack PLMfwd, PLMinv = thetaop
@@ -2003,27 +1988,19 @@ function differential_rotation_spectrum!((A, B), m; rotation_profile, operators,
     constrained_eigensystem_timed((A, B); operators, timer, kw...)
 end
 
+diffrotmatrixfn!(rotation_profile, V_symmetric = true) =
+    (x...; kw...) -> differential_rotation_matrix!(x...; rotation_profile, V_symmetric, kw...)
+diffrotspectrumfn!(rotation_profile, V_symmetric = true) =
+    (x...; kw...) -> differential_rotation_spectrum!(x...; rotation_profile, V_symmetric, kw...)
+
 rossby_ridge(m; ΔΩ_frac = 0) = 2 / (m + 1) * (1 + ΔΩ_frac) - m * ΔΩ_frac
 
 function eigenvalue_filter(x, m;
-    eig_imag_unstable_cutoff = -1e-3,
-    eig_imag_to_real_ratio_cutoff = 5e-1,
-    eig_imag_damped_cutoff = 2e-2,
-    ΔΩ_frac_low = -5,
-    ΔΩ_frac_high = 5)
+    eig_imag_unstable_cutoff = -1e-6,
+    eig_imag_to_real_ratio_cutoff = 1)
 
     freq_sectoral = 2 / (m + 1)
-
-    imagfilter = eig_imag_unstable_cutoff <= imag(x) <
-                 min(freq_sectoral * eig_imag_to_real_ratio_cutoff, eig_imag_damped_cutoff)
-
-    freq_real_1 = rossby_ridge(m; ΔΩ_frac = ΔΩ_frac_high)
-    freq_real_2 = rossby_ridge(m; ΔΩ_frac = ΔΩ_frac_low)
-    freq_real_low, freq_real_high = minmax(freq_real_1, freq_real_2)
-
-    realfilter = freq_real_low - 0.05 <= real(x) <= freq_real_high + 0.05
-
-    realfilter && imagfilter
+    eig_imag_unstable_cutoff <= imag(x) < freq_sectoral * eig_imag_to_real_ratio_cutoff
 end
 function boundary_condition_filter(v, BC, BCVcache = allocate_BCcache(size(BC,1)), atol = 1e-5)
     mul!(BCVcache.re, BC, v.re)
@@ -2177,35 +2154,38 @@ function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
     nodesfilter
 end
 
-@bitflag FilterFlag::UInt8 begin
-    F_NONE=0
-    F_EIGVAL
-    F_EIGEN
-    F_SPHARM
-    F_CHEBY
-    F_BC
-    F_SPATIAL
-    F_NODES
-end
-FilterFlag(F::FilterFlag) = F
-Base.:(!)(F::FilterFlag) = FilterFlag(Int(typemax(UInt8) >> 1) - Int(F))
-Base.in(t::FilterFlag, F::FilterFlag) = (t & F) != F_NONE
-Base.broadcastable(x::FilterFlag) = Ref(x)
+module Filters
+    using BitFlags
+    export DefaultFilter
+    @bitflag FilterFlag::UInt8 begin
+        NONE=0
+        EIGVAL
+        EIGEN
+        SPHARM
+        CHEBY
+        BC
+        SPATIAL
+        NODES
+    end
+    FilterFlag(F::FilterFlag) = F
+    Base.:(!)(F::FilterFlag) = FilterFlag(Int(typemax(UInt8) >> 1) - Int(F))
+    Base.in(t::FilterFlag, F::FilterFlag) = (t & F) != NONE
+    Base.broadcastable(x::FilterFlag) = Ref(x)
 
-function filterfn(λ::Number, v::StructVector{<:Complex},
-        m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any}, filterflags)
+    const DefaultFilter = EIGVAL | EIGEN | SPHARM | CHEBY | BC | SPATIAL
+end
+using .Filters
+
+function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any}, filterflags)
 
     @unpack BC = constraints
     @unpack nℓ = operators.radial_params;
 
     @unpack eig_imag_unstable_cutoff = kw
     @unpack eig_imag_to_real_ratio_cutoff = kw
-    @unpack ΔΩ_frac_low = kw
-    @unpack ΔΩ_frac_high = kw
-    @unpack eig_imag_damped_cutoff = kw
     @unpack Δl_cutoff = kw
     @unpack Δl_power_cutoff = kw
-    @unpack atol_constraint = kw
+    @unpack bc_atol = kw
     @unpack n_cutoff = kw
     @unpack n_power_cutoff = kw
     @unpack θ_cutoff = kw
@@ -2213,53 +2193,48 @@ function filterfn(λ::Number, v::StructVector{<:Complex},
     @unpack eigen_rtol = kw
     @unpack filterfieldpowercutoff = kw
     @unpack nnodesmax = kw
-    @unpack scalings = kw
 
-    (; MVcache, Vcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache;
+    (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache;
 
-    FILTERS = FilterFlag(filterflags)
+    allfilters = Filters.FilterFlag(filterflags)
 
-    if F_EIGVAL in FILTERS
+    if Filters.EIGVAL in allfilters
         f1 = eigenvalue_filter(λ, m;
-        eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff,
-        ΔΩ_frac_low, ΔΩ_frac_high, eig_imag_damped_cutoff)
+        eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff)
         f1 || return false
     end
 
-    Vcache.re .= v.re
-    Vcache.im .= v.im
-
-    if F_SPHARM in FILTERS
-        f2 = sphericalharmonic_filter!(VWSinvsh, F, Vcache, operators,
+    if Filters.SPHARM in allfilters
+        f2 = sphericalharmonic_filter!(VWSinvsh, F, v, operators,
             Δl_cutoff, Δl_power_cutoff, filterfieldpowercutoff)
         f2 || return false
     end
 
-    if F_BC in FILTERS
-        f3 = boundary_condition_filter(Vcache, BC, BCVcache, atol_constraint)
+    if Filters.BC in allfilters
+        f3 = boundary_condition_filter(v, BC, BCVcache, bc_atol)
         f3 || return false
     end
 
-    if F_CHEBY in FILTERS
-        f4 = chebyshev_filter!(VWSinv, F, Vcache, m, operators, n_cutoff,
+    if Filters.CHEBY in allfilters
+        f4 = chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff,
             n_power_cutoff; nℓ, Plcosθ,filterfieldpowercutoff)
         f4 || return false
     end
 
-    if F_SPATIAL in FILTERS
-        f5 = spatial_filter!(VWSinv, VWSinvsh, F, Vcache, m, operators,
+    if Filters.SPATIAL in allfilters
+        f5 = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
             θ_cutoff, equator_power_cutoff_frac; nℓ, Plcosθ,
             filterfieldpowercutoff)
         f5 || return false
     end
 
-    if F_EIGEN in FILTERS
-        f6 = eigensystem_satisfy_filter(λ, Vcache, M, MVcache, eigen_rtol)
+    if Filters.EIGEN in allfilters
+        f6 = eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
         f6 || return false
     end
 
-    if F_NODES in FILTERS
-        f7 = nodes_filter(VWSinv, VWSinvsh, F, Vcache, m, operators;
+    if Filters.NODES in allfilters
+        f7 = nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
                 nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax)
         f7 || return false
     end
@@ -2289,7 +2264,6 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
     # temporary cache arrays
     nrows = nvariables * nparams
     MVcache = allocate_MVcache(nrows)
-    Vcache = StructArray{ComplexF64}((zeros(nrows), zeros(nrows)))
 
     n_bc = size(BC, 1)
     BCVcache = allocate_BCcache(n_bc)
@@ -2300,28 +2274,23 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
 
     Plcosθ = allocate_Pl(m, nℓ)
 
-    return (; MVcache, Vcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F)
+    return (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F)
 end
 
 const DefaultFilterParams = Dict(
-    :atol_constraint => 1e-5,
+    :bc_atol => 1e-5,
     :Δl_cutoff => 7,
     :Δl_power_cutoff => 0.9,
     :eigen_rtol => 0.01,
     :n_cutoff => 10,
     :n_power_cutoff => 0.9,
-    :eig_imag_unstable_cutoff => -1e-3,
-    :eig_imag_to_real_ratio_cutoff => 1e-1,
-    :eig_imag_damped_cutoff => 1e-2,
-    :ΔΩ_frac_low => -5,
-    :ΔΩ_frac_high => 5,
+    :eig_imag_unstable_cutoff => -1e-6,
+    :eig_imag_to_real_ratio_cutoff => 1,
     :θ_cutoff => deg2rad(60),
     :equator_power_cutoff_frac => 0.3,
     :nnodesmax => 10,
     :filterfieldpowercutoff => 1e-4,
-    :scalings => (; Wscaling = 1, Sscaling = 1),
-    )
-const DefaultFilter = F_EIGVAL | F_EIGEN | F_SPHARM | F_CHEBY | F_BC | F_SPATIAL
+)
 
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     M, m::Integer;
@@ -2341,13 +2310,9 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
 
     # re-apply scalings
     @views if get(kw, :scale_eigenvectors, false)
-        scalings = merge((; Wscaling = 1, Sscaling = 1), kw[:scalings])
         V = v[1:nparams, :]
         W = v[nparams .+ (1:nparams), :]
         S = v[2nparams .+ (1:nparams), :]
-
-        W ./= scalings.Wscaling
-        S ./= scalings.Sscaling
 
         V .*= Rsun
         @unpack Wscaling, Sscaling = operators.constants.scalings
@@ -2371,9 +2336,6 @@ macro maybe_reduce_blas_threads(nt, ex)
         end
     end
 end
-
-diffrotmatrixfn!(rotation_profile) = (x...; kw...) -> differential_rotation_matrix!(x...; rotation_profile, kw..., )
-diffrotspectrumfn!(rotation_profile) = (x...; kw...) -> differential_rotation_spectrum!(x...; rotation_profile, kw..., )
 
 function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector;
@@ -2478,10 +2440,11 @@ function save_eigenvalues(f, mr; operators, kw...)
     lam, vec = filter_eigenvalues(f, mr; operators, kw...)
     isdiffrot = get(kw, :diffrot, false)
     filenametag = isdiffrot ? "dr" : "ur"
+    posttag = get(kw, :V_symmetric, true) ? "sym" : "asym"
     @unpack nr, nℓ = operators.radial_params;
-    fname = datadir(rossbyeigenfilename(nr, nℓ, filenametag))
+    fname = datadir(rossbyeigenfilename(nr, nℓ, filenametag, posttag))
     @info "saving to $fname"
-    jldsave(fname; lam, vec, mr, nr, nℓ, kw)
+    jldsave(fname; lam, vec, mr, nr, nℓ, kw, operators)
 end
 
 function eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
