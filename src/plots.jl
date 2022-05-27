@@ -380,27 +380,44 @@ function eigenfunctions_rossbyridge_all(λs, vs, m, operators; kw...)
     end
 end
 
-function eigenfunction_spectrum(v, nr, nℓ; V_symmetric = true)
+function eigenfunction_spectrum(v, nr, nℓ; V_symmetric = true, kw...)
     nvariables = length(v) ÷ (nr*nℓ)
-    Vr = reshape(@view(v.re[1:nr*nℓ]), nr, nℓ)
-    Vi = reshape(@view(v.im[1:nr*nℓ]), nr, nℓ)
-    Wr = reshape(@view(v.re[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
-    Wi = reshape(@view(v.im[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
-    terms = [Vr, Wr, Vi, Wi]
-    if nvariables == 3
-        Sr = reshape(@view(v.re[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
-        Si = reshape(@view(v.im[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
-        terms = [Vr, Wr, Sr, Vi, Wi, Si]
-    end
-
     Vℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
     Wℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, !V_symmetric)
     Sℓ = Wℓ
 
-    x = nvariables == 3 ? [Vℓ, Wℓ, Sℓ, Vℓ, Wℓ, Sℓ] : [Vℓ, Wℓ, Vℓ, Wℓ]
+    Vr = reshape(@view(v.re[1:nr*nℓ]), nr, nℓ);
+    Vi = reshape(@view(v.im[1:nr*nℓ]), nr, nℓ);
+    Wr = reshape(@view(v.re[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ);
+    Wi = reshape(@view(v.im[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ);
+
+    Vrf = zeros(size(Vr,1), m:maximum(Vℓ));
+    @views @. Vrf[:, Vℓ] = Vr
+    Vif = zeros(size(Vi,1), m:maximum(Vℓ))
+    @views @. Vif[:, Vℓ] = Vi
+    Wrf = zeros(size(Wr,1), m:maximum(Wℓ))
+    @views @. Wrf[:, Wℓ] = Wr
+    Wif = zeros(size(Wi,1), m:maximum(Wℓ))
+    @views @. Wif[:, Wℓ] = Wi
+
+    terms = [Vrf, Wrf, Vif, Wif]
+
+    if nvariables == 3
+        Sr = reshape(@view(v.re[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
+        Srf = zeros(size(Sr,1), m:maximum(Sℓ))
+        @views @. Srf[:, Sℓ] = Sr
+
+        Si = reshape(@view(v.im[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
+        Sif = zeros(size(Si,1), m:maximum(Sℓ))
+        @views @. Sif[:, Sℓ] = Si
+
+        terms = [Vrf, Wrf, Srf, Vif, Wif, Sif]
+    end
+
+    x = axes.(terms, 2)
     titles = nvariables == 3 ? ["Vr", "Wr", "Sr", "Vi", "Wi", "Si"] : ["Vr", "Wr", "Vi", "Wi"]
 
-    compare_terms(terms; nrows = 2, titles,
+    compare_terms(parent.(terms); nrows = 2, titles,
         xlabel = "spharm ℓ", ylabel = "chebyshev order", x, y = 0:nr-1)
 end
 

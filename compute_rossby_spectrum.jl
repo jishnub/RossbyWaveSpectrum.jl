@@ -1,13 +1,13 @@
 @time using RossbyWaveSpectrum
 using LinearAlgebra
 
-nr = 60;
-nℓ = 30;
+nr = 65;
+nℓ = 35;
 mrange = 1:20;
 
 # test
 # nr = 15;
-# nℓ = 15;
+# nℓ = 7;
 # mrange = 1:1;
 
 # boundary condition tolerance
@@ -18,7 +18,7 @@ atol_constraint = 1e-5
 Δl_power_cutoff = 0.9;
 eigen_rtol = 0.01;
 
-n_cutoff = 20
+n_cutoff = 10
 n_power_cutoff = 0.9
 
 r_in_frac = 0.5
@@ -27,7 +27,7 @@ r_out_frac = 0.985
 print_timer = false
 scale_eigenvectors = false
 
-operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac);
+operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 1e11);
 
 diffrot = false
 V_symmetric = false

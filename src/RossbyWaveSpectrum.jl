@@ -447,7 +447,7 @@ function superadiabaticity(r; r_out = Rsun)
     dtrans = dtop = 0.03Rsun
     r_sub = 0.8 * Rsun
     r_tran = 0.725 * Rsun
-    δrad = -1e-5
+    δrad = -1e-1
     δconv = δtop * exp((r - r_out) / dtop) + δcz * (r - r_sub) / (r_out - r_sub)
     δconv + (δrad - δconv) * 1 / 2 * (1 - tanh((r - r_tran) / dtrans))
 end
@@ -2364,7 +2364,7 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     first.(λv), last.(λv)
 end
 
-function fmap(spectrumfn!, m, c, operators, constraints; kw...)
+function fmap(spectrumfn!::F, m, c, operators, constraints; kw...) where {F}
     Ctid = take!(c)
     M, cache, temp_projectback = Ctid;
     X = spectrumfn!(M, m; operators, constraints, cache, temp_projectback, kw...);
