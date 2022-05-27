@@ -2340,7 +2340,7 @@ end
 function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector;
     matrixfn! = uniform_rotation_matrix!,
-    operators, constraints = constraintmatrix(operators),kw...)
+    operators, constraints = constraintmatrix(operators), kw...)
 
     @unpack nr, nℓ, nparams = operators.radial_params
     @unpack nvariables = operators.constants
@@ -2354,8 +2354,8 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     λv = @maybe_reduce_blas_threads(Threads.nthreads(),
         Folds.map(zip(λs, vs, mr)) do (λm, vm, m)
             A, B = take!(c)
-            matrixfn!(A, m; operators)
-            mass_matrix!(B, m; operators)
+            matrixfn!(A, m; operators, kw...)
+            mass_matrix!(B, m; operators, kw...)
             Y = filter_eigenvalues(λm, vm, (A,B), m; operators, constraints, kw...)
             put!(c, (A, B))
             Y

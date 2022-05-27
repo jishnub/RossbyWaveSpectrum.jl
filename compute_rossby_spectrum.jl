@@ -1,8 +1,8 @@
 @time using RossbyWaveSpectrum
 using LinearAlgebra
 
-nr = 65;
-nℓ = 35;
+nr = 60;
+nℓ = 30;
 mrange = 1:20;
 
 # test
@@ -27,10 +27,10 @@ r_out_frac = 0.985
 print_timer = false
 scale_eigenvectors = false
 
-operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 1e11);
+operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 1e12);
 
 diffrot = false
-V_symmetric = false
+V_symmetric = true
 
 # const spectrumfn! = RossbyWaveSpectrum.diffrotspectrum!(:radial_linear, V_symmetric)
 const spectrumfn! = RossbyWaveSpectrum.uniformrotspectrumfn!(V_symmetric)
