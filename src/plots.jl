@@ -214,6 +214,10 @@ function spectrum(lamsym, lamasym, mr; kw...)
 
     f.set_size_inches(9,6)
     f.tight_layout()
+    if get(kw, :save, false)
+        f.savefig(joinpath(plotdir, "spectrum_sym_asym.eps"))
+    end
+    return nothing
 end
 
 function mantissa_exponent_format(a)
@@ -225,14 +229,18 @@ end
 function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), kw...)
     V_symmetric = kw[:V_symmetric]
     @assert V_symmetric "V must be symmetric for rossby ridge plots"
-    λs_rossbyridge = [λ[argmin(abs.(real.(λ) .- RossbyWaveSpectrum.rossby_ridge(m)))] for (m,λ) in zip(mr, lam)]
     @unpack Ω0, ν = operators.constants
-    λs_rossbyridge .*= Ω0
     ν *= Ω0 * Rsun^2
+
+    νnHzunit = freqnHzunit(Ω0)
+
+    λs_rossbyridge = [λ[argmin(abs.(real.(λ) .- RossbyWaveSpectrum.rossby_ridge(m)))] for (m,λ) in zip(mr, lam)]
+
     νstr = mantissa_exponent_format(ν)
 
-    ax.plot(mr, imag.(λs_rossbyridge) * 1e9/2pi,
-            ls="dotted", color="grey", marker=".", mfc="black", label=L"\nu="*νstr)
+    ax.plot(mr, imag.(λs_rossbyridge) * νnHzunit,
+            ls="dotted", color="grey", marker="o", mfc="white",
+            mec="black", ms=5, label="this work,\n" *L"\nu="*νstr)
 
     # observations
     m_P = first.(ProxaufFit)
@@ -280,7 +288,7 @@ function plot_high_frequency_ridge(lam, mr; operators, f = figure(), ax = subplo
         end for (m, λ) in zip(mr, lam)]
     lamcat = mapreduce(real, vcat, λ_filt) .* νnHzunit
     mcat = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr, λ_filt)])
-    ax.scatter(mcat, lamcat; ScatterParams..., c = "white", edgecolors = "black")
+    ax.scatter(mcat, lamcat; ScatterParams..., c = "white", edgecolors = "black", label="this work")
 
     ax.legend(loc="best")
 
@@ -343,7 +351,7 @@ function differential_rotation_spectrum(lam_rad, lam_solar, mr = axes(lam_rad, 1
 end
 
 function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators;
-    field = :V, theory = false, f = figure(), component = real, kw...)
+    field = :V, f = figure(), component = real, kw...)
     V = getproperty(VWSinv, field)::Matrix{ComplexF64}
     Vr = copy(component(V))
     scale = get(kw, :scale) do
@@ -380,20 +388,6 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators;
     yfmt.set_powerlimits((-1,1))
     axsurf.yaxis.set_major_formatter(yfmt)
 
-    if theory
-        markevery_theory = get(kw, :markevery_theory, 10)
-        θmarkers = @view θ[1:markevery_theory:end]
-        axsurf.plot(θmarkers, sin.(θmarkers) .^ m,
-            marker = "o",
-            mfc = "0.7",
-            mec = "0.5",
-            ls = "None",
-            ms = 5,
-            label = "theory",
-        )
-        axsurf.legend(loc = "best")
-    end
-
     axdepth.axvline(0, ls="dotted", color="0.3")
     axdepth.plot(V_peak_depthprofile, r_frac,
         color = "black",
@@ -412,14 +406,14 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators;
     axprofile.set_xlabel(xlabel, fontsize = 11)
 
     if get(kw, :suptitle, true)
-        f.suptitle("Sectoral eigenfunction for m = $m")
+        f.suptitle("Toroidal streamfunction for m = $m")
     end
 
     if !get(kw, :constrained_layout, false)
         f.tight_layout()
     end
     if get(kw, :save, false)
-        savefig(joinpath(plotdir, "eigenfunction.eps"))
+        f.savefig(joinpath(plotdir, "eigenfunction.eps"))
     end
 end
 
@@ -484,18 +478,18 @@ function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMa
     ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
     ax.xaxis.set_major_formatter(ticker.FuncFormatter(piformatter))
 
-    ax.set_title("Normalized eigenfunctions for m = $m", fontsize = 12)
+    ax.set_title("Surface profiles", fontsize = 12)
 
     lscm = Iterators.product(("solid", "dashed", "dotted"), ("black", "0.5", "0.3"), ("None", "."))
 
-    vm = reverse(vecs, dims = 2)
-    λm = reverse(λs)
+    λ0 = RossbyWaveSpectrum.rossby_ridge(m)
+    rossbyindex = argmin(abs.(real.(λs) .- λ0))
 
-    λ0 = 2 / (m + 1)
-    λm ./= λ0
+    vm = vecs[:, rossbyindex:-1:rossbyindex-3]
 
     for (ind, (v, (ls, c, marker))) in enumerate(zip(eachcol(vm), lscm))
-        (; V, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m, operators)
+        (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators)
+        @unpack V = VWSinv
         Vr = realview(V)
         Vr_surf = Vr[end, :]
 
@@ -503,23 +497,21 @@ function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMa
         Vr_surf .*= Vrmax_sign
         normalize!(Vr_surf)
 
-        eigvalfrac = round(real(λm[ind]), sigdigits = 2)
-
         ax.plot(θ, Vr_surf; ls, color = c,
-            label = string(eigvalfrac),
+            label = "n = "*string(ind-1),
             marker, markevery = 10)
     end
 
-    legend = ax.legend(title = L"\frac{\Re[\omega/\Omega]}{2/(m+1)}")
+    legend = ax.legend()
     legend.get_title().set_fontsize("12")
     if !get(kw, :constrained_layout, false)
         f.tight_layout()
     end
 end
 
-function eigenfunctions_rossbyridge_all(λs, vs, m, operators; kw...)
+function eigenfunctions_rossbyridge_all(λs, vs, m; operators, kw...)
     fig = plt.figure(constrained_layout = true, figsize = (8, 4))
-    subfigs = fig.subfigures(1, 2, wspace = 0.15, width_ratios = [1, 1])
+    subfigs = fig.subfigures(1, 2, wspace = 0.1, width_ratios = [1, 0.8])
     eigenfunction_rossbyridge(λs, vs, m, operators; f = subfigs[1], constrained_layout = true)
     multiple_eigenfunctions_surface_m(λs, vs, m, operators; f = subfigs[2], constrained_layout = true)
     if get(kw, :save, false)

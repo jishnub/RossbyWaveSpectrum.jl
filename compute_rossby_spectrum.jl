@@ -27,10 +27,10 @@ r_out_frac = 0.985
 print_timer = false
 scale_eigenvectors = false
 
-operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 1e12);
+operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 1e13);
 
 diffrot = false
-V_symmetric = true
+V_symmetric = false
 
 # const spectrumfn! = RossbyWaveSpectrum.diffrotspectrum!(:radial_linear, V_symmetric)
 const spectrumfn! = RossbyWaveSpectrum.uniformrotspectrumfn!(V_symmetric)
