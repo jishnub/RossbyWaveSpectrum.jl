@@ -1997,10 +1997,11 @@ rossby_ridge(m; ΔΩ_frac = 0) = 2 / (m + 1) * (1 + ΔΩ_frac) - m * ΔΩ_frac
 
 function eigenvalue_filter(x, m;
     eig_imag_unstable_cutoff = -1e-6,
-    eig_imag_to_real_ratio_cutoff = 1)
+    eig_imag_to_real_ratio_cutoff = 1,
+    eig_imag_stable_cutoff = Inf)
 
     freq_sectoral = 2 / (m + 1)
-    eig_imag_unstable_cutoff <= imag(x) < freq_sectoral * eig_imag_to_real_ratio_cutoff
+    eig_imag_unstable_cutoff <= imag(x) < min(freq_sectoral * eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
 end
 function boundary_condition_filter(v, BC, BCVcache = allocate_BCcache(size(BC,1)), atol = 1e-5)
     mul!(BCVcache.re, BC, v.re)
@@ -2183,6 +2184,7 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
 
     @unpack eig_imag_unstable_cutoff = kw
     @unpack eig_imag_to_real_ratio_cutoff = kw
+    @unpack eig_imag_stable_cutoff = kw
     @unpack Δl_cutoff = kw
     @unpack Δl_power_cutoff = kw
     @unpack bc_atol = kw
@@ -2200,7 +2202,7 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
 
     if Filters.EIGVAL in allfilters
         f1 = eigenvalue_filter(λ, m;
-        eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff)
+        eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
         f1 || return false
     end
 
@@ -2286,6 +2288,7 @@ const DefaultFilterParams = Dict(
     :n_power_cutoff => 0.9,
     :eig_imag_unstable_cutoff => -1e-6,
     :eig_imag_to_real_ratio_cutoff => 1,
+    :eig_imag_stable_cutoff => Inf,
     :θ_cutoff => deg2rad(60),
     :equator_power_cutoff_frac => 0.3,
     :nnodesmax => 10,

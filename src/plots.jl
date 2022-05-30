@@ -32,21 +32,21 @@ function cbformat(x, _)
     a * L"\times10^{%$c}"
 end
 
-function plot_rossby_ridges(mr; ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
+function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
-        ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac),
+        ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
             label = ΔΩ_frac == 0 ? "Sectoral" :
                     L"\Delta\Omega/\Omega_0 = " * string(round(ΔΩ_frac, sigdigits = 1)),
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
             zorder = 0,
-            ls = get(kw, :sectoral_rossby_ridge_ls, "solid")
+            ls = get(kw, :sectoral_rossby_ridge_ls, "dotted")
         )
     end
 
     if !isnothing(ridgescalefactor)
-        ax.plot(mr, ridgescalefactor .* RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac),
-            label = ΔΩ_frac == 0 ? "Sectoral x $ridgescalefactor" :
+        ax.plot(mr, ridgescalefactor .* RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit ,
+            label = ΔΩ_frac == 0 ? "high-frequency" :
                     L"\Delta\Omega/\Omega_0 = " * string(round(ΔΩ_frac, sigdigits = 1)),
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
@@ -55,8 +55,8 @@ function plot_rossby_ridges(mr; ax = gca(), ΔΩ_frac = 0, ridgescalefactor = no
         )
     end
 
-    if get(kw, :uniform_rotation_ridge, true)
-        ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr),
+    if get(kw, :uniform_rotation_ridge, false)
+        ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr) .* νnHzunit,
             label = "Uniformly\nrotating",
             lw = 1,
             color = "black",
@@ -72,18 +72,49 @@ function spectrum(fname::String; kw...)
     spectrum(lam, mr; kw...)
 end
 
-function spectrum(lam::AbstractArray, mr;
-    f = figure(),
-    ax = subplot(),
-    m_zoom = mr[max(begin, end - 6):end],
-    kw...)
+struct Measurement
+    value :: Float64
+    lowerr :: Float64
+    higherr :: Float64
+end
+Measurement(a, b) = Measurement(a, b, b)
+value(m::Measurement) = m.value
+uncertainty(m::Measurement) = (lowerr, higherr)
+lowerr(m::Measurement) = m.lowerr
+higherr(m::Measurement) = m.higherr
 
-    ax.set_xlabel("m", fontsize = 12)
-    ax.set_ylabel(L"\Re[\omega]/" * L"\Omega_0", fontsize = 12)
-    ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
-    ax.xaxis.set_major_locator(ticker.MaxNLocator(5, integer = true))
+const ProxaufFit = [
+    # m => (nu, γ)
+    3 => (; ν = Measurement(-230, 5, 4), γ = Measurement(40, 13, 11)),
+    4 => (; ν = Measurement(-195, 3), γ = Measurement(16, 7, 5)),
+    5 => (; ν = Measurement(-159, 3, 2), γ = Measurement(12, 6, 5)),
+    6 => (; ν = Measurement(-119, 6), γ = Measurement(84, 22, 19)),
+    7 => (; ν = Measurement(-111, 6), γ = Measurement(20, 7, 5)),
+    8 => (; ν = Measurement(-89, 3), γ = Measurement(19, 7, 6)),
+    9 => (; ν = Measurement(-77, 4), γ = Measurement(40, 11)),
+    10 => (; ν = Measurement(-77, 4, 3), γ = Measurement(29, 10, 7)),
+    11 => (; ν = Measurement(-64, 4, 5), γ = Measurement(47, 13, 12)),
+    12 => (; ν = Measurement(-59, 4), γ = Measurement(35, 11, 9)),
+    13 => (; ν = Measurement(-45, 6), γ = Measurement(76, 22, 20)),
+    14 => (; ν = Measurement(-47, 5), γ = Measurement(40, 13, 11)),
+    15 => (; ν = Measurement(-39, 5, 4), γ = Measurement(41, 12, 11)),
+]
 
-    markerkw = Dict(
+const HansonHFFit = [
+    8 => (; ν = Measurement(-278.9, 17.7, 16.0), γ = Measurement(81.6, 76.6, 54.7)),
+    9 => (; ν = Measurement(-257.2, 15.8, 9.8), γ = Measurement(35.3, 62.9, 22.3)),
+    10 => (; ν = Measurement(-234.2, 21.6, 13.2), γ = Measurement(38.9, 70.1, 25.1)),
+    11 => (; ν = Measurement(-199.2, 6.1, 7.0), γ = Measurement(18.5, 37.2, 8.9)),
+    12 => (; ν = Measurement(-198.7, 19.9, 12.9), γ = Measurement(29.9, 63.5, 18.2)),
+    13 => (; ν = Measurement(-182.8, 6.7, 7.7), γ = Measurement(26.7, 24.6, 12.5)),
+    14 => (; ν = Measurement(-181.4, 23.5, 22.8), γ = Measurement(42.7, 76.1, 28.4)),
+]
+
+function errorbars_pyplot(m::AbstractVector{Measurement})
+    hcat(lowerr.(m), higherr.(m))'
+end
+
+const ScatterParams = Dict(
         :edgecolors => "k",
         :s => 30,
         :marker => "o",
@@ -92,58 +123,174 @@ function spectrum(lam::AbstractArray, mr;
         :lw => 0.5,
     )
 
-    lamcat = mapreduce(real, vcat, lam)
-    lamimcat = mapreduce(imag, vcat, lam)
+freqnHzunit(Ω0) = Ω0 * 1e9/2pi
+
+function spectrum(lam::AbstractArray, mr;
+    operators,
+    f = figure(),
+    ax = subplot(),
+    m_zoom = mr[max(begin, end - 6):end],
+    rossbyridges = true,
+    kw...)
+
+    ax.set_xlabel("m", fontsize = 12)
+    ax.set_ylabel(L"\Re[\nu]" * "[nHz]", fontsize = 12)
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
+    ax.xaxis.set_major_locator(ticker.MaxNLocator(5, integer = true))
+
+    @unpack Ω0 = operators.constants
+
+    νnHzunit = freqnHzunit(Ω0)
+    ax.set_ylim(0.05 * νnHzunit, 1.5 * νnHzunit)
+
+    lamcat = mapreduce(real, vcat, lam) .* νnHzunit
+    lamimcat = mapreduce(imag, vcat, lam) .* νnHzunit
     vmin, vmax = extrema(lamimcat)
     vmin = min(0, vmin)
     mcat = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr, lam)])
-    s = ax.scatter(mcat, lamcat; c = lamimcat, markerkw..., vmax = vmax, vmin = vmin)
+    s = ax.scatter(mcat, lamcat; c = lamimcat, ScatterParams..., vmax = vmax, vmin = vmin)
     divider = axes_grid1.make_axes_locatable(ax)
     cax = divider.append_axes("right", size = "3%", pad = 0.05)
-    cb = colorbar(mappable = s, cax = cax, format = ticker.FuncFormatter(cbformat))
+    cb = colorbar(mappable = s, cax = cax)
     cb.ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
-    cb.ax.set_title(L"\Im[\omega]/\Omega_0")
+    cb.ax.set_title(L"\Im[\nu]" * "[nHz]")
 
-    if get(kw, :rossbyridges, true)
-        plot_rossby_ridges(mr; ax, kw...)
+    if rossbyridges
+        plot_rossby_ridges(mr; νnHzunit, ax, kw...)
     end
 
-    if get(kw, :zoom, false)
-        lamcat_inset = mapreduce(real, vcat, lam[m_zoom])
-        lamimcat_inset = mapreduce(imag, vcat, lam[m_zoom])
+    V_symmetric = kw[:V_symmetric]
+    zoom = V_symmetric
+
+    if zoom
+        lamcat_inset = mapreduce(real, vcat, lam[m_zoom]) .* νnHzunit
+        lamimcat_inset = mapreduce(imag, vcat, lam[m_zoom]) .* νnHzunit
         mcat_inset = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr[m_zoom], lam[m_zoom])])
 
-        axins = ax.inset_axes([0.5, 0.4, 0.4, 0.3])
-        ymin = minimum(lamcat_inset) - 0.005
-        ymax = maximum(lamcat_inset) + 0.005
+        axins = ax.inset_axes([0.5, 0.6, 0.4, 0.3])
+        ymax = (RossbyWaveSpectrum.rossby_ridge(minimum(m_zoom)) + 0.005) * νnHzunit
+        ymin = (RossbyWaveSpectrum.rossby_ridge(maximum(m_zoom)) - 0.02) * νnHzunit
         axins.set_ylim((ymin, ymax))
-        axins.xaxis.set_major_locator(ticker.MaxNLocator(4, integer = true))
-        axins.yaxis.set_major_locator(ticker.MaxNLocator(2))
+        axins.xaxis.set_major_locator(ticker.NullLocator())
+        axins.yaxis.set_major_locator(ticker.NullLocator())
         plt.setp(axins.spines.values(), color = "0.2", lw = "0.5")
-        axins.scatter(mcat_inset, lamcat_inset; c = lamimcat_inset, markerkw...,
+        axins.scatter(mcat_inset, lamcat_inset; c = lamimcat_inset, ScatterParams...,
             vmax = vmax, vmin = vmin)
 
-        if get(kw, :rossbyridges, true)
-            plot_rossby_ridges(m_zoom; ax = axins, kw...)
+        if rossbyridges
+            plot_rossby_ridges(m_zoom; νnHzunit, ax = axins, kw...)
         end
 
         ax.indicate_inset_zoom(axins, edgecolor = "grey", lw = 0.5)
     end
 
-    if get(kw, :rossbyridges, true)
+    if rossbyridges
         ax.legend(loc = "best", fontsize = 12)
     end
 
-    f.tight_layout()
+    if get(kw, :tight_layout, true)
+        f.tight_layout()
+    end
+
+    titlestr = V_symmetric ? "Symmetric" : "Anti-symmetric"
+    ax.set_title(titlestr, fontsize = 12)
 
     if get(kw, :save, false)
-        filenametag = get(kw, :filenametag, "")
+        V_symmetric = kw[:V_symmetric]
+        V_symmetric_str = V_symmetric ? "sym" : "asym"
+        filenametag = get(kw, :filenametag, V_symmetric_str)
         rotation = get(kw, :rotation, "uniform")
-        f.savefig(joinpath(plotdir, "$(rotation)_rotation_spectrum$(filenametag).eps"))
+        f.savefig(joinpath(plotdir, "$(rotation)_rotation_spectrum_$(filenametag).eps"))
     end
 end
 
-piformatter = (x, _) -> begin
+function spectrum(lamsym, lamasym, mr; kw...)
+    f, axlist = subplots(2, 2, sharex = true)
+    spectrum(lamsym, mr; kw..., f, ax = axlist[1,1], save = false, V_symmetric = true)
+    spectrum(lamasym, mr; kw..., f, ax = axlist[2,1], save = false, V_symmetric = false)
+
+    damping_rossbyridge(lamsym, mr; operators, f, ax = axlist[1,2], kw..., save = false, V_symmetric = true)
+    plot_high_frequency_ridge(lamasym, mr; operators, f, ax = axlist[2,2], kw..., save = false, V_symmetric = false)
+
+    f.set_size_inches(9,6)
+    f.tight_layout()
+end
+
+function mantissa_exponent_format(a)
+    a_exponent = Int(log10(a))
+    a_mantissa = Int(a / 10^a_exponent)
+    (a_mantissa == 1 ? "" : L"%$a\times") * L"10^{%$a_exponent}"
+end
+
+function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), kw...)
+    V_symmetric = kw[:V_symmetric]
+    @assert V_symmetric "V must be symmetric for rossby ridge plots"
+    λs_rossbyridge = [λ[argmin(abs.(real.(λ) .- RossbyWaveSpectrum.rossby_ridge(m)))] for (m,λ) in zip(mr, lam)]
+    @unpack Ω0, ν = operators.constants
+    λs_rossbyridge .*= Ω0
+    ν *= Ω0 * Rsun^2
+    νstr = mantissa_exponent_format(ν)
+
+    ax.plot(mr, imag.(λs_rossbyridge) * 1e9/2pi,
+            ls="dotted", color="grey", marker=".", mfc="black", label=L"\nu="*νstr)
+
+    # observations
+    m_P = first.(ProxaufFit)
+    γ_P = last.(last.(ProxaufFit))
+    γ_P_val = value.(γ_P)
+    ax.plot(m_P, γ_P_val, ls="None", marker=".", color="black", ms="2")
+    ax.errorbar(m_P, γ_P_val,
+        yerr = errorbars_pyplot(γ_P),
+        color= "grey", ls="None", capsize = 3, label="P20")
+    ax.set_ylabel("linewidth [nHz]", fontsize = 12)
+    ax.set_xlabel("m", fontsize = 12)
+    ax.legend(loc="best")
+    ax.set_title("Sectoral modes", fontsize = 12)
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
+
+    ax.xaxis.set_major_locator(ticker.MaxNLocator(5, integer = true))
+    f.tight_layout()
+    if get(kw, :save, false)
+        f.savefig(joinpath(plotdir, "damping.eps"))
+    end
+    return nothing
+end
+
+function plot_high_frequency_ridge(lam, mr; operators, f = figure(), ax = subplot(), kw...)
+    @unpack Ω0 = operators.constants
+
+    νnHzunit = freqnHzunit(Ω0)
+
+    # observations
+    m_H = first.(HansonHFFit)
+    ν_H = first.(last.(HansonHFFit))
+    ax.errorbar(m_H, .-value.(ν_H),
+        yerr = errorbars_pyplot(ν_H),
+        color= "0.3", ls="dashed", capsize = 3, label="H22")
+    ax.set_ylabel("Peak frequency [nHz]", fontsize = 12)
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
+    ax.set_title("High-frequency ridge", fontsize = 12)
+
+    # our model
+    λ_filt = [begin
+        ν_norm_rr = RossbyWaveSpectrum.rossby_ridge(m)
+        hf_lowlimit = ν_norm_rr * 2
+        hf_highlimit = ν_norm_rr * 4
+        λ[hf_lowlimit .< real.(λ) .< hf_highlimit]
+        end for (m, λ) in zip(mr, lam)]
+    lamcat = mapreduce(real, vcat, λ_filt) .* νnHzunit
+    mcat = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr, λ_filt)])
+    ax.scatter(mcat, lamcat; ScatterParams..., c = "white", edgecolors = "black")
+
+    ax.legend(loc="best")
+
+    if get(kw, :save, false)
+        f.savefig(joinpath(plotdir, "highfreqridge.eps"))
+    end
+    return nothing
+end
+
+function piformatter(x, _)
     n = round(Int, 4x / pi)
     prestr = (n == 4 || n == 1) ? "" : iseven(n) ?
              (n == 2 ? "" : string(div(n, 2))) : string(n)
