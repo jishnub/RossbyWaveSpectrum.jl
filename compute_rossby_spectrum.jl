@@ -3,7 +3,7 @@ using LinearAlgebra
 
 nr = 60;
 nℓ = 30;
-mrange = 1:20;
+mrange = 1:15;
 
 # test
 # nr = 15;
@@ -14,23 +14,23 @@ mrange = 1:20;
 atol_constraint = 1e-5
 
 # filtering parameters
-Δl_cutoff = 10;
+Δl_cutoff = 15;
 Δl_power_cutoff = 0.9;
 eigen_rtol = 0.01;
 
-n_cutoff = 10
+n_cutoff = 15
 n_power_cutoff = 0.9
 
-r_in_frac = 0.5
+r_in_frac = 0.6
 r_out_frac = 0.985
 
 print_timer = false
 scale_eigenvectors = false
 
-operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 1e13);
+operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 4e12);
 
 diffrot = false
-V_symmetric = false
+V_symmetric = true
 
 # const spectrumfn! = RossbyWaveSpectrum.diffrotspectrum!(:radial_linear, V_symmetric)
 const spectrumfn! = RossbyWaveSpectrum.uniformrotspectrumfn!(V_symmetric)

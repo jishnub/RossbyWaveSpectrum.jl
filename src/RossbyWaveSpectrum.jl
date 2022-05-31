@@ -46,6 +46,8 @@ const TFun = Fun{Chebyshev{ChebyshevInterval{Float64},Float64},Float64,Vector{Fl
 const TFunDeriv = ApproxFunBase.Fun{ApproxFunOrthogonalPolynomials.Ultraspherical{Int64, DomainSets.ChebyshevInterval{Float64}, Float64}, Float64, Vector{Float64}}
 
 const StructMatrix{T} = StructArray{T,2}
+const BlockMatrixType = BlockMatrix{Float64, Matrix{BlockBandedMatrix{Float64}},
+    Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
 
 function __init__()
     SCRATCH[] = get(ENV, "SCRATCH", homedir())
@@ -357,7 +359,7 @@ function Sboundary!(MSn, args...)
     return MSn
 end
 
-function constraintmatrix(operators; W_basis = 1, S_basis = 1)
+function constraintmatrix(operators; W_basis = 2, S_basis = 2)
     @unpack radial_params = operators;
     @unpack nr, nℓ = radial_params;
     @unpack nvariables = operators.constants;
@@ -444,10 +446,10 @@ end
 function superadiabaticity(r; r_out = Rsun)
     δcz = 3e-6
     δtop = 3e-5
-    dtrans = dtop = 0.03Rsun
+    dtrans = dtop = 0.05Rsun
     r_sub = 0.8 * Rsun
     r_tran = 0.725 * Rsun
-    δrad = -1e-1
+    δrad = -1e-3
     δconv = δtop * exp((r - r_out) / dtop) + δcz * (r - r_sub) / (r_out - r_sub)
     δconv + (δrad - δconv) * 1 / 2 * (1 - tanh((r - r_tran) / dtrans))
 end
@@ -598,26 +600,6 @@ function r2neumann_chebyshev_matrix(ncheby, radial_params)
         colv[3] = 1/(n+1)
     end
     return M
-end
-
-deltafn(x, y; scale) = exp(-(x/scale-y/scale)^2/2)
-
-function deltafn_matrix(pts; scale)
-    n = length(pts) - 1
-    δ = deltafn.(pts, pts'; scale)
-    for col in axes(δ, 2)
-        v = @view δ[:, col]
-        s = Spline1D(pts, v)
-        is = Dierckx.integrate(s, pts[1], pts[end])
-        v ./= is
-    end
-    # zero out the first and last rows to enfore boundary conditions
-    δ[1, :] .= 0
-    δ[end, :] .= 0
-    # zero out the first and last columns to enfore symmetry of the Green function
-    δ[:, 1] .= 0
-    δ[:, end] .= 0
-    return δ
 end
 
 splderiv(v::Vector, r::Vector, rout = r; nu = 1) = Dierckx.derivative(Spline1D(r, v), rout; nu = 1)
@@ -958,7 +940,7 @@ hvcatrows(M::BlockMatrix) = hvcatrows(blocksize(M))
 
 function computesparse(M::BlockMatrix)
     rows = hvcatrows(M)
-    hvcat(rows, [sparse(M[j, i]) for (i,j) in Iterators.product(blockaxes(M)...)]...)
+    hvcat(rows, [sparse(M[j, i]) for (i,j) in Iterators.product(blockaxes(M)...)]...)::SparseMatrixCSC{eltype(M),Int}
 end
 
 computesparse(M::AbstractMatrix) = sparse(M)
@@ -971,7 +953,7 @@ function allocate_block_matrix(nvariables, bandwidth, rows, cols = rows)
     l,u = bandwidth, bandwidth # block bandwidths
     mortar(reshape(
             [blockbandedzero(rows, cols, (l,u)) for _ in 1:nvariables^2],
-                nvariables, nvariables))
+                nvariables, nvariables))::BlockMatrixType
 end
 
 function allocate_operator_matrix(operators, bandwidth = 2)
@@ -1913,7 +1895,8 @@ function allocate_projectback_temp_matrices(sz)
 end
 
 function constrained_eigensystem_timed(AB; timer = TimerOutput(), kw...)
-    X = @timeit timer "eigen" constrained_eigensystem(computesparse.(AB); timer, kw...)
+    Y = map(computesparse, AB)
+    X = @timeit timer "eigen" constrained_eigensystem(Y; timer, kw...)
     if get(kw, :print_timer, false)
         println(timer)
     end
@@ -1932,7 +1915,7 @@ function constrained_eigensystem((A, B);
         A_constrained = compute_constrained_matrix(A, constraints, cache)
         B_constrained = compute_constrained_matrix(B, constraints, cache)
     end
-    @timeit timer "eigen" λ, w = eigen!(A_constrained, B_constrained)
+    @timeit timer "eigen" λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(A_constrained, B_constrained)
     @timeit timer "projectback" v = realmatcomplexmatmul(constraints.ZC, w, temp_projectback)
     λ, v, (A, B)
 end
@@ -2003,7 +1986,8 @@ function eigenvalue_filter(x, m;
     freq_sectoral = 2 / (m + 1)
     eig_imag_unstable_cutoff <= imag(x) < min(freq_sectoral * eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
 end
-function boundary_condition_filter(v, BC, BCVcache = allocate_BCcache(size(BC,1)), atol = 1e-5)
+function boundary_condition_filter(v::StructVector{<:Complex}, BC::AbstractMatrix{<:Real},
+        BCVcache::StructVector{<:Complex} = allocate_BCcache(size(BC,1)), atol = 1e-5)
     mul!(BCVcache.re, BC, v.re)
     mul!(BCVcache.im, BC, v.im)
     norm(BCVcache) < atol
@@ -2012,7 +1996,7 @@ function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
         AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
         MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1)), rtol = 1e-1)
 
-    A, B = computesparse.(AB)
+    A, B = map(computesparse, AB)
     Av, λBv = MVcache
 
     mul!(Av.re, A.re, v.re)
@@ -2201,44 +2185,44 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
     allfilters = Filters.FilterFlag(filterflags)
 
     if Filters.EIGVAL in allfilters
-        f1 = eigenvalue_filter(λ, m;
+        f = eigenvalue_filter(λ, m;
         eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
-        f1 || return false
+        f || (@debug "EIGVAL" f; return false)
     end
 
     if Filters.SPHARM in allfilters
-        f2 = sphericalharmonic_filter!(VWSinvsh, F, v, operators,
+        f = sphericalharmonic_filter!(VWSinvsh, F, v, operators,
             Δl_cutoff, Δl_power_cutoff, filterfieldpowercutoff)
-        f2 || return false
+        f || (@debug "SPHARM" f; return false)
     end
 
     if Filters.BC in allfilters
-        f3 = boundary_condition_filter(v, BC, BCVcache, bc_atol)
-        f3 || return false
+        f = boundary_condition_filter(v, BC, BCVcache, bc_atol)
+        f || (@debug "BC" f; return false)
     end
 
     if Filters.CHEBY in allfilters
-        f4 = chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff,
+        f = chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff,
             n_power_cutoff; nℓ, Plcosθ,filterfieldpowercutoff)
-        f4 || return false
+        f || (@debug "CHEBY" f; return false)
     end
 
     if Filters.SPATIAL in allfilters
-        f5 = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
+        f = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
             θ_cutoff, equator_power_cutoff_frac; nℓ, Plcosθ,
             filterfieldpowercutoff)
-        f5 || return false
+        f || (@debug "SPATIAL" f; return false)
     end
 
     if Filters.EIGEN in allfilters
-        f6 = eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
-        f6 || return false
+        f = eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
+        f || (@debug "EIGEN" f; return false)
     end
 
     if Filters.NODES in allfilters
-        f7 = nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
+        f = nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
                 nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax)
-        f7 || return false
+        f || (@debug "NODES" f; return false)
     end
 
     return true
@@ -2295,6 +2279,29 @@ const DefaultFilterParams = Dict(
     :filterfieldpowercutoff => 1e-4,
 )
 
+function scale_eigenvectors!(v::AbstractMatrix; operators)
+    # re-apply scalings
+    @unpack nparams = operators.radial_params;
+    @views begin
+        V = v[1:nparams, :]
+        W = v[nparams .+ (1:nparams), :]
+        S = v[2nparams .+ (1:nparams), :]
+
+        scale_eigenvectors!((; V, W, S); operators)
+    end
+    return v
+end
+function scale_eigenvectors!(VWSinv::NamedTuple; operators)
+    @unpack V, W, S = VWSinv
+
+    V .*= Rsun
+    @unpack Wscaling, Sscaling = operators.scalings
+    W .*= -im * Rsun^2 / Wscaling
+    S ./= operators.constants.Ω0 * Rsun * Sscaling
+
+    return VWSinv
+end
+
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     M, m::Integer;
     operators,
@@ -2307,20 +2314,13 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     kw = merge(DefaultFilterParams, kw)
     additional_params = (operators, constraints, filtercache, kw)
 
-    inds_bool = filterfn.(λ, eachcol(v), m, (computesparse.(M),), (additional_params,), filterflags)
+    inds_bool = filterfn.(λ, eachcol(v), m, (map(computesparse, M),), (additional_params,), filterflags)
     filtinds = axes(λ, 1)[inds_bool]
     λ, v = λ[filtinds], v[:, filtinds]
 
     # re-apply scalings
     @views if get(kw, :scale_eigenvectors, false)
-        V = v[1:nparams, :]
-        W = v[nparams .+ (1:nparams), :]
-        S = v[2nparams .+ (1:nparams), :]
-
-        V .*= Rsun
-        @unpack Wscaling, Sscaling = operators.constants.scalings
-        W .*= -im * Rsun^2 / Wscaling
-        S ./= operators.constants.Ω0 * Rsun * Sscaling
+        scale_eigenvectors!(v; operators)
     end
 
     λ, v
@@ -2364,7 +2364,7 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
             Y
         end
     )
-    first.(λv), last.(λv)
+    map(first, λv), map(last, λv)
 end
 
 function fmap(spectrumfn!::F, m, c, operators, constraints; kw...) where {F}
@@ -2405,7 +2405,7 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
                     fmap(spectrumfn!, m, c, operators, constraints; kw...)
                 end
             )
-            λs, vs = first.(λv1), last.(λv1)
+            λs, vs = map(first, λv1), map(last, λv1)
 
             mr2 = @view mr[end-nthreads_trailing_elems+1:end]
 
@@ -2415,7 +2415,7 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
                 end
             )
 
-            λs2, vs2 = first.(λv2), last.(λv2)
+            λs2, vs2 = map(first, λv2), map(last, λv2)
             append!(λs, λs2)
             append!(vs, vs2)
         else
@@ -2424,7 +2424,7 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
                     fmap(spectrumfn!, m, c, operators, constraints; kw...)
                 end
             )
-            λs, vs = first.(λv), last.(λv)
+            λs, vs = map(first, λv), map(last, λv)
         end
     end
     println(to)

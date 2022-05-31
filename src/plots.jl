@@ -192,7 +192,7 @@ function spectrum(lam::AbstractArray, mr;
         f.tight_layout()
     end
 
-    titlestr = V_symmetric ? "Symmetric" : "Anti-symmetric"
+    titlestr = V_symmetric ? "Symmetric" : "Antisymmetric"
     ax.set_title(titlestr, fontsize = 12)
 
     if get(kw, :save, false)
@@ -221,9 +221,9 @@ function spectrum(lamsym, lamasym, mr; kw...)
 end
 
 function mantissa_exponent_format(a)
-    a_exponent = Int(log10(a))
-    a_mantissa = Int(a / 10^a_exponent)
-    (a_mantissa == 1 ? "" : L"%$a\times") * L"10^{%$a_exponent}"
+    a_exponent = floor(Int, log10(a))
+    a_mantissa = round(a / 10^a_exponent, sigdigits = 1)
+    (a_mantissa == 1 ? "" : L"%$a_mantissa\times") * L"10^{%$a_exponent}"
 end
 
 function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), kw...)
@@ -234,7 +234,8 @@ function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), k
 
     νnHzunit = freqnHzunit(Ω0)
 
-    λs_rossbyridge = [λ[argmin(abs.(real.(λ) .- RossbyWaveSpectrum.rossby_ridge(m)))] for (m,λ) in zip(mr, lam)]
+    λs_rossbyridge = [
+    (isempty(λ) ? eltype(λ)[NaN + im*NaN] : λ[argmin(abs.(real.(λ) .- RossbyWaveSpectrum.rossby_ridge(m)))]) for (m,λ) in zip(mr, lam)]
 
     νstr = mantissa_exponent_format(ν)
 
@@ -417,18 +418,22 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators;
     end
 end
 
-function eigenfunction(v::AbstractVector, m, operators; theory = false, f = figure(), kw...)
+function eigenfunction(v::AbstractVector{<:Number}, m::Integer; operators, f = figure(), kw...)
     (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
-    eigenfunction(VWSinv, θ, m, operators; theory, f, kw...)
+    eigenfunction(VWSinv, θ, m; operators, f, kw...)
 end
 
-function eigenfunctions_all(v::AbstractVector, m, operators; theory = false, kw...)
+function eigenfunctions_all(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
     (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
-    eigenfunctions_all(VWSinv, θ, m, operators; theory, kw...)
+    if get(kw, :scale_eigenvectors, false)
+        RossbyWaveSpectrum.scale_eigenvectors!(VWSinv; operators)
+    end
+    eigenfunctions_all(VWSinv, θ, m, operators; kw...)
 end
-function eigenfunctions_all(VWSinv::NamedTuple, θ, m, operators; theory = false, kw...)
+function eigenfunctions_all(VWSinv::NamedTuple, θ, m, operators; kw...)
     f = plt.figure(constrained_layout = true, figsize = (12, 8))
     subfigs = f.subfigures(2, 3, wspace = 0.15, width_ratios = [1, 1, 1])
+
     kw2 = Dict{Symbol, Any}(kw);
     kw2[:constrained_layout] = true
     kw2[:suptitle] = false
@@ -437,14 +442,19 @@ function eigenfunctions_all(VWSinv::NamedTuple, θ, m, operators; theory = false
     kw2[:scale] = scale
     itr = Iterators.product((real, imag), (:V, :W, :S))
     title_str = Dict(:V => "V", :W => "W", :S => "S/cp")
+
     for (ind, (component, field)) in zip(CartesianIndices(axes(itr)), itr)
         eigenfunction(VWSinv, θ, m, operators;
-            field, theory, f = subfigs[ind],
+            field, f = subfigs[ind],
             constrained_layout = true,
             setylabel = ind == 1 ? true : false,
             component,
-            kw2...)
+            kw2...,
+            save = false)
         subfigs[ind].suptitle(string(component)*"("*title_str[field]*")", x = 0.8)
+    end
+    if get(kw, :save, false)
+        f.savefig(joinpath(plotdir, "eigenfunctions_all_m$(m).eps"))
     end
 end
 
@@ -485,7 +495,7 @@ function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMa
     λ0 = RossbyWaveSpectrum.rossby_ridge(m)
     rossbyindex = argmin(abs.(real.(λs) .- λ0))
 
-    vm = vecs[:, rossbyindex:-1:rossbyindex-3]
+    vm = vecs[:, rossbyindex:-1:rossbyindex-2]
 
     for (ind, (v, (ls, c, marker))) in enumerate(zip(eachcol(vm), lscm))
         (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators)
