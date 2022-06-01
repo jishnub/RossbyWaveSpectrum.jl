@@ -37,7 +37,7 @@ ZChop = "8603256b-76ad-53fe-b511-38a38e6437cd"
 [compat]
 ApproxFun = "0.13"
 ApproxFunBase = "0.5"
-BandedMatrices = "0.16"
+BandedMatrices = "0.16, 0.17"
 BitFlags = "0.1"
 BlockArrays = "0.16"
 BlockBandedMatrices = "0.11"

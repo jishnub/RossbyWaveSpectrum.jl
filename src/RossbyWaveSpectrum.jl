@@ -359,6 +359,9 @@ function Sboundary!(MSn, args...)
     return MSn
 end
 
+# hvcatrows(n::Int) = hvcatrows((n, n))
+# hvcatrows(sz::NTuple{2,Integer}) = ntuple(_ -> sz[2], sz[1])
+
 function constraintmatrix(operators; W_basis = 2, S_basis = 2)
     @unpack radial_params = operators;
     @unpack nr, nℓ = radial_params;
@@ -367,27 +370,25 @@ function constraintmatrix(operators; W_basis = 2, S_basis = 2)
     nradconstraintsVS = 2;
     nradconstraintsW = 4;
 
-    MVn = Vboundary(nradconstraintsVS, nr, radial_params)
-    ZMVn = nullspace(MVn)
+    MVn = Vboundary(nradconstraintsVS, nr, radial_params);
+    ZMVn = BandedMatrix(nullspace(MVn));
 
-    MWn = Wboundary(nradconstraintsW, nr)
-    ZMWn = W_basis == 1 ? nullspace(MWn) : normalizecols!(dirichlet_neumann_chebyshev_matrix(nr));
+    MWn = Wboundary(nradconstraintsW, nr);
+    ZMWn = W_basis == 1 ? BandedMatrix(nullspace(MWn)) : normalizecols!(dirichlet_neumann_chebyshev_matrix(nr));
 
-    MSn = Sboundary(nradconstraintsVS, nr)
-    ZMSn = S_basis == 1 ? nullspace(MSn) : normalizecols!(neumann_chebyshev_matrix(nr));
+    MSn = Sboundary(nradconstraintsVS, nr);
+    ZMSn = S_basis == 1 ? BandedMatrix(nullspace(MSn)) : normalizecols!(neumann_chebyshev_matrix(nr));
 
-    rowsB_VS = Fill(nradconstraintsVS, nℓ)
-    rowsB_W = Fill(nradconstraintsW, nℓ)
-    colsB = Fill(nr, nℓ)
-    rows = hvcatrows(nvariables)
+    rowsB_VS = Fill(nradconstraintsVS, nℓ);
+    rowsB_W = Fill(nradconstraintsW, nℓ);
+    colsB = Fill(nr, nℓ);
     B_blocks = if nvariables == 3
         [blockdiagzero(rowsB_VS, colsB), blockdiagzero(rowsB_W, colsB), blockdiagzero(rowsB_VS, colsB)]
     else
         [blockdiagzero(rowsB_VS, colsB), blockdiagzero(rowsB_W, colsB)]
-    end
+    end;
 
     BC_block = mortar(Diagonal(B_blocks))
-    # BC_block = allocate_block_matrix(nvariables, 0, rowsB, colsB)
 
     rowsZ = Fill(nr, nℓ)
     colsZ_VS = Fill(nr - nradconstraintsVS, nℓ)
@@ -396,20 +397,20 @@ function constraintmatrix(operators; W_basis = 2, S_basis = 2)
         [blockdiagzero(rowsZ, colsZ_VS), blockdiagzero(rowsZ, colsZ_W), blockdiagzero(rowsZ, colsZ_VS)]
     else
         [blockdiagzero(rowsZ, colsZ_VS), blockdiagzero(rowsZ, colsZ_W)]
-    end
+    end;
     ZC_block = mortar(Diagonal(Z_blocks))
-    # ZC_block = allocate_block_matrix(nvariables, 0, rowsZ, colsZ)
 
     fieldmatrices = nvariables == 3 ? [MVn, MWn, MSn] : [MVn, MWn]
+
     for (Mind, M) in enumerate(fieldmatrices)
-        BCi = BC_block[Block(Mind, Mind)]
+        BCi = B_blocks[Mind]
         for ℓind = 1:nℓ
             BCi[Block(ℓind, ℓind)] = M
         end
     end
     nullspacematrices = nvariables == 3 ? [ZMVn, ZMWn, ZMSn] : [ZMVn, ZMWn];
     for (Zind, Z) in enumerate(nullspacematrices)
-        ZCi = ZC_block[Block(Zind, Zind)]
+        ZCi = Z_blocks[Zind]
         for ℓind = 1:nℓ
             ZCi[Block(ℓind, ℓind)] = Z
         end
@@ -418,7 +419,7 @@ function constraintmatrix(operators; W_basis = 2, S_basis = 2)
     BC = computesparse(BC_block)
     ZC = computesparse(ZC_block)
 
-    (; BC, ZC, nvariables, ZC_block)
+    (; BC, ZC)
 end
 
 """
@@ -934,13 +935,16 @@ function computesparse(M::StructMatrix{<:Complex})
     StructArray{eltype(M)}((SR, SI))
 end
 
-hvcatrows(n::Int) = hvcatrows((n, n))
-hvcatrows(sz::NTuple{2,Integer}) = ntuple(_ -> sz[2], sz[1])
-hvcatrows(M::BlockMatrix) = hvcatrows(blocksize(M))
-
 function computesparse(M::BlockMatrix)
-    rows = hvcatrows(M)
-    hvcat(rows, [sparse(M[j, i]) for (i,j) in Iterators.product(blockaxes(M)...)]...)::SparseMatrixCSC{eltype(M),Int}
+    v = [sparse(M[j, i]) for (i,j) in Iterators.product(blockaxes(M)...)]
+    TS = SparseMatrixCSC{eltype(M),Int}
+    if blocksize(M, 2) == 3
+        hvcat((3,3,3), v...)::TS
+    elseif blocksize(M, 2) == 2
+        hvcat((2,2), v...)::TS
+    else
+        error("unsupported block size")
+    end
 end
 
 computesparse(M::AbstractMatrix) = sparse(M)
@@ -955,6 +959,7 @@ function allocate_block_matrix(nvariables, bandwidth, rows, cols = rows)
             [blockbandedzero(rows, cols, (l,u)) for _ in 1:nvariables^2],
                 nvariables, nvariables))::BlockMatrixType
 end
+# precompile(allocate_block_matrix, (Int64, Int64, Fill{Int64, 1, Tuple{Base.OneTo{Int64}}}, Fill{Int64, 1, Tuple{Base.OneTo{Int64}}}))
 
 function allocate_operator_matrix(operators, bandwidth = 2)
     @unpack nr, nℓ = operators.radial_params
@@ -2245,8 +2250,9 @@ function allocate_BCcache(n_bc)
 end
 
 function allocate_filter_caches(m; operators, constraints = constraintmatrix(operators))
-    @unpack BC, nvariables = constraints
+    @unpack BC = constraints
     @unpack nr, nℓ, nparams = operators.radial_params
+    @unpack nvariables = operators.constants
     # temporary cache arrays
     nrows = nvariables * nparams
     MVcache = allocate_MVcache(nrows)
