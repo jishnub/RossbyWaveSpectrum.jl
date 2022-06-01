@@ -119,14 +119,14 @@ datadir(f) = joinpath(DATADIR[], f)
 γ⁺ℓm(ℓ, m) = ℓ * α⁺ℓm(ℓ, m)
 γ⁻ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ, m) - β⁻ℓm(ℓ, m)
 
-function chebyshevnodes(n, a = -1, b = 1)
+function chebyshevnodes(n, a = -1.0, b = 1.0)
     nodes = cos.(reverse(pi * ((1:n) .- 0.5) ./ n))
     nodes_scaled = nodes * (b - a) / 2 .+ (b + a) / 2
     nodes, nodes_scaled
 end
 
-function chebyshev_forward_inverse(n, boundaries...)
-    r_chebyshev, r = chebyshevnodes(n, boundaries...)
+function chebyshev_forward_inverse(n::Int, r_in::Float64 = -1.0, r_out::Float64 = 1.0)
+    r_chebyshev, r = chebyshevnodes(n, r_in, r_out)
     Tcinv = zeros(n, n)
     for (Tc, node) in zip(eachrow(Tcinv), r_chebyshev)
         chebyshevpoly!(Tc, node)
@@ -135,6 +135,7 @@ function chebyshev_forward_inverse(n, boundaries...)
     Tcfwd[1, :] ./= 2
     r, Tcfwd, Tcinv
 end
+precompile(chebyshev_forward_inverse, (Int, Float64, Float64))
 
 chebyshevtransform(A::AbstractVector) = chebyshevtransform!(similar(A), A)
 function chebyshevtransform!(B::AbstractVector, A::AbstractVector, PC = plan_chebyshevtransform!(B))
@@ -683,6 +684,12 @@ macro checkncoeff(v, nr)
     :(checkncoeff($(esc(v)), $(String(v)), $(esc(nr))))
 end
 
+struct OperatorWrap{T}
+    x::T
+end
+Base.show(io::IO, ::Type{<:OperatorWrap}) = print(io, "Operators")
+Base.getproperty(y::OperatorWrap, name::Symbol) = getproperty(getfield(y, :x), name)
+
 const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0)
 function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
     scalings = DefaultScalings)
@@ -707,20 +714,20 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     @unpack splines = read_solar_model(; r_in, r_out, _stratified);
 
     @unpack sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
-        sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ, sT, sηT = splines
+        sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ, sT, sηT = splines;
 
-    ddr = ApproxFun.Derivative() * (2 / Δr)
-    rddr = (r_cheby * ddr)::Tmul
-    d2dr2 = (ddr * ddr)::Tmul
-    d3dr3 = (ddr * d2dr2)::Tmul
-    d4dr4 = (d2dr2 * d2dr2)::Tmul
-    r2d2dr2 = (r2_cheby * d2dr2)::Tmul
+    ddr = ApproxFun.Derivative() * (2 / Δr);
+    rddr = (r_cheby * ddr)::Tmul;
+    d2dr2 = (ddr * ddr)::Tmul;
+    d3dr3 = (ddr * d2dr2)::Tmul;
+    d4dr4 = (d2dr2 * d2dr2)::Tmul;
+    r2d2dr2 = (r2_cheby * d2dr2)::Tmul;
 
     # density stratification
-    ηρ = replaceemptywitheps(ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev()), 1e-3))::TFun
+    ηρ = replaceemptywitheps(ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev()), 1e-3))::TFun;
     @checkncoeff ηρ nr
 
-    ηT = replaceemptywitheps(ApproxFun.chop(Fun(sηT ∘ r_cheby, ApproxFun.Chebyshev()), 1e-2))::TFun
+    ηT = replaceemptywitheps(ApproxFun.chop(Fun(sηT ∘ r_cheby, ApproxFun.Chebyshev()), 1e-2))::TFun;
     @checkncoeff ηT nr
 
     ddr_lnρT = (ηρ + ηT)::TFun
@@ -871,7 +878,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         onebyr2_IplusrηρMCU4, onebyr4_chebyMCU4,
         rMCU4
 
-    (;
+    op = (;
         constants, rad_terms,
         scalings,
         splines,
@@ -882,6 +889,8 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         matCU2, matCU4,
         _stratified,
     )
+
+    OperatorWrap(op)
 end
 
 function blockinds((m, nr), ℓ, ℓ′ = ℓ)
@@ -1508,12 +1517,12 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
     nCS = 2nℓ+1
     ℓs = range(m, length = nCS)
-    cosθ = OffsetArray(costheta_operator(nCS, m), ℓs, ℓs);
-    sinθdθ = OffsetArray(sintheta_dtheta_operator(nCS, m), ℓs, ℓs);
+    cosθ = costheta_operator(nCS, m);
+    sinθdθ = sintheta_dtheta_operator(nCS, m);
+    cosθsinθdθ = (costheta_operator(nCS + 1, m) * sintheta_dtheta_operator(nCS + 1, m))[1:end-1, 1:end-1];
 
     cosθo = OffsetArray(cosθ, ℓs, ℓs);
     sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs);
-    cosθsinθdθ = (costheta_operator(nCS + 1, m)*sintheta_dtheta_operator(nCS + 1, m))[1:end-1, 1:end-1];
     cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
     ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs);
 
