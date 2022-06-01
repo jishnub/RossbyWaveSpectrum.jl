@@ -959,7 +959,10 @@ function allocate_block_matrix(nvariables, bandwidth, rows, cols = rows)
             [blockbandedzero(rows, cols, (l,u)) for _ in 1:nvariables^2],
                 nvariables, nvariables))::BlockMatrixType
 end
-# precompile(allocate_block_matrix, (Int64, Int64, Fill{Int64, 1, Tuple{Base.OneTo{Int64}}}, Fill{Int64, 1, Tuple{Base.OneTo{Int64}}}))
+
+# const TMassMatrix = BlockMatrixType
+# const TOperatorMatrix = StructArrays.StructArray{ComplexF64, 2,
+#     NamedTuple{(:re, :im), NTuple{2,BlockMatrixType}}, CartesianIndex{2}}
 
 function allocate_operator_matrix(operators, bandwidth = 2)
     @unpack nr, nℓ = operators.radial_params
@@ -2332,17 +2335,25 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     λ, v
 end
 
-macro maybe_reduce_blas_threads(nt, ex)
-    ex_esc = esc(ex)
-    nt_esc = esc(nt)
-    quote
-        nblasthreads = BLAS.get_num_threads()
-        try
-            BLAS.set_num_threads(max(1, round(Int, nblasthreads/$nt_esc)))
-            $ex_esc
-        finally
-            BLAS.set_num_threads(nblasthreads)
-        end
+function filter_map(λm::AbstractVector, vm::AbstractMatrix, m::Int, c::Channel, matrixfn!::F; kw...) where {F}
+    A, B = take!(c)
+    matrixfn!(A, m; kw...)
+    mass_matrix!(B, m; kw...)
+    Y = filter_eigenvalues(λm, vm, (A,B), m; kw...)
+    put!(c, (A, B))
+    Y
+end
+function filter_map_nthreads(nt::Int, λs::AbstractVector{<:AbstractVector},
+        vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector, c::Channel, matrixfn!; kw...)
+
+    nblasthreads = BLAS.get_num_threads()
+    try
+        BLAS.set_num_threads(max(1, round(Int, nblasthreads/nt)))
+        Folds.map(zip(λs, vs, mr)) do (λm, vm, m)
+            filter_map(λm, vm, m, c, matrixfn!; kw...)
+        end::Vector{Tuple{eltype(λs), eltype(vs)}}
+    finally
+        BLAS.set_num_threads(nblasthreads)
     end
 end
 
@@ -2353,33 +2364,40 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
 
     @unpack nr, nℓ, nparams = operators.radial_params
     @unpack nvariables = operators.constants
-    ABs = [(allocate_operator_matrix(operators), allocate_mass_matrix(operators)) for _ in 1:Threads.nthreads()]
     nthreads = Threads.nthreads();
-    c = Channel(nthreads);
+    ABs = [(allocate_operator_matrix(operators), allocate_mass_matrix(operators)) for _ in 1:nthreads]
+    c = Channel{eltype(ABs)}(nthreads);
     for el in ABs
         put!(c, el)
     end
 
-    λv = @maybe_reduce_blas_threads(Threads.nthreads(),
-        Folds.map(zip(λs, vs, mr)) do (λm, vm, m)
-            A, B = take!(c)
-            matrixfn!(A, m; operators, kw...)
-            mass_matrix!(B, m; operators, kw...)
-            Y = filter_eigenvalues(λm, vm, (A,B), m; operators, constraints, kw...)
-            put!(c, (A, B))
-            Y
-        end
-    )
+    λv = filter_map_nthreads(nthreads, λs, vs, mr, c, matrixfn!; operators, constraints, kw...)
     map(first, λv), map(last, λv)
 end
 
-function fmap(spectrumfn!::F, m, c, operators, constraints; kw...) where {F}
+function spectrum_filter_map(spectrumfn!::F, m, c, operators, constraints; kw...) where {F}
     Ctid = take!(c)
     M, cache, temp_projectback = Ctid;
     X = spectrumfn!(M, m; operators, constraints, cache, temp_projectback, kw...);
     Y = filter_eigenvalues(X..., m; operators, constraints, kw...)
     put!(c, Ctid)
     return Y
+end
+
+const TMapReturn = Vector{Tuple{Vector{ComplexF64},
+                    StructArray{ComplexF64, 2, @NamedTuple{re::Matrix{Float64},im::Matrix{Float64}}, Int64}}}
+
+function spectrum_filter_map_nthreads(nt, spectrumfn!, mr, c, operators, constraints; kw...)
+    nblasthreads = BLAS.get_num_threads()
+    nt = Threads.nthreads()
+    try
+        BLAS.set_num_threads(max(1, round(Int, nblasthreads/nt)))
+        Folds.map(mr) do m
+            spectrum_filter_map(spectrumfn!, m, c, operators, constraints; kw...)
+        end::TMapReturn
+    finally
+        BLAS.set_num_threads(nblasthreads)
+    end
 end
 
 function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
@@ -2392,45 +2410,34 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
         @timeit to "M" ABs = [(allocate_operator_matrix(operators), allocate_mass_matrix(operators)) for _ in 1:nthreads];
         @timeit to "caches" caches = [constrained_matmul_cache(constraints) for _ in 1:nthreads];
         @timeit to "projectback" temp_projectback_mats = [allocate_projectback_temp_matrices(size(constraints.ZC)) for _ in 1:nthreads];
-        z = zip(ABs, caches, temp_projectback_mats)
-        c = Channel(nthreads);
+        z = zip(ABs, caches, temp_projectback_mats);
+        c = Channel{eltype(z)}(nthreads);
         for el in z
             put!(c, el)
         end
     end
 
-    @timeit to "spectrum" begin
+    @timeit to "spectrum + filter" begin
         nblasthreads = BLAS.get_num_threads()
         nthreads_trailing_elems = rem(length(mr), nthreads)
 
         if nthreads_trailing_elems > 0 && div(nblasthreads, nthreads_trailing_elems) > max(1, div(nblasthreads, nthreads))
             # in this case the extra elements may be run using a higher number of blas threads
             mr1 = @view mr[1:end-nthreads_trailing_elems]
-            λv1 = @maybe_reduce_blas_threads(Threads.nthreads(),
-                Folds.map(mr1) do m
-                    fmap(spectrumfn!, m, c, operators, constraints; kw...)
-                end
-            )
-            λs, vs = map(first, λv1), map(last, λv1)
+            λv1 = spectrum_filter_map_nthreads(Threads.nthreads(), spectrumfn!, mr, c, operators, constraints; kw...)
+            @timeit to "result" λs, vs = map(first, λv1), map(last, λv1)
 
             mr2 = @view mr[end-nthreads_trailing_elems+1:end]
+            λv2 = spectrum_filter_map_nthreads(nthreads_trailing_elems, spectrumfn!, mr, c, operators, constraints; kw...)
 
-            λv2 = @maybe_reduce_blas_threads(nthreads_trailing_elems,
-                Folds.map(mr2) do m
-                    fmap(spectrumfn!, m, c, operators, constraints; kw...)
-                end
-            )
-
-            λs2, vs2 = map(first, λv2), map(last, λv2)
-            append!(λs, λs2)
-            append!(vs, vs2)
+            @timeit to "result"  begin
+                λs2, vs2 = map(first, λv2), map(last, λv2)
+                append!(λs, λs2)
+                append!(vs, vs2)
+            end
         else
-            λv = @maybe_reduce_blas_threads(Threads.nthreads(),
-                Folds.map(mr) do m
-                    fmap(spectrumfn!, m, c, operators, constraints; kw...)
-                end
-            )
-            λs, vs = map(first, λv), map(last, λv)
+            λv = spectrum_filter_map_nthreads(Threads.nthreads(), spectrumfn!, mr, c, operators, constraints; kw...)
+            @timeit to "result" λs, vs = map(first, λv), map(last, λv)
         end
     end
     println(to)
@@ -2446,14 +2453,14 @@ end
 
 rossbyeigenfilename(nr, nℓ, tag = "ur", posttag = "") = "$(tag)_nr$(nr)_nl$(nℓ)$(posttag).jld2"
 function save_eigenvalues(f, mr; operators, kw...)
-    lam, vec = filter_eigenvalues(f, mr; operators, kw...)
+    @time lam, vec = filter_eigenvalues(f, mr; operators, kw...)
     isdiffrot = get(kw, :diffrot, false)
     filenametag = isdiffrot ? "dr" : "ur"
     posttag = get(kw, :V_symmetric, true) ? "sym" : "asym"
     @unpack nr, nℓ = operators.radial_params;
     fname = datadir(rossbyeigenfilename(nr, nℓ, filenametag, posttag))
     @info "saving to $fname"
-    jldsave(fname; lam, vec, mr, nr, nℓ, kw, operators)
+    @time jldsave(fname; lam, vec, mr, nr, nℓ, kw, operators)
 end
 
 function eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
