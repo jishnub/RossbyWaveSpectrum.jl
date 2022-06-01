@@ -910,22 +910,25 @@ end
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
         @unpack nvariables = operators.constants;
 
-        m = 1
+        Mc = RossbyWaveSpectrum.allocate_operator_matrix(operators);
+        Mr = RossbyWaveSpectrum.allocate_operator_matrix(operators);
 
-        @testset "radial constant and constant" begin
-            Mc = RossbyWaveSpectrum.differential_rotation_matrix(m,
-                rotation_profile = :constant; operators);
-            Mr = RossbyWaveSpectrum.differential_rotation_matrix(m,
-                rotation_profile = :radial_constant; operators);
+        @testset for m in [1, 4, 10]
+            @testset "radial constant and constant" begin
+                RossbyWaveSpectrum.differential_rotation_matrix!(Mc, m;
+                    rotation_profile = :constant, operators);
+                RossbyWaveSpectrum.differential_rotation_matrix!(Mr, m;
+                    rotation_profile = :radial_constant, operators);
 
-            @testset for colind in 1:nvariables, rowind in 1:nvariables
-                Rc = matrix_block(Mr, rowind, colind, nvariables)
-                C = matrix_block(Mc, rowind, colind, nvariables)
-                @testset "real" begin
-                    @test blockwise_isapprox(Rc.re, C.re, atol = 1e-10, rtol = 1e-3)
-                end
-                @testset "imag" begin
-                    @test blockwise_isapprox(Rc.im, C.im, atol = 1e-10, rtol = 1e-3)
+                @testset for colind in 1:nvariables, rowind in 1:nvariables
+                    Rc = matrix_block(Mr, rowind, colind, nvariables)
+                    C = matrix_block(Mc, rowind, colind, nvariables)
+                    @testset "real" begin
+                        @test blockwise_isapprox(Rc.re, C.re, atol = 1e-10, rtol = 1e-3)
+                    end
+                    @testset "imag" begin
+                        @test blockwise_isapprox(Rc.im, C.im, atol = 1e-10, rtol = 1e-3)
+                    end
                 end
             end
         end
