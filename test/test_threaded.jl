@@ -8,7 +8,7 @@ using Folds
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.5, r_out_frac = 0.985);
     constraints = RossbyWaveSpectrum.constraintmatrix(operators);
 
-    mr = 1:6
+    mr = 1:15
 
     As = Folds.map(m -> RossbyWaveSpectrum.uniform_rotation_matrix(m; operators), mr)
     for (ind, m) in enumerate(mr)
@@ -25,7 +25,7 @@ using Folds
     λs, vs = RossbyWaveSpectrum.filter_eigenvalues(RossbyWaveSpectrum.uniform_rotation_spectrum!,
             mr; operators, constraints);
 
-    for ind in eachindex(mr)
+    @testset for ind in eachindex(mr)
         m = mr[ind]
         λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints);
         λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m; operators, constraints);
