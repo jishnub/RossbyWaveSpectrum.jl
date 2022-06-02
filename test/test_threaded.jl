@@ -3,7 +3,7 @@ using Test
 using Folds
 
 @testset "multiple ms" begin
-    nr, nℓ = 15, 8
+    nr, nℓ = 25, 8
 
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.5, r_out_frac = 0.985);
     constraints = RossbyWaveSpectrum.constraintmatrix(operators);
@@ -29,6 +29,8 @@ using Folds
         m = mr[ind]
         λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints);
         λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m; operators, constraints);
+
+        @test length(λuf) > 0
 
         @test λuf ≈ λs[ind]
         @test vuf ≈ vs[ind]

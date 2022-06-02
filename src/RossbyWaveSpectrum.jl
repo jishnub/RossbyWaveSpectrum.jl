@@ -2344,13 +2344,11 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     λ, v
 end
 
-function filter_map(λm::AbstractVector, vm::AbstractMatrix, m::Int, c::Channel, matrixfn!::F; kw...) where {F}
-    A, B = take!(c)
+function filter_map(λm::AbstractVector, vm::AbstractMatrix, AB::Tuple, m::Int, matrixfn!::F; kw...) where {F}
+    A, B = AB
     matrixfn!(A, m; kw...)
     mass_matrix!(B, m; kw...)
-    Y = filter_eigenvalues(λm, vm, (A,B), m; kw...)
-    put!(c, (A, B))
-    Y
+    filter_eigenvalues(λm, vm, AB, m; kw...)
 end
 function filter_map_nthreads(nt::Int, λs::AbstractVector{<:AbstractVector},
         vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector, c::Channel, matrixfn!; kw...)
@@ -2359,7 +2357,10 @@ function filter_map_nthreads(nt::Int, λs::AbstractVector{<:AbstractVector},
     try
         BLAS.set_num_threads(max(1, round(Int, nblasthreads/nt)))
         Folds.map(zip(λs, vs, mr)) do (λm, vm, m)
-            filter_map(λm, vm, m, c, matrixfn!; kw...)
+            AB = take!(c)
+            Y = filter_map(λm, vm, AB, m, matrixfn!; kw...)
+            put!(c, AB)
+            Y
         end::Vector{Tuple{eltype(λs), eltype(vs)}}
     finally
         BLAS.set_num_threads(nblasthreads)
@@ -2384,13 +2385,10 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     map(first, λv), map(last, λv)
 end
 
-function spectrum_filter_map(spectrumfn!::F, m, c, operators, constraints; kw...) where {F}
-    Ctid = take!(c)
+function spectrum_filter_map(spectrumfn!::F, m, Ctid, operators, constraints; kw...) where {F}
     M, cache, temp_projectback = Ctid;
     X = spectrumfn!(M, m; operators, constraints, cache, temp_projectback, kw...);
-    Y = filter_eigenvalues(X..., m; operators, constraints, kw...)
-    put!(c, Ctid)
-    return Y
+    filter_eigenvalues(X..., m; operators, constraints, kw...)
 end
 
 const TMapReturn = Vector{Tuple{Vector{ComplexF64},
@@ -2402,7 +2400,10 @@ function spectrum_filter_map_nthreads(nt, spectrumfn!, mr, c, operators, constra
     try
         BLAS.set_num_threads(max(1, round(Int, nblasthreads/nt)))
         Folds.map(mr) do m
-            spectrum_filter_map(spectrumfn!, m, c, operators, constraints; kw...)
+            Ctid = take!(c)
+            Y = spectrum_filter_map(spectrumfn!, m, Ctid, operators, constraints; kw...)
+            put!(c, Ctid)
+            Y
         end::TMapReturn
     finally
         BLAS.set_num_threads(nblasthreads)
