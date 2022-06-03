@@ -2051,58 +2051,30 @@ function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = 1e-
     return filterfields
 end
 
-function sphericalharmonic_filter!(VWSinvsh, F, v, operators,
-        Δl_cutoff = 7, power_cutoff = 0.9, filterfieldpowercutoff = 1e-4)
+function eigvec_spectrum_filter!(F, v, m, operators;
+    n_cutoff = 7, Δl_cutoff = 7, eigvec_spectrum_power_cutoff = 0.9,
+    filterfieldpowercutoff = 1e-4,
+    kw...)
 
-    eigenfunction_rad_sh!(VWSinvsh, F, v; operators)
-    l_cutoff_ind = 1 + Δl_cutoff÷2
-
-    flag = true
+    VW = eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
+    Δl_inds = Δl_cutoff ÷ 2
 
     @unpack nparams = operators.radial_params
     @unpack nvariables = operators.constants
-    fields = filterfields(VWSinvsh, v, nparams, nvariables; filterfieldpowercutoff)
+
+    flag = true
+    fields = filterfields(VW, v, nparams, nvariables; filterfieldpowercutoff)
 
     @views for X in fields
-        PV_frac = sum(abs2, X[:, 1:l_cutoff_ind]) / sum(abs2, X)
-        flag &= PV_frac > power_cutoff
+        PV_frac = sum(abs2, X[1:n_cutoff, 1:Δl_inds]) / sum(abs2, X)
+        flag &= PV_frac > eigvec_spectrum_power_cutoff
+        flag || break
     end
 
-    flag
+    return flag
 end
 
 allocate_Pl(m, nℓ) = zeros(range(m, length = 2nℓ + 1))
-
-function chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff = 7, n_power_cutoff = 0.9;
-    nℓ = operators.radial_params.nℓ,
-    Plcosθ = allocate_Pl(m, nℓ),
-    filterfieldpowercutoff = 1e-4)
-
-    eigenfunction_n_theta!(VWSinv, F, v, m; operators, nℓ, Plcosθ)
-
-    @unpack V = VWSinv
-    n_cutoff_ind = 1 + n_cutoff
-    # ensure that most of the power at the equator is below the cutoff
-    nθ = size(V, 2)
-    equator_ind = nθ÷2
-
-    Δθ_scan = div(nθ, 5)
-    rangescan = intersect(equator_ind .+ (-Δθ_scan:Δθ_scan), axes(V, 2))
-
-    flag = true
-
-    @unpack nparams = operators.radial_params
-    @unpack nvariables = operators.constants
-    fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
-
-    @views for X in fields
-        Xrange = X[:, rangescan]
-        PV_frac = sum(abs2, X[1:n_cutoff_ind, rangescan]) / sum(abs2, X[:, rangescan])
-        flag &= PV_frac > n_power_cutoff
-    end
-
-    flag
-end
 
 function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     θ_cutoff = deg2rad(60), equator_power_cutoff_frac = 0.3;
@@ -2152,8 +2124,9 @@ function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
         nnodes_real = count(Bool.(sign.(abs.(diff(sign.(real(radprof)))))))
         nnodes_imag = count(Bool.(sign.(abs.(diff(sign.(imag(radprof)))))))
         nodesfilter &= nnodes_real <= nnodesmax && nnodes_imag <= nnodesmax
+        nodesfilter || break
     end
-    nodesfilter
+    return nodesfilter
 end
 
 module Filters
@@ -2161,20 +2134,22 @@ module Filters
     export DefaultFilter
     @bitflag FilterFlag::UInt8 begin
         NONE=0
-        EIGVAL
         EIGEN
-        SPHARM
-        CHEBY
+        EIGVAL
+        EIGVEC
         BC
         SPATIAL
         NODES
     end
     FilterFlag(F::FilterFlag) = F
-    Base.:(!)(F::FilterFlag) = FilterFlag(Int(typemax(UInt8) >> 1) - Int(F))
+    function Base.:(!)(F::FilterFlag)
+        n = length(instances(FilterFlag))
+        FilterFlag(2^(n-1)-1 - Int(F))
+    end
     Base.in(t::FilterFlag, F::FilterFlag) = (t & F) != NONE
     Base.broadcastable(x::FilterFlag) = Ref(x)
 
-    const DefaultFilter = EIGVAL | EIGEN | SPHARM | CHEBY | BC | SPATIAL
+    const DefaultFilter = EIGEN | EIGVAL | EIGVEC | BC | SPATIAL
 end
 using .Filters
 
@@ -2186,11 +2161,10 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
     @unpack eig_imag_unstable_cutoff = kw
     @unpack eig_imag_to_real_ratio_cutoff = kw
     @unpack eig_imag_stable_cutoff = kw
-    @unpack Δl_cutoff = kw
-    @unpack Δl_power_cutoff = kw
+    @unpack eigvec_spectrum_power_cutoff = kw
     @unpack bc_atol = kw
+    @unpack Δl_cutoff = kw
     @unpack n_cutoff = kw
-    @unpack n_power_cutoff = kw
     @unpack θ_cutoff = kw
     @unpack equator_power_cutoff_frac = kw
     @unpack eigen_rtol = kw
@@ -2207,21 +2181,16 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
         f || (@debug "EIGVAL" f; return false)
     end
 
-    if Filters.SPHARM in allfilters
-        f = sphericalharmonic_filter!(VWSinvsh, F, v, operators,
-            Δl_cutoff, Δl_power_cutoff, filterfieldpowercutoff)
-        f || (@debug "SPHARM" f; return false)
+    if Filters.EIGVEC in allfilters
+        f = eigvec_spectrum_filter!(F, v, m, operators;
+            n_cutoff, Δl_cutoff, eigvec_spectrum_power_cutoff,
+            filterfieldpowercutoff)
+        f || (@debug "EIGVEC" f; return false)
     end
 
     if Filters.BC in allfilters
         f = boundary_condition_filter(v, BC, BCVcache, bc_atol)
         f || (@debug "BC" f; return false)
-    end
-
-    if Filters.CHEBY in allfilters
-        f = chebyshev_filter!(VWSinv, F, v, m, operators, n_cutoff,
-            n_power_cutoff; nℓ, Plcosθ,filterfieldpowercutoff)
-        f || (@debug "CHEBY" f; return false)
     end
 
     if Filters.SPATIAL in allfilters
@@ -2282,18 +2251,24 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
 end
 
 const DefaultFilterParams = Dict(
+    # boundary condition filter
     :bc_atol => 1e-5,
-    :Δl_cutoff => 7,
-    :Δl_power_cutoff => 0.9,
-    :eigen_rtol => 0.01,
-    :n_cutoff => 10,
-    :n_power_cutoff => 0.9,
+    # eigval filter
     :eig_imag_unstable_cutoff => -1e-6,
     :eig_imag_to_real_ratio_cutoff => 1,
     :eig_imag_stable_cutoff => Inf,
+    # eigensystem satisfy filter
+    :eigen_rtol => 0.01,
+    # smooth eigenvector filter
+    :Δl_cutoff => 7,
+    :n_cutoff => 10,
+    :eigvec_spectrum_power_cutoff => 0.9,
+    # spatial localization filter
     :θ_cutoff => deg2rad(60),
     :equator_power_cutoff_frac => 0.3,
+    # radial nodes filter
     :nnodesmax => 10,
+    # exclude a field from a filter if relative power is below a cutoff
     :filterfieldpowercutoff => 1e-4,
 )
 
@@ -2329,8 +2304,8 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     kw...)
 
     @unpack nparams = operators.radial_params;
-    kw = merge(DefaultFilterParams, kw)
-    additional_params = (operators, constraints, filtercache, kw)
+    kw = merge(DefaultFilterParams, kw);
+    additional_params = (operators, constraints, filtercache, kw);
 
     inds_bool = filterfn.(λ, eachcol(v), m, (map(computesparse, M),), (additional_params,), filterflags)
     filtinds = axes(λ, 1)[inds_bool]
@@ -2350,8 +2325,8 @@ function filter_map(λm::AbstractVector, vm::AbstractMatrix, AB::Tuple, m::Int, 
     mass_matrix!(B, m; kw...)
     filter_eigenvalues(λm, vm, AB, m; kw...)
 end
-function filter_map_nthreads(nt::Int, λs::AbstractVector{<:AbstractVector},
-        vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector, c::Channel, matrixfn!; kw...)
+function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:AbstractVector},
+        vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector, matrixfn!; kw...)
 
     nblasthreads = BLAS.get_num_threads()
     try
@@ -2381,11 +2356,11 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
         put!(c, el)
     end
 
-    λv = filter_map_nthreads(nthreads, λs, vs, mr, c, matrixfn!; operators, constraints, kw...)
+    λv = filter_map_nthreads!(c, nthreads, λs, vs, mr, matrixfn!; operators, constraints, kw...)
     map(first, λv), map(last, λv)
 end
 
-function spectrum_filter_map(spectrumfn!::F, m, Ctid, operators, constraints; kw...) where {F}
+function eigvec_spectrum_filter_map!(Ctid, spectrumfn!::F, m, operators, constraints; kw...) where {F}
     M, cache, temp_projectback = Ctid;
     X = spectrumfn!(M, m; operators, constraints, cache, temp_projectback, kw...);
     filter_eigenvalues(X..., m; operators, constraints, kw...)
@@ -2394,14 +2369,14 @@ end
 const TMapReturn = Vector{Tuple{Vector{ComplexF64},
                     StructArray{ComplexF64, 2, @NamedTuple{re::Matrix{Float64},im::Matrix{Float64}}, Int64}}}
 
-function spectrum_filter_map_nthreads(nt, spectrumfn!, mr, c, operators, constraints; kw...)
+function eigvec_spectrum_filter_map_nthreads!(c, nt, spectrumfn!, mr, operators, constraints; kw...)
     nblasthreads = BLAS.get_num_threads()
     nt = Threads.nthreads()
     try
         BLAS.set_num_threads(max(1, round(Int, nblasthreads/nt)))
         Folds.map(mr) do m
             Ctid = take!(c)
-            Y = spectrum_filter_map(spectrumfn!, m, Ctid, operators, constraints; kw...)
+            Y = eigvec_spectrum_filter_map!(Ctid, spectrumfn!, m, operators, constraints; kw...)
             put!(c, Ctid)
             Y
         end::TMapReturn
@@ -2434,11 +2409,11 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
         if nthreads_trailing_elems > 0 && div(nblasthreads, nthreads_trailing_elems) > max(1, div(nblasthreads, nthreads))
             # in this case the extra elements may be run using a higher number of blas threads
             mr1 = @view mr[1:end-nthreads_trailing_elems]
-            λv1 = spectrum_filter_map_nthreads(Threads.nthreads(), spectrumfn!, mr, c, operators, constraints; kw...)
+            λv1 = eigvec_spectrum_filter_map_nthreads!(c, Threads.nthreads(), spectrumfn!, mr, operators, constraints; kw...)
             @timeit to "result" λs, vs = map(first, λv1), map(last, λv1)
 
             mr2 = @view mr[end-nthreads_trailing_elems+1:end]
-            λv2 = spectrum_filter_map_nthreads(nthreads_trailing_elems, spectrumfn!, mr, c, operators, constraints; kw...)
+            λv2 = eigvec_spectrum_filter_map_nthreads!(c, nthreads_trailing_elems, spectrumfn!, mr, operators, constraints; kw...)
 
             @timeit to "result"  begin
                 λs2, vs2 = map(first, λv2), map(last, λv2)
@@ -2446,7 +2421,7 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
                 append!(vs, vs2)
             end
         else
-            λv = spectrum_filter_map_nthreads(Threads.nthreads(), spectrumfn!, mr, c, operators, constraints; kw...)
+            λv = eigvec_spectrum_filter_map_nthreads!(c, Threads.nthreads(), spectrumfn!, mr, operators, constraints; kw...)
             @timeit to "result" λs, vs = map(first, λv), map(last, λv)
         end
     end
@@ -2463,14 +2438,14 @@ end
 
 rossbyeigenfilename(nr, nℓ, tag = "ur", posttag = "") = "$(tag)_nr$(nr)_nl$(nℓ)$(posttag).jld2"
 function save_eigenvalues(f, mr; operators, kw...)
-    @time lam, vec = filter_eigenvalues(f, mr; operators, kw...)
+    lam, vec = filter_eigenvalues(f, mr; operators, kw...)
     isdiffrot = get(kw, :diffrot, false)
     filenametag = isdiffrot ? "dr" : "ur"
     posttag = get(kw, :V_symmetric, true) ? "sym" : "asym"
     @unpack nr, nℓ = operators.radial_params;
     fname = datadir(rossbyeigenfilename(nr, nℓ, filenametag, posttag))
     @info "saving to $fname"
-    @time jldsave(fname; lam, vec, mr, nr, nℓ, kw, operators)
+    jldsave(fname; lam, vec, mr, nr, nℓ, kw, operators)
 end
 
 function eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)

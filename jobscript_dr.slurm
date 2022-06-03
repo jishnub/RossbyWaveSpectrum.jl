@@ -6,11 +6,15 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=28
 
+echo "############"
+hostname
+echo $JULIA_DEPOT_PATH
+echo "############"
 cd $SCRATCH/jobs
-julia="$HOME/.local/bin/julia"
+julia="$HOME/.local/bin/julia-1.8"
 module purge
-project="$HOME/RossbyWaveSpectrum.jl"
+project="$SCRATCH/RossbyWaveSpectrum.jl"
 export MKL_DYNAMIC="FALSE"
 export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
-$julia --project=$project -t 15 -e \
-'include("$(ENV["HOME"])/RossbyWaveSpectrum.jl/compute_rossby_spectrum.jl")'
+$julia --project=$project --startup-file=no -t 15 -e \
+'include("$(ENV["SCRATCH"])/RossbyWaveSpectrum.jl/compute_rossby_spectrum.jl")'

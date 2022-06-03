@@ -15,6 +15,8 @@ using UnPack
 using StructArrays
 using BlockArrays
 
+using RossbyWaveSpectrum.Filters: NODES, SPATIAL, EIGVEC, EIGVAL, EIGEN, BC
+
 @testset "project quality" begin
     Aqua.test_all(RossbyWaveSpectrum,
         ambiguities = false,
@@ -190,6 +192,16 @@ end
     @test sρ.(r) ≈ RossbyWaveSpectrum.interp1d(r_modelS, ρ_modelS, r) rtol=1e-2
     @test sT.(r) ≈ RossbyWaveSpectrum.interp1d(r_modelS, T_modelS, r) rtol=1e-2
     @test sg.(r) ≈ RossbyWaveSpectrum.interp1d(r_modelS, g_modelS, r) rtol=1e-2
+end
+
+@testset "filters" begin
+    @test !BC == NODES | SPATIAL | EIGVEC | EIGVAL | EIGEN
+    @test !EIGVAL == NODES | SPATIAL | BC | EIGVEC | EIGEN
+    @test !EIGVEC == NODES | SPATIAL | BC | EIGVAL | EIGEN
+    @test !EIGEN == NODES | SPATIAL | BC | EIGVEC | EIGVAL
+    @test !SPATIAL == NODES | BC | EIGVEC | EIGVAL | EIGEN
+    @test !NODES == SPATIAL | BC | EIGVEC | EIGVAL | EIGEN
+    @test !(EIGVAL | EIGVEC) == NODES | SPATIAL | BC | EIGEN
 end
 
 # @testset "uniform rotation" begin
