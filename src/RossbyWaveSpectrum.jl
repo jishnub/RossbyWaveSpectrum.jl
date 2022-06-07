@@ -688,6 +688,7 @@ struct OperatorWrap{T}
     x::T
 end
 Base.show(io::IO, ::Type{<:OperatorWrap}) = print(io, "Operators")
+Base.show(io::IO, o::OperatorWrap) = print(io, "Operators")
 Base.getproperty(y::OperatorWrap, name::Symbol) = getproperty(getfield(y, :x), name)
 
 const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0)
@@ -1391,7 +1392,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
-function equatorial_radial_rotation_profile(operators, thetaGL; smoothing_param = 5e-3)
+function equatorial_radial_rotation_profile(operators, thetaGL; smoothing_param = 1e-3)
     @unpack r = operators.coordinates
     ΔΩ_rθ, Ω0 = read_angular_velocity(operators, thetaGL; smoothing_param)
     s = Spline2D(r, thetaGL, ΔΩ_rθ)
@@ -1399,7 +1400,7 @@ function equatorial_radial_rotation_profile(operators, thetaGL; smoothing_param 
 end
 
 function radial_differential_rotation_profile(operators, thetaGL, model = :solar_equator;
-    smoothing_param = 5e-3)
+    smoothing_param = 1e-3)
 
     @unpack r = operators.coordinates
     @unpack r_out, nr, r_in = operators.radial_params
@@ -1446,7 +1447,7 @@ function rotationprofile_radialderiv(r, ΔΩ_r, nr, Δr)
 end
 
 function radial_differential_rotation_profile_derivatives(m; operators,
-        rotation_profile = :solar_equator, smoothing_param = 5e-3)
+        rotation_profile = :solar_equator, smoothing_param = 1e-3)
     @unpack r = operators.coordinates;
     @unpack nr, nℓ, Δr = operators.radial_params;
 
@@ -1974,12 +1975,13 @@ function real_to_r_assocleg(ΔΩ_r_thetaGL, operators, thetaop)
     PaddedMatrix((PLMfwd ⊗ Ir) * Diagonal(vec(ΔΩ_r_thetaGL)) * (PLMinv ⊗ Ir), pad)
 end
 
-function differential_rotation_spectrum(m; operators, kw...)
+function differential_rotation_spectrum(m::Integer; operators, kw...)
     A = allocate_operator_matrix(operators)
     B = allocate_mass_matrix(operators)
     differential_rotation_spectrum!((A, B), m; operators, kw...)
 end
-function differential_rotation_spectrum!((A, B), m; rotation_profile, operators, kw...)
+function differential_rotation_spectrum!((A, B)::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
+        m::Integer; rotation_profile, operators, kw...)
     timer = TimerOutput()
     @timeit timer "matrix" begin
         differential_rotation_matrix!(A, m; operators, rotation_profile, kw...)
@@ -2319,14 +2321,15 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     λ, v
 end
 
-function filter_map(λm::AbstractVector, vm::AbstractMatrix, AB::Tuple, m::Int, matrixfn!::F; kw...) where {F}
+function filter_map(λm::AbstractVector, vm::AbstractMatrix,
+        AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}}, m::Int, matrixfn!::F; kw...) where {F}
     A, B = AB
     matrixfn!(A, m; kw...)
     mass_matrix!(B, m; kw...)
     filter_eigenvalues(λm, vm, AB, m; kw...)
 end
 function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:AbstractVector},
-        vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector, matrixfn!; kw...)
+        vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector{<:Integer}, matrixfn!; kw...)
 
     nblasthreads = BLAS.get_num_threads()
     try
@@ -2343,7 +2346,7 @@ function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:Abstrac
 end
 
 function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
-    vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector;
+    vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector{<:Integer};
     matrixfn! = uniform_rotation_matrix!,
     operators, constraints = constraintmatrix(operators), kw...)
 
@@ -2440,7 +2443,8 @@ rossbyeigenfilename(nr, nℓ, tag = "ur", posttag = "") = "$(tag)_nr$(nr)_nl$(n�
 function save_eigenvalues(f, mr; operators, kw...)
     lam, vec = filter_eigenvalues(f, mr; operators, kw...)
     isdiffrot = get(kw, :diffrot, false)
-    filenametag = isdiffrot ? "dr" : "ur"
+    diffrotprof = get(kw, :diffrotprof, "")
+    filenametag = isdiffrot ? "dr_$diffrotprof" : "ur"
     posttag = get(kw, :V_symmetric, true) ? "sym" : "asym"
     @unpack nr, nℓ = operators.radial_params;
     fname = datadir(rossbyeigenfilename(nr, nℓ, filenametag, posttag))

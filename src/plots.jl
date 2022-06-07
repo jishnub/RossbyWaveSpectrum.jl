@@ -35,8 +35,7 @@ end
 function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
         ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
-            label = ΔΩ_frac == 0 ? "Sectoral" :
-                    L"\Delta\Omega/\Omega_0 = " * string(round(ΔΩ_frac, sigdigits = 1)),
+            label = ΔΩ_frac == 0 ? "Sectoral" : "Doppler\nshifted",
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
             zorder = 0,
@@ -58,7 +57,7 @@ function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridges
     if get(kw, :uniform_rotation_ridge, false)
         ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr) .* νnHzunit,
             label = "Uniformly\nrotating",
-            lw = 1,
+            lw = 0.5,
             color = "black",
             ls = "dashed",
             dashes = (6, 3),
@@ -160,7 +159,7 @@ function spectrum(lam::AbstractArray, mr;
     end
 
     V_symmetric = kw[:V_symmetric]
-    zoom = V_symmetric
+    zoom = V_symmetric && !get(kw, :diffrot, false) && get(kw, :zoom, true)
 
     if zoom
         lamcat_inset = mapreduce(real, vcat, lam[m_zoom]) .* νnHzunit
@@ -191,6 +190,8 @@ function spectrum(lam::AbstractArray, mr;
     if get(kw, :tight_layout, true)
         f.tight_layout()
     end
+
+    ax.axhline(0, ls="dotted", color="0.2", zorder = 0, lw=0.5)
 
     titlestr = V_symmetric ? "Symmetric" : "Antisymmetric"
     ax.set_title(titlestr, fontsize = 12)
@@ -241,7 +242,7 @@ function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), k
 
     ax.plot(mr, imag.(λs_rossbyridge) * νnHzunit,
             ls="dotted", color="grey", marker="o", mfc="white",
-            mec="black", ms=5, label="this work,\n" *L"\nu="*νstr)
+            mec="black", ms=5, label="this work")
 
     # observations
     m_P = first.(ProxaufFit)
@@ -283,7 +284,7 @@ function plot_high_frequency_ridge(lam, mr; operators, f = figure(), ax = subplo
     # our model
     λ_filt = [begin
         ν_norm_rr = RossbyWaveSpectrum.rossby_ridge(m)
-        hf_lowlimit = ν_norm_rr * 2
+        hf_lowlimit = ν_norm_rr * 1.5
         hf_highlimit = ν_norm_rr * 4
         λ[hf_lowlimit .< real.(λ) .< hf_highlimit]
         end for (m, λ) in zip(mr, lam)]
@@ -307,51 +308,65 @@ function piformatter(x, _)
     prestr * "π" * poststr
 end
 
-function differential_rotation_spectrum(lam_rad, lam_solar, mr = axes(lam_rad, 1); operators, kw...)
-    f, axlist = subplots(2, 2)
-    @unpack r = operators.coordinates
+function differential_rotation_spectrum(lam_constant::NTuple{2,Vector},
+        lam_radial::NTuple{2,Vector}, mr::AbstractVector; operators,
+            kwcsym, kwcasym, kwrsym = kwcsym, kwrasym = kwcasym, kw...)
+
+    f, axlist = subplots(2, 3, sharex = "col")
+    @unpack r, r_chebyshev = operators.coordinates
+    @unpack Ω0 = operators.constants
     r_frac = r ./ Rsun
 
-    m = 1
-    ntheta = RossbyWaveSpectrum.ntheta_ℓmax(nℓ, m)
-    @unpack thetaGL = RossbyWaveSpectrum.gausslegendre_theta_grid(ntheta)
-    ΔΩ_r, _ = RossbyWaveSpectrum.radial_differential_rotation_profile(operators, thetaGL, :solar_equator)
-    axlist[1, 1].plot(r_frac, ΔΩ_r / 2pi * 1e9, color = "black")
-    axlist[1, 1].set_ylabel(L"\Delta\Omega/2\pi" * " [nHz]")
-    axlist[1, 1].set_xlabel(L"r / R_\odot", fontsize = 11)
-    axlist[1, 1].set_title("Radial differential rotation")
-    axlist[1, 1].xaxis.set_major_locator(ticker.MaxNLocator(4))
-    axlist[1, 1].yaxis.set_major_locator(ticker.MaxNLocator(4))
+    lam_constant_sym, lam_constant_asym = lam_constant
+    lam_radial_sym, lam_radial_asym = lam_radial
 
-    spectrum(lam_rad, mr; f, ax = axlist[1, 2], kw...,
-        uniform_rotation_ridge = true,
-        save = false, sectoral_rossby_ridge = false)
-    axlist[1, 2].set_ylabel("")
+    νnHzunit = freqnHzunit(Ω0)
 
-    ΔΩ, _ = RossbyWaveSpectrum.solar_differential_rotation_profile(operators, thetaGL, :solar)
-    p = axlist[2, 1].pcolormesh(thetaGL, r_frac, ΔΩ / 2pi * 1e9,
-        cmap = "Greys_r", rasterized = true, shading = "auto")
-    axlist[2, 1].xaxis.set_major_locator(ticker.MaxNLocator(4))
-    axlist[2, 1].yaxis.set_major_locator(ticker.MaxNLocator(4))
-    axlist[2, 1].set_ylabel(L"r / R_\odot", fontsize = 11)
-    axlist[2, 1].set_xlabel("Colatitude (θ) [radians]", fontsize = 11)
-    axlist[2, 1].set_title("Solar-like differential rotation")
-    cb = colorbar(mappable = p, ax = axlist[2, 1])
+    ΔΩ_constant = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(1;
+            operators, rotation_profile = :constant).ΔΩ
 
-    spectrum(lam_solar, mr; f, ax = axlist[2, 2], kw...,
-        uniform_rotation_ridge = true,
-        save = false, sectoral_rossby_ridge = false)
-    axlist[2, 2].set_ylabel("")
-    axlist[2, 2].set_title("Solar")
+    axlist[1,1].plot(r_frac, ΔΩ_constant.(r_chebyshev).*νnHzunit, color="0.2")
+    axlist[1,1].set_title("Constant ΔΩ", fontsize=12)
+    axlist[1,1].yaxis.set_major_locator(ticker.MaxNLocator(4))
+    axlist[1,1].set_ylabel(L"\Delta\Omega/2\pi" * " [nHz]", fontsize=12)
 
-    f.set_size_inches(7, 5)
+    kwextra = (; uniform_rotation_ridge = true, ΔΩ_frac = 0.02)
+    spectrum(lam_constant_sym, mr; operators, f = f, ax = axlist[1,2], kwcsym..., kwextra...)
+    spectrum(lam_constant_asym, mr; operators, f = f, ax = axlist[1,3], kwcasym..., kwextra...,
+        sectoral_rossby_ridge = false)
+    axlist[1,2].set_ylim(-200, 700)
+    axlist[1,3].set_ylim(-200, 700)
+
+    ΔΩ_solar_radial = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(1;
+            operators, rotation_profile = :solar_equator).ΔΩ
+
+    axlist[2,1].plot(r_frac, ΔΩ_solar_radial.(r_chebyshev).*νnHzunit, color="0.2")
+    axlist[2,1].set_title("Solar equatorial ΔΩ", fontsize=12)
+    axlist[2,1].yaxis.set_major_locator(ticker.MaxNLocator(4))
+    axlist[2,1].set_xlabel(L"r/R_\odot", fontsize=12)
+    axlist[2,1].set_xlabel(L"r/R_\odot", fontsize=12)
+    axlist[2,1].set_ylabel(L"\Delta\Omega/2\pi" * " [nHz]", fontsize=12)
+
+    kwextra = (; sectoral_rossby_ridge = false, uniform_rotation_ridge = true)
+    spectrum(lam_radial_sym, mr; operators, f = f, ax = axlist[2,2], kwrsym..., kwextra...)
+    spectrum(lam_radial_asym, mr; operators, f = f, ax = axlist[2,3], kwrasym..., kwextra...)
+    axlist[2,2].set_ylim(-200, 700)
+    axlist[2,3].set_ylim(-200, 700)
+
+    f.set_size_inches(12, 6)
+    # for some reason, tight_layout needs to be called twice
+    f.tight_layout()
     f.tight_layout()
     if get(kw, :save, false)
-        f.savefig(joinpath(plotdir, "differential_rotation_spectrum.eps"))
+        fname = joinpath(plotdir, "diff_rot_spectrum.eps")
+        @info "saving to $fname"
+        f.savefig(fname)
     end
+    return nothing
 end
 
-function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m, operators;
+function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
+    operators,
     field = :V, f = figure(), component = real, kw...)
     V = getproperty(VWSinv, field)::Matrix{ComplexF64}
     Vr = copy(component(V))
@@ -428,9 +443,9 @@ function eigenfunctions_all(v::AbstractVector{<:Number}, m::Integer; operators, 
     if get(kw, :scale_eigenvectors, false)
         RossbyWaveSpectrum.scale_eigenvectors!(VWSinv; operators)
     end
-    eigenfunctions_all(VWSinv, θ, m, operators; kw...)
+    eigenfunctions_all(VWSinv, θ, m; operators, kw...)
 end
-function eigenfunctions_all(VWSinv::NamedTuple, θ, m, operators; kw...)
+function eigenfunctions_all(VWSinv::NamedTuple, θ, m; operators, kw...)
     f = plt.figure(constrained_layout = true, figsize = (12, 8))
     subfigs = f.subfigures(2, 3, wspace = 0.15, width_ratios = [1, 1, 1])
 
@@ -444,7 +459,8 @@ function eigenfunctions_all(VWSinv::NamedTuple, θ, m, operators; kw...)
     title_str = Dict(:V => "V", :W => "W", :S => "S/cp")
 
     for (ind, (component, field)) in zip(CartesianIndices(axes(itr)), itr)
-        eigenfunction(VWSinv, θ, m, operators;
+        eigenfunction(VWSinv, θ, m;
+            operators,
             field, f = subfigs[ind],
             constrained_layout = true,
             setylabel = ind == 1 ? true : false,
@@ -468,7 +484,7 @@ function eigenfunction_rossbyridge(λs::AbstractVector{<:Number},
 
     ΔΩ_frac = get(kw, :ΔΩ_frac, 0)
     minind = findmin(abs, real(λs) .- RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_frac))[2]
-    eigenfunction(vs[:, minind], m, operators; theory = true, kw...)
+    eigenfunction(vs[:, minind], m; operators, kw...)
 end
 
 function eignorm(v)
