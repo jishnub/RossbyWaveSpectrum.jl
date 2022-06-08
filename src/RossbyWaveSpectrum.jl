@@ -360,9 +360,6 @@ function Sboundary!(MSn, args...)
     return MSn
 end
 
-# hvcatrows(n::Int) = hvcatrows((n, n))
-# hvcatrows(sz::NTuple{2,Integer}) = ntuple(_ -> sz[2], sz[1])
-
 function constraintmatrix(operators; W_basis = 2, S_basis = 2)
     @unpack radial_params = operators;
     @unpack nr, nℓ = radial_params;
@@ -969,10 +966,6 @@ function allocate_block_matrix(nvariables, bandwidth, rows, cols = rows)
             [blockbandedzero(rows, cols, (l,u)) for _ in 1:nvariables^2],
                 nvariables, nvariables))::BlockMatrixType
 end
-
-# const TMassMatrix = BlockMatrixType
-# const TOperatorMatrix = StructArrays.StructArray{ComplexF64, 2,
-#     NamedTuple{(:re, :im), NTuple{2,BlockMatrixType}}, CartesianIndex{2}}
 
 function allocate_operator_matrix(operators, bandwidth = 2)
     @unpack nr, nℓ = operators.radial_params
