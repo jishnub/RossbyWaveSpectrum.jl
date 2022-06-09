@@ -1,9 +1,10 @@
 #!/bin/bash
 #SBATCH --time="8:00:00"
 #SBATCH --job-name=rosbyspec
-#SBATCH --nodes=1
+#SBATCH --nodes=2
 #SBATCH -C dalma
-#SBATCH --ntasks=1
+#SBATCH --ntasks=2
+#SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=28
 
 echo "############"
@@ -16,5 +17,5 @@ module purge
 project="$SCRATCH/RossbyWaveSpectrum.jl"
 export MKL_DYNAMIC="FALSE"
 export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
-$julia --project=$project --startup-file=no -t 15 -e \
+srun $julia --project=$project --startup-file=no -t 15 -e \
 'include("$(ENV["SCRATCH"])/RossbyWaveSpectrum.jl/compute_rossby_spectrum.jl")'

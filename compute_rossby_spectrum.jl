@@ -4,7 +4,7 @@ using LinearAlgebra
 
 flush(stdout)
 
-function main(nr, nℓ, mrange)
+function main(nr, nℓ, mrange, diffrot, V_symmetric)
     # boundary condition tolerance
     bc_atol = 1e-5
 
@@ -21,16 +21,18 @@ function main(nr, nℓ, mrange)
     @info "operators"
     r_in_frac = 0.6
     r_out_frac = 0.985
-    @time operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 4e12);
+    @time operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 2e12);
 
-    diffrot = true
     diffrotprof = :radial
-    V_symmetric = true
 
-    spectrumfn! = RossbyWaveSpectrum.diffrotspectrumfn!(diffrotprof, V_symmetric)
-    # spectrumfn! = RossbyWaveSpectrum.uniformrotspectrumfn!(V_symmetric)
+    spectrumfn! = if diffrot
+        RossbyWaveSpectrum.diffrotspectrumfn!(diffrotprof, V_symmetric)
+    else
+        RossbyWaveSpectrum.uniformrotspectrumfn!(V_symmetric)
+    end
+
     @show nr nℓ mrange Δl_cutoff n_cutoff
-    @show eigvec_spectrum_power_cutoff eigen_rtol V_symmetric scale_eigenvectors;
+    @show eigvec_spectrum_power_cutoff eigen_rtol V_symmetric diffrot;
     @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads();
 
     flush(stdout)
@@ -42,11 +44,16 @@ function main(nr, nℓ, mrange)
     flush(stdout)
 end
 
-nr = 70;
-nℓ = 35;
+nr = 60;
+nℓ = 30;
 mrange = 1:15;
+diffrot = true;
 
-main(8, 6, 1:1)
-main(nr, nℓ, mrange)
+taskno = parse(Int, ENV["SLURM_PROCID"])
+V_symmetric = (true, false)[taskno + 1]
+@show Libc.gethostname(), taskno, V_symmetric
+
+main(8, 6, 1:1, diffrot, V_symmetric)
+main(nr, nℓ, mrange, diffrot, V_symmetric)
 
 end
