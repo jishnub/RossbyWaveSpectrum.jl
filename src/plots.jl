@@ -1,7 +1,7 @@
 using PyCall
 using PyPlot
 using RossbyWaveSpectrum
-using RossbyWaveSpectrum: Rsun, rossbyeigenfilename, StructMatrix
+using RossbyWaveSpectrum: Rsun, rossbyeigenfilename, StructMatrix, FilteredEigen
 using LaTeXStrings
 using SimpleDelimitedFiles
 using JLD2
@@ -205,18 +205,20 @@ function spectrum(lam::AbstractArray, mr;
     end
 end
 
-function spectrum(lamsym, lamasym, mr; kw...)
+function spectrum(lamsym, lamasym, mr; kwsym, kwasym, kw...)
     f, axlist = subplots(2, 2, sharex = true)
-    spectrum(lamsym, mr; kw..., f, ax = axlist[1,1], save = false, V_symmetric = true)
-    spectrum(lamasym, mr; kw..., f, ax = axlist[2,1], save = false, V_symmetric = false)
+    spectrum(lamsym, mr; kwsym..., kw..., f, ax = axlist[1,1], save = false, V_symmetric = true)
+    spectrum(lamasym, mr; kwasym..., kw..., f, ax = axlist[2,1], save = false, V_symmetric = false)
 
-    damping_rossbyridge(lamsym, mr; operators, f, ax = axlist[1,2], kw..., save = false, V_symmetric = true)
-    plot_high_frequency_ridge(lamasym, mr; operators, f, ax = axlist[2,2], kw..., save = false, V_symmetric = false)
+    damping_rossbyridge(lamsym, mr; operators, f, ax = axlist[1,2], kwasym..., kw..., save = false, V_symmetric = true)
+    plot_high_frequency_ridge(lamasym, mr; operators, f, ax = axlist[2,2], kwasym..., kw..., save = false, V_symmetric = false)
 
     f.set_size_inches(9,6)
     f.tight_layout()
     if get(kw, :save, false)
-        f.savefig(joinpath(plotdir, "spectrum_sym_asym.eps"))
+        fpath = joinpath(plotdir, "spectrum_sym_asym.eps")
+        @info "saving to $fpath"
+        f.savefig(fpath)
     end
     return nothing
 end
@@ -240,18 +242,18 @@ function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), k
 
     νstr = mantissa_exponent_format(ν)
 
-    ax.plot(mr, imag.(λs_rossbyridge) * νnHzunit,
+    ax.plot(mr, imag.(λs_rossbyridge) .* 2 #= HWHM to FWHM =# * νnHzunit,
             ls="dotted", color="grey", marker="o", mfc="white",
-            mec="black", ms=5, label="this work")
+            mec="black", ms=5, label="this work", zorder = 4)
 
     # observations
     m_P = first.(ProxaufFit)
     γ_P = last.(last.(ProxaufFit))
     γ_P_val = value.(γ_P)
-    ax.plot(m_P, γ_P_val, ls="None", marker=".", color="black", ms="2")
+    ax.plot(m_P, γ_P_val, ls="None", marker=".", color="black", ms="2", zorder = 2)
     ax.errorbar(m_P, γ_P_val,
         yerr = errorbars_pyplot(γ_P),
-        color= "grey", ls="None", capsize = 3, label="P20")
+        color= "grey", ls="None", capsize = 3, label="P20", zorder = 1)
     ax.set_ylabel("linewidth [nHz]", fontsize = 12)
     ax.set_xlabel("m", fontsize = 12)
     ax.legend(loc="best")
@@ -306,6 +308,33 @@ function piformatter(x, _)
              (n == 2 ? "" : string(div(n, 2))) : string(n)
     poststr = n == 4 ? "" : iseven(n) ? "/2" : "/4"
     prestr * "π" * poststr
+end
+
+function filteredeigen(filename::String; kw...)
+    feig = RossbyWaveSpectrum.FilteredEigen(filename)
+    fkw = feig.kw
+    diffrot = fkw[:diffrot]
+    V_symmetric = fkw[:V_symmetric]
+    matrixfn! = if !diffrot
+        RossbyWaveSpectrum.uniformrotmatrixfn!(V_symmetric)
+    else
+        diffrot_profile = fkw[:diffrotprof]
+        RossbyWaveSpectrum.diffrotmatrixfn!(diffrot_profile, V_symmetric)
+    end
+    RossbyWaveSpectrum.filter_eigenvalues(feig; matrixfn!, kw...)
+end
+
+function differential_rotation_spectrum(fconstsym::FilteredEigen,
+    fconstasym::FilteredEigen, fradsym::FilteredEigen, fradasym::FilteredEigen; kw...)
+
+    differential_rotation_spectrum((fconstsym.lams, fconstasym.lams),
+        (fradsym.lams, fradasym.lams), fconstsym.mr;
+            operators = fconstsym.operators,
+            kwcsym  = fconstsym.kw,
+            kwcasym = fconstasym.kw,
+            kwrsym  = fradsym.kw,
+            kwrasym = fradasym.kw,
+            kw...)
 end
 
 function differential_rotation_spectrum(lam_constant::NTuple{2,Vector},
@@ -433,19 +462,33 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
     end
 end
 
+function eigenfunction(feig::FilteredEigen, m::Integer, ind::Integer; kw...)
+    @unpack operators = feig
+    eigenfunction(feig.vs[m][:, ind], m; operators, feig.kw..., kw...)
+end
+
 function eigenfunction(v::AbstractVector{<:Number}, m::Integer; operators, f = figure(), kw...)
     (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
     eigenfunction(VWSinv, θ, m; operators, f, kw...)
 end
 
-function eigenfunctions_all(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
+function eigenfunctions_allstreamfn(f::FilteredEigen, m::Integer, vind::Integer; kw...)
+    @unpack operators = f
+    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(f.vs[m][:, vind], m;
+            operators, f.kw..., kw...)
+    if get(kw, :scale_eigenvectors, false)
+        RossbyWaveSpectrum.scale_eigenvectors!(VWSinv; operators)
+    end
+    eigenfunctions_allstreamfn(VWSinv, θ, m; operators, f.kw..., kw...)
+end
+function eigenfunctions_allstreamfn(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
     (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
     if get(kw, :scale_eigenvectors, false)
         RossbyWaveSpectrum.scale_eigenvectors!(VWSinv; operators)
     end
-    eigenfunctions_all(VWSinv, θ, m; operators, kw...)
+    eigenfunctions_allstreamfn(VWSinv, θ, m; operators, kw...)
 end
-function eigenfunctions_all(VWSinv::NamedTuple, θ, m; operators, kw...)
+function eigenfunctions_allstreamfn(VWSinv::NamedTuple, θ, m; operators, kw...)
     f = plt.figure(constrained_layout = true, figsize = (12, 8))
     subfigs = f.subfigures(2, 3, wspace = 0.15, width_ratios = [1, 1, 1])
 
@@ -470,21 +513,25 @@ function eigenfunctions_all(VWSinv::NamedTuple, θ, m; operators, kw...)
         subfigs[ind].suptitle(string(component)*"("*title_str[field]*")", x = 0.8)
     end
     if get(kw, :save, false)
-        f.savefig(joinpath(plotdir, "eigenfunctions_all_m$(m).eps"))
+        f.savefig(joinpath(plotdir, "eigenfunctions_allstreamfn_m$(m).eps"))
     end
 end
 
+function eigenfunction_rossbyridge(f::FilteredEigen, m; kw...)
+    eigenfunction_rossbyridge(f.lams[m], f.vs[m], m; operators = f.operators, f.kw..., kw...)
+end
+
 function eigenfunction_rossbyridge(λs::AbstractVector{<:AbstractVector},
-    vs::AbstractVector{<:AbstractMatrix}, m, operators; kw...)
-    eigenfunction_rossbyridge(λs[m], vs[m], m, operators; kw...)
+    vs::AbstractVector{<:AbstractMatrix}, m; kw...)
+    eigenfunction_rossbyridge(λs[m], vs[m], m; kw...)
 end
 
 function eigenfunction_rossbyridge(λs::AbstractVector{<:Number},
-    vs::AbstractMatrix{<:Number}, m, operators; kw...)
+    vs::AbstractMatrix{<:Number}, m; kw...)
 
     ΔΩ_frac = get(kw, :ΔΩ_frac, 0)
     minind = findmin(abs, real(λs) .- RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_frac))[2]
-    eigenfunction(vs[:, minind], m; operators, kw...)
+    eigenfunction(vs[:, minind], m; kw...)
 end
 
 function eignorm(v)
@@ -492,11 +539,16 @@ function eignorm(v)
     abs(minval) > abs(maxval) ? minval : maxval
 end
 
-function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractVector,
-        m, operators; f = figure(), kw...)
-    multiple_eigenfunctions_surface_m(λs[m], vecs[m], m, operators; f, kw...)
+function multiple_eigenfunctions_surface_m(feig::FilteredEigen, m; kw...)
+    @unpack operators = feig
+    multiple_eigenfunctions_surface_m(feig.lams, feig.vs, m; operators, kw...)
 end
-function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMatrix, m, operators; f = figure(), kw...)
+function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractVector, m; kw...)
+    multiple_eigenfunctions_surface_m(λs[m], vecs[m], m; kw...)
+end
+function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMatrix, m;
+        operators, f = figure(), kw...)
+
     ax = f.add_subplot()
     ax.set_xlabel("colatitude (θ) [radians]", fontsize = 12)
     ax.set_ylabel("Angular profile", fontsize = 12)
@@ -535,11 +587,15 @@ function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMa
     end
 end
 
-function eigenfunctions_rossbyridge_all(λs, vs, m; operators, kw...)
+function eigenfunction_rossbyridge_allstreamfn(f::FilteredEigen, m; kw...)
+    @unpack operators = f
+    eigenfunction_rossbyridge_allstreamfn(f.lams, f.vs, m; operators, kw...)
+end
+function eigenfunction_rossbyridge_allstreamfn(λs::AbstractVector, vs::AbstractVector, m; operators, kw...)
     fig = plt.figure(constrained_layout = true, figsize = (8, 4))
     subfigs = fig.subfigures(1, 2, wspace = 0.1, width_ratios = [1, 0.8])
-    eigenfunction_rossbyridge(λs, vs, m, operators; f = subfigs[1], constrained_layout = true)
-    multiple_eigenfunctions_surface_m(λs, vs, m, operators; f = subfigs[2], constrained_layout = true)
+    eigenfunction_rossbyridge(λs, vs, m; operators, f = subfigs[1], constrained_layout = true)
+    multiple_eigenfunctions_surface_m(λs, vs, m; operators, f = subfigs[2], constrained_layout = true)
     if get(kw, :save, false)
         savefig(joinpath(plotdir, "eigenfunction_rossby_all.eps"))
     end

@@ -4,7 +4,7 @@ using LinearAlgebra
 
 flush(stdout)
 
-function main(nr, nℓ, mrange, diffrot, V_symmetric)
+function main(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof)
     # boundary condition tolerance
     bc_atol = 1e-5
 
@@ -22,8 +22,6 @@ function main(nr, nℓ, mrange, diffrot, V_symmetric)
     r_in_frac = 0.6
     r_out_frac = 0.985
     @time operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 2e12);
-
-    diffrotprof = :radial
 
     spectrumfn! = if diffrot
         RossbyWaveSpectrum.diffrotspectrumfn!(diffrotprof, V_symmetric)
@@ -48,12 +46,13 @@ nr = 60;
 nℓ = 30;
 mrange = 1:15;
 diffrot = true;
+diffrotprof = :constant
 
 taskno = parse(Int, ENV["SLURM_PROCID"])
 V_symmetric = (true, false)[taskno + 1]
 @show Libc.gethostname(), taskno, V_symmetric
 
-main(8, 6, 1:1, diffrot, V_symmetric)
-main(nr, nℓ, mrange, diffrot, V_symmetric)
+main(8, 6, 1:1, V_symmetric, diffrot, diffrotprof)
+main(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof)
 
 end

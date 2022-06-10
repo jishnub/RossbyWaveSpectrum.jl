@@ -2445,6 +2445,28 @@ function save_eigenvalues(f, mr; operators, kw...)
     jldsave(fname; lam, vec, mr, nr, nℓ, kw, operators)
 end
 
+struct FilteredEigen{KW, S<:AbstractMatrix{<:Complex}, OP}
+    lams :: Vector{Vector{ComplexF64}}
+    vs :: Vector{S}
+    mr :: UnitRange{Int}
+    kw :: KW
+    operators :: OP
+end
+
+function FilteredEigen(fname::String)
+    lam, vec, mr, kw, operators =
+        load(fname, "lam", "vec", "mr", "kw", "operators");
+    FilteredEigen(lam, vec, mr, kw, operators)
+end
+
+function filter_eigenvalues(f::FilteredEigen; kw...)
+    @unpack operators = f
+    λfs, vfs =
+        RossbyWaveSpectrum.filter_eigenvalues(f.lams, f.vs, f.mr; operators, f.kw..., kw...);
+    kw2 = merge(f.kw, kw)
+    FilteredEigen(λfs, vfs, f.mr, kw2, operators)
+end
+
 function eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
     @unpack radial_params = operators
     @unpack nparams, nr, nℓ = radial_params
