@@ -43,10 +43,10 @@ function main(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof)
 end
 
 nr = 60;
-nℓ = 30;
+nℓ = 40;
 mrange = 1:15;
-diffrot = true;
-diffrotprof = :constant
+diffrot = false;
+diffrotprof = :radial
 
 taskno = parse(Int, ENV["SLURM_PROCID"])
 V_symmetric = (true, false)[taskno + 1]

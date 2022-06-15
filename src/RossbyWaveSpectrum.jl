@@ -31,6 +31,7 @@ using ZChop
 
 export datadir
 export Filters
+export filteredeigen
 
 const SCRATCH = Ref("")
 const DATADIR = Ref("")
@@ -2307,7 +2308,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     λ, v = λ[filtinds], v[:, filtinds]
 
     # re-apply scalings
-    @views if get(kw, :scale_eigenvectors, false)
+    if get(kw, :scale_eigenvectors, false)
         scale_eigenvectors!(v; operators)
     end
 
@@ -2462,9 +2463,23 @@ end
 function filter_eigenvalues(f::FilteredEigen; kw...)
     @unpack operators = f
     λfs, vfs =
-        RossbyWaveSpectrum.filter_eigenvalues(f.lams, f.vs, f.mr; operators, f.kw..., kw...);
+        filter_eigenvalues(f.lams, f.vs, f.mr; operators, f.kw..., kw...);
     kw2 = merge(f.kw, kw)
     FilteredEigen(λfs, vfs, f.mr, kw2, operators)
+end
+
+function filteredeigen(filename::String; kw...)
+    feig = FilteredEigen(filename)
+    fkw = feig.kw
+    diffrot = fkw[:diffrot]
+    V_symmetric = fkw[:V_symmetric]
+    matrixfn! = if !diffrot
+        uniformrotmatrixfn!(V_symmetric)
+    else
+        diffrot_profile = fkw[:diffrotprof]
+        diffrotmatrixfn!(diffrot_profile, V_symmetric)
+    end
+    filter_eigenvalues(feig; matrixfn!, fkw..., kw...)
 end
 
 function eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)

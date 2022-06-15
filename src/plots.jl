@@ -8,6 +8,7 @@ using JLD2
 using Printf
 using LinearAlgebra
 using UnPack
+using OrderedCollections
 
 plotdir = joinpath(dirname(dirname(@__DIR__)), "plots")
 ticker = pyimport("matplotlib.ticker")
@@ -66,11 +67,6 @@ function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridges
     end
 end
 
-function spectrum(fname::String; kw...)
-    lam, mr = load(fname, "lam", "mr")
-    spectrum(lam, mr; kw...)
-end
-
 struct Measurement
     value :: Float64
     lowerr :: Float64
@@ -99,7 +95,7 @@ const ProxaufFit = [
     15 => (; ν = Measurement(-39, 5, 4), γ = Measurement(41, 12, 11)),
 ]
 
-const HansonHFFit = [
+const HansonHFFit = OrderedDict(
     8 => (; ν = Measurement(-278.9, 17.7, 16.0), γ = Measurement(81.6, 76.6, 54.7)),
     9 => (; ν = Measurement(-257.2, 15.8, 9.8), γ = Measurement(35.3, 62.9, 22.3)),
     10 => (; ν = Measurement(-234.2, 21.6, 13.2), γ = Measurement(38.9, 70.1, 25.1)),
@@ -107,10 +103,10 @@ const HansonHFFit = [
     12 => (; ν = Measurement(-198.7, 19.9, 12.9), γ = Measurement(29.9, 63.5, 18.2)),
     13 => (; ν = Measurement(-182.8, 6.7, 7.7), γ = Measurement(26.7, 24.6, 12.5)),
     14 => (; ν = Measurement(-181.4, 23.5, 22.8), γ = Measurement(42.7, 76.1, 28.4)),
-]
+)
 
-function errorbars_pyplot(m::AbstractVector{Measurement})
-    hcat(lowerr.(m), higherr.(m))'
+function errorbars_pyplot(mmnt::AbstractVector{Measurement})
+    hcat(lowerr.(mmnt), higherr.(mmnt))'
 end
 
 const ScatterParams = Dict(
@@ -122,6 +118,7 @@ const ScatterParams = Dict(
         :lw => 0.5,
     )
 
+# ν0 at r = r_out in nHz, effectively an unit
 freqnHzunit(Ω0) = Ω0 * 1e9/2pi
 
 function spectrum(lam::AbstractArray, mr;
@@ -205,13 +202,24 @@ function spectrum(lam::AbstractArray, mr;
     end
 end
 
-function spectrum(lamsym, lamasym, mr; kwsym, kwasym, kw...)
-    f, axlist = subplots(2, 2, sharex = true)
-    spectrum(lamsym, mr; kwsym..., kw..., f, ax = axlist[1,1], save = false, V_symmetric = true)
-    spectrum(lamasym, mr; kwasym..., kw..., f, ax = axlist[2,1], save = false, V_symmetric = false)
+function spectrum(feig::FilteredEigen; kw...)
+    @unpack operators = feig
+    spectrum(feig.lams, feig.mr; operators, feig.kw..., kw...)
+end
 
-    damping_rossbyridge(lamsym, mr; operators, f, ax = axlist[1,2], kwasym..., kw..., save = false, V_symmetric = true)
-    plot_high_frequency_ridge(lamasym, mr; operators, f, ax = axlist[2,2], kwasym..., kw..., save = false, V_symmetric = false)
+function spectrum(fsym::FilteredEigen, fasym::FilteredEigen; kw...)
+    f, axlist = subplots(2, 2, sharex = true)
+    spectrum(fsym.lams, fsym.mr; operators = fsym.operators,
+        fsym.kw..., kw..., f, ax = axlist[1,1], save = false)
+    spectrum(fasym.lams, fasym.mr; operators = fasym.operators,
+        fasym.kw..., kw..., f, ax = axlist[2,1], save = false)
+
+    damping_rossbyridge(fsym.lams, fsym.mr; operators = fsym.operators,
+            f, ax = axlist[1,2], fsym.kw..., kw..., save = false)
+    plot_high_frequency_ridge(fasym.lams, fasym.mr; operators = fasym.operators,
+            f, ax = axlist[2,1], fasym.kw..., kw..., save = false)
+    damping_highfreqridge(fasym.lams, fasym.mr; operators = fasym.operators,
+            f, ax = axlist[2,2], fasym.kw..., kw..., save = false)
 
     f.set_size_inches(9,6)
     f.tight_layout()
@@ -240,8 +248,6 @@ function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), k
     λs_rossbyridge = [
     (isempty(λ) ? eltype(λ)[NaN + im*NaN] : λ[argmin(abs.(real.(λ) .- RossbyWaveSpectrum.rossby_ridge(m)))]) for (m,λ) in zip(mr, lam)]
 
-    νstr = mantissa_exponent_format(ν)
-
     ax.plot(mr, imag.(λs_rossbyridge) .* 2 #= HWHM to FWHM =# * νnHzunit,
             ls="dotted", color="grey", marker="o", mfc="white",
             mec="black", ms=5, label="this work", zorder = 4)
@@ -250,10 +256,9 @@ function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), k
     m_P = first.(ProxaufFit)
     γ_P = last.(last.(ProxaufFit))
     γ_P_val = value.(γ_P)
-    ax.plot(m_P, γ_P_val, ls="None", marker=".", color="black", ms="2", zorder = 2)
     ax.errorbar(m_P, γ_P_val,
         yerr = errorbars_pyplot(γ_P),
-        color= "grey", ls="None", capsize = 3, label="P20", zorder = 1)
+        color= "grey", ls="None", capsize = 3, label="P20", zorder = 1, marker = ".", ms = 5, mfc = "k")
     ax.set_ylabel("linewidth [nHz]", fontsize = 12)
     ax.set_xlabel("m", fontsize = 12)
     ax.legend(loc="best")
@@ -263,9 +268,57 @@ function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), k
     ax.xaxis.set_major_locator(ticker.MaxNLocator(5, integer = true))
     f.tight_layout()
     if get(kw, :save, false)
-        f.savefig(joinpath(plotdir, "damping.eps"))
+        f.savefig(joinpath(plotdir, "damping_rossby.eps"))
     end
     return nothing
+end
+
+function damping_highfreqridge(lam, mr; operators, f = figure(), ax = subplot(), kw...)
+    V_symmetric = kw[:V_symmetric]
+    @assert !V_symmetric "V must be antisymmetric for high-frequency rossby ridge plots"
+    @unpack Ω0, ν = operators.constants
+    ν *= Ω0 * Rsun^2
+
+    νnHzunit = freqnHzunit(Ω0)
+
+    # observations
+    ms_H22 = collect(keys(HansonHFFit))
+    γ_H22 = [x.γ for x in values(HansonHFFit)]
+    γ_H22_val = value.(γ_H22)
+
+    ax.errorbar(ms_H22, γ_H22_val,
+        yerr = errorbars_pyplot(γ_H22),
+        color= "grey", ls="None", capsize = 3, label="H22", zorder = 1, marker = ".", ms=6, mfc="k")
+
+    # model
+    λs_HFRridge = [
+    (isempty(λ) || m < 5 ? eltype(λ)(NaN + im*NaN) :
+        λ[argmin(abs.(real.(λ) .- 3 * RossbyWaveSpectrum.rossby_ridge(m)))]) for (m,λ) in zip(mr, lam)]
+
+    ax.plot(mr, imag.(λs_HFRridge) .* 2 #= HWHM to FWHM =# * νnHzunit,
+            ls="dotted", color="grey", marker="o", mfc="white",
+            mec="black", ms=5, label="this work", zorder = 4)
+
+    ax.set_ylabel("linewidth [nHz]", fontsize = 12)
+    ax.set_xlabel("m", fontsize = 12)
+    ax.set_title("High-frequency modes", fontsize = 12)
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
+    ax.xaxis.set_major_locator(ticker.MaxNLocator(5, integer = true))
+
+    ax.legend(loc="best")
+
+    f.tight_layout()
+    if get(kw, :save, false)
+        f.savefig(joinpath(plotdir, "damping_highfreqridge.eps"))
+    end
+    return nothing
+end
+
+for f in [:damping_highfreqridge, :damping_rossbyridge]
+    @eval function $f(fasym::FilteredEigen; kw...)
+        @unpack operators = fasym
+        $f(fasym.lams, fasym.mr; operators, fasym.kw..., kw...)
+    end
 end
 
 function plot_high_frequency_ridge(lam, mr; operators, f = figure(), ax = subplot(), kw...)
@@ -274,25 +327,11 @@ function plot_high_frequency_ridge(lam, mr; operators, f = figure(), ax = subplo
     νnHzunit = freqnHzunit(Ω0)
 
     # observations
-    m_H = first.(HansonHFFit)
-    ν_H = first.(last.(HansonHFFit))
+    m_H = collect(keys(HansonHFFit))
+    ν_H = [x.ν for x in values(HansonHFFit)]
     ax.errorbar(m_H, .-value.(ν_H),
         yerr = errorbars_pyplot(ν_H),
         color= "0.3", ls="dashed", capsize = 3, label="H22")
-    ax.set_ylabel("Peak frequency [nHz]", fontsize = 12)
-    ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
-    ax.set_title("High-frequency ridge", fontsize = 12)
-
-    # our model
-    λ_filt = [begin
-        ν_norm_rr = RossbyWaveSpectrum.rossby_ridge(m)
-        hf_lowlimit = ν_norm_rr * 1.5
-        hf_highlimit = ν_norm_rr * 4
-        λ[hf_lowlimit .< real.(λ) .< hf_highlimit]
-        end for (m, λ) in zip(mr, lam)]
-    lamcat = mapreduce(real, vcat, λ_filt) .* νnHzunit
-    mcat = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr, λ_filt)])
-    ax.scatter(mcat, lamcat; ScatterParams..., c = "white", edgecolors = "black", label="this work")
 
     ax.legend(loc="best")
 
@@ -308,20 +347,6 @@ function piformatter(x, _)
              (n == 2 ? "" : string(div(n, 2))) : string(n)
     poststr = n == 4 ? "" : iseven(n) ? "/2" : "/4"
     prestr * "π" * poststr
-end
-
-function filteredeigen(filename::String; kw...)
-    feig = RossbyWaveSpectrum.FilteredEigen(filename)
-    fkw = feig.kw
-    diffrot = fkw[:diffrot]
-    V_symmetric = fkw[:V_symmetric]
-    matrixfn! = if !diffrot
-        RossbyWaveSpectrum.uniformrotmatrixfn!(V_symmetric)
-    else
-        diffrot_profile = fkw[:diffrotprof]
-        RossbyWaveSpectrum.diffrotmatrixfn!(diffrot_profile, V_symmetric)
-    end
-    RossbyWaveSpectrum.filter_eigenvalues(feig; matrixfn!, kw...)
 end
 
 function differential_rotation_spectrum(fconstsym::FilteredEigen,
@@ -499,7 +524,9 @@ function eigenfunctions_allstreamfn(VWSinv::NamedTuple, θ, m; operators, kw...)
     scale = eignorm(realview(VWSinv.V))
     kw2[:scale] = scale
     itr = Iterators.product((real, imag), (:V, :W, :S))
-    title_str = Dict(:V => "V", :W => "W", :S => "S/cp")
+    title_str = get(kw, :scale_eigenvectors, false) ?
+        Dict(:V => "V", :W => "W", :S => "S/cp") :
+        Dict(:V => "V"*L"/R_\odot", :W => "W"*L"/R_\odot^2", :S => L"\Omega_0 R_\odot"*"S/cp")
 
     for (ind, (component, field)) in zip(CartesianIndices(axes(itr)), itr)
         eigenfunction(VWSinv, θ, m;
@@ -513,7 +540,9 @@ function eigenfunctions_allstreamfn(VWSinv::NamedTuple, θ, m; operators, kw...)
         subfigs[ind].suptitle(string(component)*"("*title_str[field]*")", x = 0.8)
     end
     if get(kw, :save, false)
-        f.savefig(joinpath(plotdir, "eigenfunctions_allstreamfn_m$(m).eps"))
+        fname = joinpath(plotdir, "eigenfunctions_allstreamfn_m$(m).eps")
+        @info "saving to $fname"
+        f.savefig(fname)
     end
 end
 
@@ -601,7 +630,8 @@ function eigenfunction_rossbyridge_allstreamfn(λs::AbstractVector, vs::Abstract
     end
 end
 
-function eigenfunction_spectrum(v, nr, nℓ; V_symmetric = true, kw...)
+function eigenfunction_spectrum(v, m; operators, V_symmetric, kw...)
+    @unpack nr, nℓ = operators.radial_params
     nvariables = length(v) ÷ (nr*nℓ)
     Vℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
     Wℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, !V_symmetric)
@@ -640,6 +670,11 @@ function eigenfunction_spectrum(v, nr, nℓ; V_symmetric = true, kw...)
 
     compare_terms(parent.(terms); nrows = 2, titles,
         xlabel = "spharm ℓ", ylabel = "chebyshev order", x, y = 0:nr-1)
+end
+
+function eigenfunction_spectrum(f::FilteredEigen, m::Integer, ind::Integer; kw...)
+    @unpack operators = f
+    eigenfunction_spectrum(f.vs[m][:, ind], m; operators, f.kw..., kw...)
 end
 
 function plot_matrix(M, nvariables = 3)

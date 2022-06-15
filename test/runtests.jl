@@ -21,7 +21,7 @@ using RossbyWaveSpectrum.Filters: NODES, SPATIAL, EIGVEC, EIGVAL, EIGEN, BC
     Aqua.test_all(RossbyWaveSpectrum,
         ambiguities = false,
         stale_deps = (; ignore =
-        [:PyCall, :PyPlot, :LaTeXStrings]),
+        [:PyCall, :PyPlot, :LaTeXStrings, :OrderedCollections]),
     )
 end
 
