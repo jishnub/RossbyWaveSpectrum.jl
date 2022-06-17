@@ -18,4 +18,4 @@ project="$SCRATCH/RossbyWaveSpectrum.jl"
 export MKL_DYNAMIC="FALSE"
 export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 srun $julia --project=$project --startup-file=no -t 15 -e \
-'include("$(ENV["SCRATCH"])/RossbyWaveSpectrum.jl/compute_rossby_spectrum.jl")'
+'include("$(ENV["SCRATCH"])/RossbyWaveSpectrum.jl/compute_rossby_spectrum.jl"); ComputeRossbySpectrum.main()'

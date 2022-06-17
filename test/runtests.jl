@@ -1150,7 +1150,7 @@ end
             M2 = RossbyWaveSpectrum.allocate_operator_matrix(operators2);
             M3 = RossbyWaveSpectrum.allocate_operator_matrix(operators3);
 
-            @testset for rotation_profile in [:radial_linear, :radial]
+            @testset for rotation_profile in [:radial_linear, :radial_solar_equator]
                 RossbyWaveSpectrum.differential_rotation_matrix!(M1, m; operators, rotation_profile);
                 RossbyWaveSpectrum.differential_rotation_matrix!(M2, m; operators = operators2, rotation_profile);
                 RossbyWaveSpectrum.differential_rotation_matrix!(M3, m; operators = operators3, rotation_profile);
@@ -1377,3 +1377,10 @@ end
 end
 
 include("run_threadedtests.jl")
+
+@testset "compute_rossby_spectrum.jl" begin
+    include(joinpath(dirname(dirname(pathof(RossbyWaveSpectrum))), "compute_rossby_spectrum.jl"))
+    for V_symmetric in (true, false), diffrot in (true, false)
+        ComputeRossbySpectrum.computespectrum(8, 6, 1:1, V_symmetric, diffrot, :radial_solar_equator, save = false)
+    end
+end

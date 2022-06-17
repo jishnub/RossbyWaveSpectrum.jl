@@ -75,18 +75,18 @@ version = "0.1.11"
 
 [[deps.ArrayLayouts]]
 deps = ["FillArrays", "LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "c23473c60476e62579c077534b9643ec400f792b"
+git-tree-sha1 = "ce5666a4081cfb66035a1a46e45a34ce889bac26"
 uuid = "4c555306-a7a7-4459-81d9-ec55ddd5c99a"
-version = "0.8.6"
+version = "0.8.7"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 
 [[deps.BandedMatrices]]
 deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra", "Random", "SparseArrays"]
-git-tree-sha1 = "960ad9a4b34380595500f60add129e178740c3a6"
+git-tree-sha1 = "13223ec65172b18f164e8a8338e4e95d40d54c8c"
 uuid = "aae01518-5342-5314-be14-df237901396f"
-version = "0.17.0"
+version = "0.17.2"
 
 [[deps.BangBang]]
 deps = ["Compat", "ConstructionBase", "Future", "InitialValues", "LinearAlgebra", "Requires", "Setfield", "Tables", "ZygoteRules"]
@@ -109,15 +109,15 @@ version = "0.1.5"
 
 [[deps.BlockArrays]]
 deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra"]
-git-tree-sha1 = "ef9b5e561eb814962541c0021eef2e30238d65ba"
+git-tree-sha1 = "6bf9cdd29d7f0fb7a1a342026d5cefbdb61e25fb"
 uuid = "8e7c35d0-a365-5155-bbbb-fb81a777f24e"
-version = "0.16.17"
+version = "0.16.18"
 
 [[deps.BlockBandedMatrices]]
 deps = ["ArrayLayouts", "BandedMatrices", "BlockArrays", "FillArrays", "LinearAlgebra", "MatrixFactorizations", "SparseArrays", "Statistics"]
-git-tree-sha1 = "ef025a9bef7e04bf77df6a7b7637cd972b9acd47"
+git-tree-sha1 = "85c30bf983cb20748f126c235f0696dff8a83612"
 uuid = "ffab5731-97b5-5995-9138-79e8c1846df0"
-version = "0.11.6"
+version = "0.11.7"
 
 [[deps.Calculus]]
 deps = ["LinearAlgebra"]
@@ -483,9 +483,9 @@ uuid = "4af54fe1-eca0-43a8-85a7-787d91b784e3"
 
 [[deps.LazyBandedMatrices]]
 deps = ["ArrayLayouts", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "FillArrays", "LazyArrays", "LinearAlgebra", "MatrixFactorizations", "SparseArrays", "StaticArrays"]
-git-tree-sha1 = "67bbe28d119403d753eb9dfae7b3b75f0739e02a"
+git-tree-sha1 = "034d371419140f14a986ab7325d11f90f30b0c6d"
 uuid = "d7e5e226-e90b-4449-9968-0f923699bf6f"
-version = "0.7.16"
+version = "0.7.17"
 
 [[deps.LegendrePolynomials]]
 deps = ["OffsetArrays", "SpecialFunctions"]

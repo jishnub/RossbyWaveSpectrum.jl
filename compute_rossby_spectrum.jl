@@ -4,7 +4,7 @@ using LinearAlgebra
 
 flush(stdout)
 
-function main(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof)
+function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; save = true)
     # boundary condition tolerance
     bc_atol = 1e-5
 
@@ -24,9 +24,10 @@ function main(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof)
     @time operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 2e12);
 
     spectrumfn! = if diffrot
-        RossbyWaveSpectrum.diffrotspectrumfn!(diffrotprof, V_symmetric)
+        d = RossbyWaveSpectrum.RotMatrix(V_symmetric, diffrotprof, nothing, RossbyWaveSpectrum.differential_rotation_spectrum!)
+        RossbyWaveSpectrum.updaterotatationprofile(d, operators)
     else
-        RossbyWaveSpectrum.uniformrotspectrumfn!(V_symmetric)
+        RossbyWaveSpectrum.RotMatrix(V_symmetric, :uniform, nothing, RossbyWaveSpectrum.uniform_rotation_spectrum!)
     end
 
     @show nr nℓ mrange Δl_cutoff n_cutoff
@@ -35,24 +36,35 @@ function main(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof)
 
     flush(stdout)
 
+    kw = Base.pairs((; bc_atol, Δl_cutoff, n_cutoff, eigvec_spectrum_power_cutoff, eigen_rtol,
+        print_timer, scale_eigenvectors, diffrot, diffrotprof, V_symmetric))
+
     @time RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange;
-        bc_atol, Δl_cutoff, n_cutoff, eigvec_spectrum_power_cutoff, eigen_rtol,
-        operators, print_timer, scale_eigenvectors, diffrot, diffrotprof, V_symmetric)
+        operators, kw...)
+
+    if !save
+        fname = RossbyWaveSpectrum.rossbyeigenfilename(; operators, kw...)
+        @warn "removing $fname"
+        rm(fname)
+    end
 
     flush(stdout)
+    return nothing
 end
 
-nr = 60;
-nℓ = 30;
-mrange = 1:15;
-diffrot = false;
-diffrotprof = :radial
+function main()
+    nr = 60
+    nℓ = 30;
+    mrange = 1:15;
+    diffrot = true;
+    diffrotprof = :radial_solar_equator
 
-taskno = parse(Int, ENV["SLURM_PROCID"])
-V_symmetric = (true, false)[taskno + 1]
-@show Libc.gethostname(), taskno, V_symmetric
+    taskno = parse(Int, ENV["SLURM_PROCID"])
+    V_symmetric = (true, false)[taskno + 1]
+    @show Libc.gethostname(), taskno, V_symmetric
 
-main(8, 6, 1:1, V_symmetric, diffrot, diffrotprof)
-main(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof)
+    computespectrum(8, 6, 1:1, V_symmetric, diffrot, diffrotprof, save = false)
+    computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof)
+end
 
 end
