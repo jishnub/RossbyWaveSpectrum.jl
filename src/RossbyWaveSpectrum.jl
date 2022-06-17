@@ -364,7 +364,7 @@ end
 function constraintmatrix(operators; W_basis = 2, S_basis = 2)
     @unpack radial_params = operators;
     @unpack nr, nℓ = radial_params;
-    @unpack nvariables = operators.constants;
+    @unpack nvariables = operators;
 
     nradconstraintsVS = 2;
     nradconstraintsW = 4;
@@ -418,7 +418,7 @@ function constraintmatrix(operators; W_basis = 2, S_basis = 2)
     BC = computesparse(BC_block)
     ZC = computesparse(ZC_block)
 
-    (; BC, ZC)
+    (; BC, ZC, nullspacematrices)
 end
 
 """
@@ -602,9 +602,7 @@ function r2neumann_chebyshev_matrix(ncheby, radial_params)
     return M
 end
 
-splderiv(v::Vector, r::Vector, rout = r; nu = 1) = Dierckx.derivative(Spline1D(r, v), rout; nu = 1)
 
-smoothed_spline(r, v; s) = Spline1D(r, v, s = sum(abs2, v) * s)
 
 function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only for tests =# = true)
     ModelS = readdlm(joinpath(@__DIR__, "ModelS.detailed"))
@@ -690,7 +688,7 @@ Base.show(io::IO, o::OperatorWrap) = print(io, "Operators")
 Base.getproperty(y::OperatorWrap, name::Symbol) = getproperty(getfield(y, :x), name)
 
 const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0)
-function radial_operators(nr, nℓ; r_in_frac = 0.7, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
+function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
     scalings = DefaultScalings)
     scalings = merge(DefaultScalings, scalings)
     _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, Tuple(scalings))
@@ -842,7 +840,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     scalings = Dict{Symbol, Float64}()
     @pack! scalings = Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling
 
-    constants = (; κ, ν, nvariables, Ω0)
+    constants = (; κ, ν, Ω0) |> pairs |> Dict
     identities = (; Ir, Iℓ, IU2)
 
     coordinates = Dict{Symbol, Vector{Float64}}()
@@ -878,6 +876,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         rMCU4
 
     op = (;
+        nvariables,
         constants, rad_terms,
         scalings,
         splines,
@@ -970,7 +969,7 @@ end
 
 function allocate_operator_matrix(operators, bandwidth = 2)
     @unpack nr, nℓ = operators.radial_params
-    @unpack nvariables = operators.constants
+    @unpack nvariables = operators
     rows = Fill(nr, nℓ) # block sizes
     R = allocate_block_matrix(nvariables, bandwidth, rows)
     I = allocate_block_matrix(nvariables, 0, rows)
@@ -979,7 +978,7 @@ end
 
 function allocate_mass_matrix(operators)
     @unpack nr, nℓ = operators.radial_params
-    @unpack nvariables = operators.constants
+    @unpack nvariables = operators
     rows = Fill(nr, nℓ) # block sizes
     allocate_block_matrix(nvariables, 0, rows)
 end
@@ -994,7 +993,7 @@ end
 function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
     @unpack nr, nℓ = operators.radial_params
     @unpack IU2 = operators.identities;
-    @unpack nvariables = operators.constants
+    @unpack nvariables = operators
     @unpack ddrDDrMCU4, onebyr2MCU4 = operators.operator_matrices;
     @unpack Weqglobalscaling = operators.scalings
 
@@ -1037,7 +1036,8 @@ function uniform_rotation_matrix(m; operators, kw...)
 end
 
 function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_symmetric = true, kw...)
-    @unpack nvariables, Ω0 = operators.constants;
+    @unpack nvariables = operators;
+    @unpack Ω0 = operators.constants;
     @unpack nr, nℓ = operators.radial_params
     @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
     @unpack IU2 = operators.identities;
@@ -1137,7 +1137,8 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     @unpack ddr_ηρbyr, ηρ, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddrηρ_by_r, d2dr2ηρ_by_r, ηρ_by_r,
         ηρ_by_r2, ddr_ηρbyr2, onebyr2, onebyr = operators.rad_terms;
 
-    @unpack ν, nvariables = operators.constants;
+    @unpack nvariables = operators;
+    @unpack ν = operators.constants;
     @unpack matCU4, matCU2 = operators;
     @unpack Weqglobalscaling = operators.scalings;
 
@@ -1221,13 +1222,14 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     return A
 end
 
-function interp1d(xin, z, xout; s = 0.0)
-    spline = Spline1D(xin, z; s)
+smoothed_spline(r, v; s) = Spline1D(r, v, s = sum(abs2, v) * s)
+function interp1d(xin, z, xout = xin; s = 0.0)
+    spline = smoothed_spline(xin, z; s)
     spline(xout)
 end
 
-function interp2d(xin, yin, z, xout, yout; s = 0.0)
-    evalgrid(Spline2D(xin, yin, z; s), xout, yout)
+function interp2d(xin, yin, z, xout = xin, yout = yin; s = 0.0)
+    evalgrid(Spline2D(xin, yin, z; s = sum(abs2, z) * s), xout, yout)
 end
 
 function read_angular_velocity_radii(dir)
@@ -1256,25 +1258,6 @@ function equatorial_rotation_angular_velocity(r_frac, r_ΔΩ_raw, Ω_raw)
     Ω_raw[r_frac_ind, θind_equator]
 end
 
-function read_angular_velocity(operators, thetaGL; smoothing_param = 1e-3)
-    @unpack r = operators.coordinates;
-    @unpack r_out = operators.radial_params;
-
-    parentdir = dirname(@__DIR__)
-    r_ΔΩ_raw = read_angular_velocity_radii(parentdir)
-    Ω_raw = read_angular_velocity_raw(parentdir)
-    Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun, r_ΔΩ_raw, Ω_raw)
-    ΔΩ_raw = Ω_raw .- Ω0
-
-    nθ = size(ΔΩ_raw, 2)
-    lats_raw = LinRange(0, pi, nθ)
-
-    splΔΩ2D = Spline2D(r_ΔΩ_raw * Rsun, lats_raw, ΔΩ_raw; s = sum(abs2, ΔΩ_raw)*smoothing_param)
-    ΔΩ2D_grid = evalgrid(splΔΩ2D, r, thetaGL);
-
-    (; ΔΩ2D_grid, Ω0)
-end
-
 function legendre_to_associatedlegendre(vℓ, ℓ1, ℓ2, m)
     vℓo = OffsetArray(vℓ, OffsetArrays.Origin(0))
     sum(vℓi * intPl1mPl20Pl3m(ℓ1, ℓ, ℓ2, m) for (ℓ, vℓi) in pairs(vℓo))
@@ -1294,7 +1277,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, ΔΩ_frac = 0.02, V_symmetric = true, kw...)
 
     @unpack nr, nℓ = operators.radial_params;
-    @unpack nvariables = operators.constants
+    @unpack nvariables = operators
     @unpack IU2 = operators.identities;
     @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
 
@@ -1386,72 +1369,99 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
-function equatorial_radial_rotation_profile(operators, thetaGL; smoothing_param = 1e-3)
-    @unpack r = operators.coordinates
-    ΔΩ_rθ, Ω0 = read_angular_velocity(operators, thetaGL; smoothing_param)
-    s = Spline2D(r, thetaGL, ΔΩ_rθ)
-    ΔΩ_r = reshape(evalgrid(s, r, [pi/2]), Val(1))
+function read_angular_velocity(operators; smoothing_param = 1e-4)
+    @unpack r = operators.coordinates;
+    @unpack r_out = operators.radial_params;
+
+    parentdir = dirname(@__DIR__)
+    r_ΔΩ_raw = read_angular_velocity_radii(parentdir)
+    Ω_raw = read_angular_velocity_raw(parentdir)
+    Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun, r_ΔΩ_raw, Ω_raw)
+    ΔΩ_raw = Ω_raw .- Ω0
+
+    nθ = size(ΔΩ_raw, 2)
+    lats_raw = LinRange(0, pi, nθ)
+
+    splΔΩ2D = Spline2D(r_ΔΩ_raw * Rsun, lats_raw, ΔΩ_raw; s = sum(abs2, ΔΩ_raw)*smoothing_param)
+
+    (; splΔΩ2D, Ω0)
 end
 
-function radial_differential_rotation_profile(operators, thetaGL, model = :solar_equator;
-    smoothing_param = 1e-3)
+function equatorial_radial_rotation_profile(; operators, smoothing_param = 4e-5)
+    @unpack r = operators.coordinates
+    splΔΩ2D, Ω0 = read_angular_velocity(operators; smoothing_param)
+    ΔΩ_r = splΔΩ2D.(r, pi/2)
+    ddrΔΩ_r = derivative(splΔΩ2D, r, pi/2, nux = 1, nuy = 0)
+    d2dr2ΔΩ_r = derivative(splΔΩ2D, r, pi/2, nux = 2, nuy = 0)
+    ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
+end
+
+function radial_differential_rotation_profile(; operators, rotation_profile = :solar_equator,
+        smoothing_param = 4e-5)
 
     @unpack r = operators.coordinates
     @unpack r_out, nr, r_in = operators.radial_params
 
-    if model == :solar_equator
+    if rotation_profile == :solar_equator
         Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
-        ΔΩ_r = equatorial_radial_rotation_profile(operators, thetaGL; smoothing_param)
-    elseif model == :linear # for testing
+        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = equatorial_radial_rotation_profile(; operators, smoothing_param)
+    elseif rotation_profile == :linear # for testing
         Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
         f = 0.02 / (r_in / Rsun - 1)
         ΔΩ_r = @. Ω0 * f * (r / Rsun - 1)
-    elseif model == :constant # for testing
+        ddrΔΩ_r = fill(Ω0 * f / Rsun, nr)
+        d2dr2ΔΩ_r = zero(ΔΩ_r)
+    elseif rotation_profile == :constant # for testing
         ΔΩ_frac = 0.02
         Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
         ΔΩ_r = fill(ΔΩ_frac * Ω0, nr)
-    elseif model == :core
+        ddrΔΩ_r = zero(ΔΩ_r)
+        d2dr2ΔΩ_r = zero(ΔΩ_r)
+    elseif rotation_profile == :core
         ΔΩ_frac = 0.3
         Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
-        ΔΩ_r = @. (Ω0*ΔΩ_frac)*1/2*(1 - tanh((r - 0.6Rsun)/(0.08Rsun)))
+        pre = (Ω0*ΔΩ_frac)*1/2
+        σr = 0.08Rsun
+        r0 = 0.6Rsun
+        ΔΩ_r = @. pre * (1 - tanh((r - r0)/σr))
+        ddrΔΩ_r = @. pre * (-sech((r - r0)/σr)^2 * 1/σr)
+        d2dr2ΔΩ_r = @. pre * (2sech((r - r0)/σr)^2 * tanh((r - r0)/σr) * 1/σr^2)
     else
         error("$model is not a valid rotation model")
     end
     ΔΩ_r ./= Ω0
-    return ΔΩ_r, Ω0
+    ddrΔΩ_r ./= Ω0
+    d2dr2ΔΩ_r ./= Ω0
+    return ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r, Ω0
 end
 
-function rotationprofile_radialderiv(r, ΔΩ_r, nr, Δr)
+function rotationprofile_radialderiv(r, ΔΩ_terms, Δr)
+    ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r, Ω0 = ΔΩ_terms
+    nr = length(ΔΩ_r)
+
     ΔΩ = chop(chebyshevgrid_to_Fun(ΔΩ_r), 1e-2);
     @checkncoeff ΔΩ nr
 
-    ΔΩ_spl = Spline1D(r, ΔΩ_r);
-    ddrΔΩ_r = derivative(ΔΩ_spl, r);
-    d2dr2ΔΩ_r = derivative(ΔΩ_spl, r, nu=2);
-
-    zchop!(ddrΔΩ_r, 1e-10*(2/Δr))
-    zchop!(d2dr2ΔΩ_r, 1e-10*(2/Δr)^2)
-
-    ddrΔΩ = chop(chebyshevgrid_to_Fun(ddrΔΩ_r), 1e-2);
+    ddrΔΩ = chop(chebyshevgrid_to_Fun(interp1d(r, ddrΔΩ_r, s = 1e-2)), 1e-2);
     @checkncoeff ddrΔΩ nr
-    d2dr2ΔΩ = chop(chebyshevgrid_to_Fun(d2dr2ΔΩ_r), 5e-2);
+
+    d2dr2ΔΩ = chop(chebyshevgrid_to_Fun(interp1d(r, d2dr2ΔΩ_r, s = 1e-2)), 1e-2);
     @checkncoeff d2dr2ΔΩ nr
 
-    (ΔΩ, ddrΔΩ, d2dr2ΔΩ)
+    return ΔΩ, ddrΔΩ, d2dr2ΔΩ
 end
 
-function radial_differential_rotation_profile_derivatives(m; operators,
-        rotation_profile = :solar_equator, smoothing_param = 1e-3)
+function radial_differential_rotation_profile_derivatives(; operators,
+        rotation_profile = :solar_equator, smoothing_param = 4e-5)
+
     @unpack r = operators.coordinates;
-    @unpack nr, nℓ, Δr = operators.radial_params;
+    @unpack nℓ, Δr = operators.radial_params;
 
-    ntheta = ntheta_ℓmax(nℓ, m);
-    @unpack thetaGL = gausslegendre_theta_grid(ntheta);
+    f = radial_differential_rotation_profile(; operators, rotation_profile, smoothing_param);
+    Ω0 = last(f)
 
-    ΔΩ_r, Ω0 = radial_differential_rotation_profile(operators, thetaGL, rotation_profile; smoothing_param);
-
-    (ΔΩ, ddrΔΩ, d2dr2ΔΩ) = replaceemptywitheps.(rotationprofile_radialderiv(r, ΔΩ_r, nr, Δr))
-    (; Ω0, ΔΩ, ddrΔΩ, d2dr2ΔΩ)
+    ΔΩ, ddrΔΩ, d2dr2ΔΩ = replaceemptywitheps.(rotationprofile_radialderiv(r, f, Δr));
+    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ, Ω0)
 end
 
 function radial_differential_rotation_terms_inner!((VWterm, WVterm), (ℓ, ℓ′),
@@ -1479,7 +1489,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, rotation_profile = :radial, V_symmetric = true, kw...)
 
     @unpack nr, nℓ = operators.radial_params
-    @unpack nvariables = operators.constants;
+    @unpack nvariables = operators;
     @unpack DDr, ddr, ddrDDr = operators.diff_operators;
     @unpack ddrMCU4 = operators.operator_matrices;
     @unpack onebyr, g, ηρ_by_r, onebyr2 = operators.rad_terms;
@@ -1496,7 +1506,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         SS = matrix_block(M.re, 3, 3)
     end
 
-    ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(m; operators, rotation_profile);
+    ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(; operators, rotation_profile);
 
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ, Ω0) = ΔΩprofile_deriv;
 
@@ -1665,7 +1675,7 @@ function solar_differential_rotation_terms!(M, m;
     operators = radial_operators(nr, nℓ),
     rotation_profile = :constant)
 
-    @unpack nvariables = operators.constants
+    @unpack nvariables = operators
     @unpack Iℓ, Ir = operators.identities
     @unpack ddr, DDr, d2dr2, rddr, r2d2dr2, DDr_minus_2byr = operators.diff_operators
     @unpack Tcrfwd, Tcrinv = operators.transforms
@@ -2056,7 +2066,7 @@ function eigvec_spectrum_filter!(F, v, m, operators;
     Δl_inds = Δl_cutoff ÷ 2
 
     @unpack nparams = operators.radial_params
-    @unpack nvariables = operators.constants
+    @unpack nvariables = operators
 
     flag = true
     fields = filterfields(VW, v, nparams, nvariables; filterfieldpowercutoff)
@@ -2083,7 +2093,7 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     eqfilter = true
 
     @unpack nparams = operators.radial_params
-    @unpack nvariables = operators.constants
+    @unpack nvariables = operators
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     for X in fields
@@ -2109,7 +2119,7 @@ function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
     nodesfilter = true
 
     @unpack nparams = operators.radial_params
-    @unpack nvariables = operators.constants
+    @unpack nvariables = operators
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, nℓ, Plcosθ)
@@ -2229,7 +2239,7 @@ end
 function allocate_filter_caches(m; operators, constraints = constraintmatrix(operators))
     @unpack BC = constraints
     @unpack nr, nℓ, nparams = operators.radial_params
-    @unpack nvariables = operators.constants
+    @unpack nvariables = operators
     # temporary cache arrays
     nrows = nvariables * nparams
     MVcache = allocate_MVcache(nrows)
@@ -2345,7 +2355,7 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     operators, constraints = constraintmatrix(operators), kw...)
 
     @unpack nr, nℓ, nparams = operators.radial_params
-    @unpack nvariables = operators.constants
+    @unpack nvariables = operators
     nthreads = Threads.nthreads();
     ABs = [(allocate_operator_matrix(operators), allocate_mass_matrix(operators)) for _ in 1:nthreads]
     c = Channel{eltype(ABs)}(nthreads);
@@ -2485,7 +2495,7 @@ end
 function eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
     @unpack radial_params = operators
     @unpack nparams, nr, nℓ = radial_params
-    @unpack nvariables = operators.constants
+    @unpack nvariables = operators
 
     F.V .= @view v[1:nparams]
     F.W .= @view v[nparams.+(1:nparams)]

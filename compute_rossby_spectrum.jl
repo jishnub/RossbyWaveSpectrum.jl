@@ -43,7 +43,7 @@ function main(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof)
 end
 
 nr = 60;
-nℓ = 40;
+nℓ = 30;
 mrange = 1:15;
 diffrot = false;
 diffrotprof = :radial

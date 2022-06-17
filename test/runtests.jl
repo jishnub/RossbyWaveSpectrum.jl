@@ -32,7 +32,7 @@ end
     @testset "stratification" begin
         nr, nℓ = 50, 25
         @testset "shallow" begin
-            operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+            operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.7);
             @unpack r, r_chebyshev = operators.coordinates;
             @unpack sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
                 sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ, sT, sηT = operators.splines;
@@ -755,7 +755,7 @@ blockwise_isapprox(x, y; kw...) = blockwise_cmp((x, y) -> isapprox(x, y; kw...),
     nr, nℓ = 50, 2
     m = 5
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-    @unpack nvariables = operators.constants;
+    @unpack nvariables = operators;
     M1 = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators);
     operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
     M2 = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators = operators2);
@@ -920,7 +920,7 @@ end
     @testset "compare with constant" begin
         nr, nℓ = 30, 2
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-        @unpack nvariables = operators.constants;
+        @unpack nvariables = operators;
 
         Mc = RossbyWaveSpectrum.allocate_operator_matrix(operators);
         Mr = RossbyWaveSpectrum.allocate_operator_matrix(operators);
@@ -953,7 +953,8 @@ end
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
         @unpack transforms, diff_operators, rad_terms, coordinates, radial_params, identities = operators;
         @unpack r, r_chebyshev = coordinates;
-        @unpack nvariables, ν = operators.constants;
+        @unpack nvariables = operators;
+        @unpack ν = operators.constants;
         r_mid = radial_params.r_mid::Float64;
         Δr = radial_params.Δr::Float64;
         a = 1 / (Δr / 2);
@@ -1107,39 +1108,33 @@ end
 
         @testset "convergence of diff rot profile" begin
             nr, nℓ = 50, 10
-            m = 5
             operators1 = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+            r_chebyshev1 = operators1.coordinates[:r_chebyshev];
             operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
             operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
 
             T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
-                m, operators = operators1, rotation_profile = :solar_equator);
+                operators = operators1, rotation_profile = :solar_equator);
             ΔΩ1, ddrΔΩ1, d2dr2ΔΩ1 = T.ΔΩ, T.ddrΔΩ, T.d2dr2ΔΩ;
 
             T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
-                m, operators = operators2, rotation_profile = :solar_equator);
+                operators = operators2, rotation_profile = :solar_equator);
             ΔΩ2, ddrΔΩ2, d2dr2ΔΩ2 = T.ΔΩ, T.ddrΔΩ, T.d2dr2ΔΩ;
 
             T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
-                m, operators = operators3, rotation_profile = :solar_equator);
+                operators = operators3, rotation_profile = :solar_equator);
             ΔΩ3, ddrΔΩ3, d2dr2ΔΩ3 = T.ΔΩ, T.ddrΔΩ, T.d2dr2ΔΩ;
 
             @testset "nr+5, nℓ" begin
-                @test ApproxFun.ncoefficients(ΔΩ1) ≈ ApproxFun.ncoefficients(ΔΩ2)
-                @test ApproxFun.coefficients(ΔΩ1) ≈ ApproxFun.coefficients(ΔΩ2) rtol=1e-3
-                @test ApproxFun.ncoefficients(ddrΔΩ1) ≈ ApproxFun.ncoefficients(ddrΔΩ2)
-                @test ApproxFun.coefficients(ddrΔΩ1) ≈ ApproxFun.coefficients(ddrΔΩ2) rtol=1e-3
-                @test ApproxFun.ncoefficients(d2dr2ΔΩ1) ≈ ApproxFun.ncoefficients(d2dr2ΔΩ2)
-                @test ApproxFun.coefficients(d2dr2ΔΩ1) ≈ ApproxFun.coefficients(d2dr2ΔΩ2) rtol=1e-3
+                @test ΔΩ1.(r_chebyshev1) ≈ ΔΩ2.(r_chebyshev1) rtol=1e-2
+                @test ddrΔΩ1.(r_chebyshev1) ≈ ddrΔΩ2.(r_chebyshev1) rtol=5e-2
+                @test d2dr2ΔΩ1.(r_chebyshev1) ≈ d2dr2ΔΩ2.(r_chebyshev1) rtol=1e-1
             end
 
             @testset "nr+5, nℓ+5" begin
-                @test ApproxFun.ncoefficients(ΔΩ1) ≈ ApproxFun.ncoefficients(ΔΩ3)
-                @test ApproxFun.coefficients(ΔΩ1) ≈ ApproxFun.coefficients(ΔΩ3) rtol=5e-3
-                @test ApproxFun.ncoefficients(ddrΔΩ1) ≈ ApproxFun.ncoefficients(ddrΔΩ3)
-                @test ApproxFun.coefficients(ddrΔΩ1) ≈ ApproxFun.coefficients(ddrΔΩ3) rtol=5e-3
-                @test ApproxFun.ncoefficients(d2dr2ΔΩ1) ≈ ApproxFun.ncoefficients(d2dr2ΔΩ3)
-                @test ApproxFun.coefficients(d2dr2ΔΩ1) ≈ ApproxFun.coefficients(d2dr2ΔΩ3) rtol=5e-3
+                @test ΔΩ1.(r_chebyshev1) ≈ ΔΩ3.(r_chebyshev1) rtol=1e-2
+                @test ddrΔΩ1.(r_chebyshev1) ≈ ddrΔΩ3.(r_chebyshev1) rtol=5e-2
+                @test d2dr2ΔΩ1.(r_chebyshev1) ≈ d2dr2ΔΩ3.(r_chebyshev1) rtol=1e-1
             end
         end
 
@@ -1147,7 +1142,7 @@ end
             nr, nℓ = 50, 10
             m = 5
             operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-            @unpack nvariables = operators.constants;
+            @unpack nvariables = operators;
             operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
             operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
             M_subsample = RossbyWaveSpectrum.allocate_operator_matrix(operators);
@@ -1171,7 +1166,7 @@ end
                         M2_ssv = matrix_block(M_subsample.re, rowind, colind);
                         M1v = matrix_block(M1.re, rowind, colind);
 
-                        rtol = rowind == 3 && colind == 2 ? 5e-3 : 2e-3
+                        rtol = rowind == colind == 2 ? 5e-2 : 1e-2
 
                         @test blockwise_isapprox(M2_ssv, M1v; rtol)
                     end
@@ -1180,9 +1175,7 @@ end
                         M2_ssv = matrix_block(M_subsample.im, rowind, colind);
                         M1v = matrix_block(M1.im, rowind, colind);
 
-                        rtol = rowind == colind == 2 ? 2e-3 : 1e-4
-
-                        @test blockwise_isapprox(M2_ssv, M1v; rtol)
+                        @test blockwise_isapprox(M2_ssv, M1v; rtol = 1e-2)
                     end
                 end
 
@@ -1192,7 +1185,7 @@ end
                         M3_ssv = matrix_block(M_subsample.re, rowind, colind)
                         M1v = matrix_block(M1.re, rowind, colind)
 
-                        rtol = rowind == 3 && colind == 2 ? 5e-3 : 2e-3
+                        rtol = rowind == colind == 2 ? 5e-2 : 1e-2
 
                         @test blockwise_isapprox(M3_ssv, M1v; rtol)
                     end
@@ -1200,9 +1193,7 @@ end
                         M3_ssv = matrix_block(M_subsample.im, rowind, colind)
                         M1v = matrix_block(M1.im, rowind, colind)
 
-                        rtol = rowind == colind == 2 ? 2e-3 : 1e-4
-
-                        @test blockwise_isapprox(M3_ssv, M1v; rtol)
+                        @test blockwise_isapprox(M3_ssv, M1v; rtol = 1e-2)
                     end
                 end
             end

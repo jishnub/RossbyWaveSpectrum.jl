@@ -9,6 +9,8 @@ using Printf
 using LinearAlgebra
 using UnPack
 using OrderedCollections
+using FastTransforms
+import ApproxFun: ncoefficients
 
 plotdir = joinpath(dirname(dirname(@__DIR__)), "plots")
 ticker = pyimport("matplotlib.ticker")
@@ -367,8 +369,8 @@ function differential_rotation_spectrum(lam_constant::NTuple{2,Vector},
             kwcsym, kwcasym, kwrsym = kwcsym, kwrasym = kwcasym, kw...)
 
     f, axlist = subplots(2, 3, sharex = "col")
-    @unpack r, r_chebyshev = operators.coordinates
-    @unpack Ω0 = operators.constants
+    @unpack r, r_chebyshev = operators.coordinates;
+    @unpack Ω0 = operators.constants;
     r_frac = r ./ Rsun
 
     lam_constant_sym, lam_constant_asym = lam_constant
@@ -376,13 +378,15 @@ function differential_rotation_spectrum(lam_constant::NTuple{2,Vector},
 
     νnHzunit = freqnHzunit(Ω0)
 
-    ΔΩ_constant = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(1;
+    ΔΩ_constant = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
             operators, rotation_profile = :constant).ΔΩ
 
     axlist[1,1].plot(r_frac, ΔΩ_constant.(r_chebyshev).*νnHzunit, color="0.2")
+    axlist[1,1].axhline(Ω0/2pi, color="black", ls="dotted", label="tracking rate")
     axlist[1,1].set_title("Constant ΔΩ", fontsize=12)
     axlist[1,1].yaxis.set_major_locator(ticker.MaxNLocator(4))
     axlist[1,1].set_ylabel(L"\Delta\Omega/2\pi" * " [nHz]", fontsize=12)
+    axlist[1,1].legend(loc="best")
 
     kwextra = (; uniform_rotation_ridge = true, ΔΩ_frac = 0.02)
     spectrum(lam_constant_sym, mr; operators, f = f, ax = axlist[1,2], kwcsym..., kwextra...)
@@ -391,15 +395,16 @@ function differential_rotation_spectrum(lam_constant::NTuple{2,Vector},
     axlist[1,2].set_ylim(-200, 700)
     axlist[1,3].set_ylim(-200, 700)
 
-    ΔΩ_solar_radial = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(1;
+    ΔΩ_solar_radial = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
             operators, rotation_profile = :solar_equator).ΔΩ
 
     axlist[2,1].plot(r_frac, ΔΩ_solar_radial.(r_chebyshev).*νnHzunit, color="0.2")
+    axlist[2,1].axhline(Ω0/2pi, color="black", ls="dotted", label="tracking rate")
     axlist[2,1].set_title("Solar equatorial ΔΩ", fontsize=12)
     axlist[2,1].yaxis.set_major_locator(ticker.MaxNLocator(4))
     axlist[2,1].set_xlabel(L"r/R_\odot", fontsize=12)
-    axlist[2,1].set_xlabel(L"r/R_\odot", fontsize=12)
     axlist[2,1].set_ylabel(L"\Delta\Omega/2\pi" * " [nHz]", fontsize=12)
+    axlist[2,1].legend(loc="best")
 
     kwextra = (; sectoral_rossby_ridge = false, uniform_rotation_ridge = true)
     spectrum(lam_radial_sym, mr; operators, f = f, ax = axlist[2,2], kwrsym..., kwextra...)
@@ -736,39 +741,28 @@ function plot_matrix_block(M, rowind, colind, nℓ, ℓind, ℓ′ind, nvariable
     f.tight_layout()
 end
 
-function plot_diffrot_radial(operators, smoothing_param = 1e-5)
-    @unpack nℓ, r_out = operators.radial_params
-    @unpack r = operators.coordinates
-    # arbitrary theta values for the radial profile
-    m = 2
-    ntheta = RossbyWaveSpectrum.ntheta_ℓmax(nℓ, m)
-    @unpack thetaGL = RossbyWaveSpectrum.gausslegendre_theta_grid(ntheta)
-    ΔΩ_r = RossbyWaveSpectrum.radial_differential_rotation_profile(operators, thetaGL, :solar_equator; smoothing_param)
-    ΔΩ_spl = Spline1D(r, ΔΩ_r)
-    drΔΩ_real = derivative(ΔΩ_spl, r)
-    d2rΔΩ_real = derivative(ΔΩ_spl, r, nu = 2)
+function plot_diffrot_radial(; operators, kw...)
+    @unpack r, r_chebyshev = operators.coordinates
 
-    parentdir = dirname(@__DIR__)
-    r_ΔΩ_raw = RossbyWaveSpectrum.read_angular_velocity_radii(parentdir)
-    Ω_raw = RossbyWaveSpectrum.read_angular_velocity_raw(parentdir)
-    Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out / Rsun, r_ΔΩ_raw, Ω_raw)
-    ΔΩ_raw = Ω_raw .- Ω0
-    nθ = size(ΔΩ_raw, 2)
-    lats_raw = LinRange(0, pi, nθ)
-    θind_equator_raw = findmin(abs.(lats_raw .- pi / 2))[2]
+    (; Ω0, ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+        operators, kw...);
 
     f, axlist = subplots(3, 1, sharex = true)
 
-    r_frac = r ./ Rsun
-    r_frac_min = minimum(r_frac)
-    r_inds = r_ΔΩ_raw .>= r_frac_min
+    r_frac = r/Rsun
+    axlist[1].plot(r_frac, ΔΩ.(r_chebyshev), ".-", label = "ncoeff = $(ncoefficients(ΔΩ))")
+    axlist[1].axhline(Ω0, ls="dotted", color="black")
+    axlist[1].set_ylabel(L"\Delta\Omega")
+    axlist[2].plot(r_frac, ddrΔΩ.(r_chebyshev).* Rsun, ".-", label = "ncoeff = $(ncoefficients(ddrΔΩ))")
+    axlist[2].set_ylabel(L"R_\odot \frac{d\Delta\Omega}{dr}")
+    axlist[3].plot(r_frac, d2dr2ΔΩ.(r_chebyshev).* Rsun^2, ".-", label = "ncoeff = $(ncoefficients(d2dr2ΔΩ))")
+    axlist[3].set_ylabel(L"R_\odot^2 \frac{d^2\Delta\Omega}{dr^2}")
 
-    axlist[1].plot(r_ΔΩ_raw[r_inds], ΔΩ_raw[r_inds, θind_equator_raw] / Ω0)
-    axlist[1].plot(r_frac, ΔΩ_r / Ω0, "o-")
+    for ax in axlist
+        ax.legend(loc="best")
+    end
 
-    axlist[2].plot(r_frac, drΔΩ_real, "o-")
-
-    axlist[3].plot(r_frac, d2rΔΩ_real, "o-")
+    f.set_size_inches(4, 4)
     f.tight_layout()
 end
 
@@ -802,4 +796,75 @@ function compare_terms(@nospecialize(terms); x = nothing, y = nothing,
     end
     f.set_size_inches(4ncols, 3nrows)
     f.tight_layout()
+end
+
+function plot_constraint_basis(; operators, constraints = RossbyWaveSpectrum.constraintmatrix(operators), kw...)
+    (; nullspacematrices) = constraints
+    f, axlist = subplots(1,3, sharex = true)
+    n_cutoff = 4
+
+    nr = size(nullspacematrices[1], 1)
+    r = FastTransforms.chebyshevpoints(nr)
+
+    ls = ["solid", "dashed", "dotted"]
+    color = ["black", "0.6"]
+    linestyle = Iterators.product(ls, color)
+
+    title_field = [L"V_\ell", L"W_\ell", L"S^\prime_\ell"]
+
+    for (ind, (ax, M, fld)) in enumerate(zip(axlist, nullspacematrices, title_field))
+        for (colind, (col, st)) in enumerate(zip(Iterators.take(eachcol(M), n_cutoff), linestyle))
+            ls, c = st
+            v = FastTransforms.ichebyshevtransform(col)
+            ax.plot(r, v; label = "q=$(colind-1)", ls, c)
+            ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
+            # if ind == length(axlist)
+            # end
+        end
+        ax.set_xlabel(L"\bar{r}", fontsize=11)
+        ax.set_title("Basis for "*fld, fontsize=11)
+    end
+    axlist[end].legend(bbox_to_anchor = (1,1), title = "Chebyshev\ndegree")
+    f.set_size_inches(6,2.5)
+    f.tight_layout()
+
+    if get(kw, :save, false)
+        fname = joinpath(plotdir, "bc_basis.eps")
+        @info "saving to $fname"
+        f.savefig(fname)
+    end
+    return nothing
+end
+
+function plot_scale_heights(; operators, kw...)
+    f, axlist = subplots(1,2)
+    @unpack r, r_chebyshev = operators.coordinates
+    @unpack ηρ, ηT = operators.rad_terms
+    r_frac = r/Rsun
+    ax = axlist[1]
+    ax.plot(r_frac, .-ηρ.(r_chebyshev).*Rsun, label = L"\rho", color="black")
+    ax.plot(r_frac, .-ηT.(r_chebyshev).*Rsun, label = L"T", color="black", ls="dashed")
+    ax.set_xlabel(L"r/R_\odot")
+    ax.set_ylabel("Inverse scale height\n(normalized)")
+    ax.legend(loc="best")
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
+    ax.xaxis.set_major_locator(ticker.MaxNLocator(3))
+
+    ax = axlist[2]
+    ax.plot(r_frac, RossbyWaveSpectrum.superadiabaticity.(r), color="black")
+    ax.set_ylabel("Super-adiabaticity")
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
+    ax.xaxis.set_major_locator(ticker.MaxNLocator(3))
+    ax.ticklabel_format(axis="y", style="sci", scilimits = (0,0), useMathText = true)
+    ax.axhline(0, ls="dotted", color="black", lw=0.8)
+    ax.set_xlabel(L"r/R_\odot")
+
+    f.set_size_inches(5,2.5)
+    f.tight_layout()
+    if get(kw, :save, false)
+        fname = joinpath(plotdir, "scale_heights.eps")
+        @info "saving to $fname"
+        f.savefig(fname)
+    end
+    return nothing
 end
