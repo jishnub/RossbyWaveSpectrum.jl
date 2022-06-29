@@ -687,14 +687,14 @@ Base.show(io::IO, ::Type{<:OperatorWrap}) = print(io, "Operators")
 Base.show(io::IO, o::OperatorWrap) = print(io, "Operators")
 Base.getproperty(y::OperatorWrap, name::Symbol) = getproperty(getfield(y, :x), name)
 
-const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0)
+const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
 function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
     scalings = DefaultScalings)
     scalings = merge(DefaultScalings, scalings)
     _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, Tuple(scalings))
 end
 function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν,
-        (Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling))
+        (Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling))
     r_in = r_in_frac * Rsun;
     r_out = r_out_frac * Rsun;
     radial_params = parameters(nr, nℓ; r_in, r_out);
@@ -778,10 +778,10 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     g = Fun(sg ∘ r_cheby, Chebyshev())::TFun
 
-    Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out_frac)
+    Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out_frac) * trackingratescaling
 
     # viscosity
-    ν /= Ω0*Rsun^2
+    ν /= Ω0 * Rsun^2
     κ = ν
 
     γ = 1.64
@@ -838,7 +838,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     IU2 = matCU2(I);
 
     scalings = Dict{Symbol, Float64}()
-    @pack! scalings = Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling
+    @pack! scalings = Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling
 
     constants = (; κ, ν, Ω0) |> pairs |> Dict
     identities = (; Ir, Iℓ) |> pairs |> Dict
@@ -1272,7 +1272,7 @@ function laplacian_operator(nℓ, m)
 end
 
 function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
-        operators, ΔΩ_frac = 0.02, V_symmetric = true, kw...)
+        operators, ΔΩ_frac = 0.01, V_symmetric = true, kw...)
 
     @unpack nr, nℓ = operators.radial_params;
     @unpack nvariables = operators
@@ -1369,40 +1369,37 @@ end
 function read_angular_velocity(operators; smoothing_param = 1e-4)
     @unpack r = operators.coordinates;
     @unpack r_out = operators.radial_params;
+    @unpack Ω0 = operators.constants
 
     parentdir = dirname(@__DIR__)
     r_ΔΩ_raw = read_angular_velocity_radii(parentdir)
     Ω_raw = read_angular_velocity_raw(parentdir)
-    Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun, r_ΔΩ_raw, Ω_raw)
     ΔΩ_raw = Ω_raw .- Ω0
 
     nθ = size(ΔΩ_raw, 2)
     lats_raw = LinRange(0, pi, nθ)
 
-    splΔΩ2D = Spline2D(r_ΔΩ_raw * Rsun, lats_raw, ΔΩ_raw; s = sum(abs2, ΔΩ_raw)*smoothing_param)
-
-    (; splΔΩ2D, Ω0)
+    Spline2D(r_ΔΩ_raw * Rsun, lats_raw, ΔΩ_raw; s = sum(abs2, ΔΩ_raw)*smoothing_param)
 end
 
 function equatorial_radial_rotation_profile(; operators, smoothing_param = 4e-5)
     @unpack r = operators.coordinates
-    splΔΩ2D, Ω0 = read_angular_velocity(operators; smoothing_param)
+    @unpack Ω0 = operators.constants
+    splΔΩ2D = read_angular_velocity(operators; smoothing_param)
     ΔΩ_r = splΔΩ2D.(r, pi/2)
     ddrΔΩ_r = derivative(splΔΩ2D, r, pi/2, nux = 1, nuy = 0)
     d2dr2ΔΩ_r = derivative(splΔΩ2D, r, pi/2, nux = 2, nuy = 0)
     ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
 end
 
-function radial_differential_rotation_profile(; operators, rotation_profile = :solar_equator,
-        smoothing_param = 4e-5, ΔΩ_frac = 0.02)
+function radial_differential_rotation_profile(; operators, rotation_profile = :solar_equator, ΔΩ_frac = 0.01, kw...)
 
     @unpack r = operators.coordinates
     @unpack r_out, nr, r_in = operators.radial_params
-
-    Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
+    @unpack Ω0 = operators.constants
 
     if rotation_profile == :solar_equator
-        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = equatorial_radial_rotation_profile(; operators, smoothing_param)
+        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = equatorial_radial_rotation_profile(; operators, kw...)
     elseif rotation_profile == :linear # for testing
         f = ΔΩ_frac / (r_in / Rsun - 1)
         ΔΩ_r = @. Ω0 * f * (r / Rsun - 1)
@@ -1425,11 +1422,11 @@ function radial_differential_rotation_profile(; operators, rotation_profile = :s
     ΔΩ_r ./= Ω0
     ddrΔΩ_r ./= Ω0
     d2dr2ΔΩ_r ./= Ω0
-    return ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r, Ω0
+    return ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
 end
 
 function rotationprofile_radialderiv(r, ΔΩ_terms, Δr)
-    ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r, Ω0 = ΔΩ_terms
+    ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = ΔΩ_terms
     nr = length(ΔΩ_r)
 
     ΔΩ = chop(chebyshevgrid_to_Fun(ΔΩ_r), 1e-2);
@@ -1444,17 +1441,15 @@ function rotationprofile_radialderiv(r, ΔΩ_terms, Δr)
     return ΔΩ, ddrΔΩ, d2dr2ΔΩ
 end
 
-function radial_differential_rotation_profile_derivatives(; operators,
-        rotation_profile = :solar_equator, smoothing_param = 4e-5)
+function radial_differential_rotation_profile_derivatives(; operators, kw...)
 
     @unpack r = operators.coordinates;
     @unpack nℓ, Δr = operators.radial_params;
 
-    f = radial_differential_rotation_profile(; operators, rotation_profile, smoothing_param);
-    Ω0 = last(f)
+    f = radial_differential_rotation_profile(; operators, kw...);
 
     ΔΩ, ddrΔΩ, d2dr2ΔΩ = replaceemptywitheps.(rotationprofile_radialderiv(r, f, Δr));
-    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ, Ω0)
+    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ)
 end
 
 function radial_differential_rotation_terms_inner!((VWterm, WVterm), (ℓ, ℓ′),
@@ -1480,7 +1475,8 @@ end
 
 function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, rotation_profile = :solar_equator,
-        ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(; operators, rotation_profile),
+        ΔΩ_frac = 0.01, # only used to test the constant case
+        ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(; operators, rotation_profile, ΔΩ_frac),
         V_symmetric = true, kw...)
 
     @unpack nr, nℓ = operators.radial_params
@@ -1501,7 +1497,8 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         SS = matrix_block(M.re, 3, 3)
     end
 
-    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ, Ω0) = ΔΩprofile_deriv;
+    @unpack Ω0 = operators.constants
+    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv;
 
     ΔΩMCU2 = matCU2(ΔΩ);
     ddrΔΩMCU2 = matCU2(ddrΔΩ);
@@ -1625,23 +1622,22 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
-function solar_differential_rotation_profile(operators, thetaGL, model = :solar)
+function solar_differential_rotation_profile(operators, thetaGL, rotation_profile = :solar; ΔΩ_frac = 0.01)
     nθ = length(thetaGL)
-    if model == :solar
+    if rotation_profile == :solar
         return read_angular_velocity(operators, thetaGL)
-    elseif model == :radial
+    elseif rotation_profile == :radial
         ΔΩ_rθ, Ω0 = read_angular_velocity(operators, thetaGL)
         θind_equator = findmin(abs.(thetaGL .- pi / 2))[2]
         ΔΩ_r = ΔΩ_rθ[:, θind_equator]
         return repeat(ΔΩ_r, 1, nθ), Ω0
-    elseif model == :constant # for testing
-        ΔΩ_frac = 0.02
+    elseif rotation_profile == :constant # for testing
         @unpack radial_params = operators
         @unpack r_out, nr = radial_params
         Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
         return fill(ΔΩ_frac * Ω0, nr, nθ), Ω0
     else
-        error("$model is not a valid rotation model")
+        error(rotation_profile, "is not a valid rotation model")
     end
 end
 
@@ -2314,8 +2310,8 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     kw...)
 
     @unpack nparams = operators.radial_params;
-    kw = merge(DefaultFilterParams, kw);
-    additional_params = (operators, constraints, filtercache, kw);
+    kw2 = merge(DefaultFilterParams, kw);
+    additional_params = (operators, constraints, filtercache, kw2);
 
     inds_bool = filterfn.(λ, eachcol(v), m, (map(computesparse, M),), (additional_params,), filterflags)
     filtinds = axes(λ, 1)[inds_bool]
@@ -2447,14 +2443,18 @@ function filter_eigenvalues(filename::String; kw...)
     filter_eigenvalues(λs, vs, mr; operators, constraints, kw...)
 end
 
-rossbyeigenfilename(nr, nℓ, tag = "ur", posttag = "") = "$(tag)_nr$(nr)_nl$(nℓ)$(posttag).jld2"
+filenamerottag(isdiffrot, diffrot_profile) = isdiffrot ? "dr_$diffrot_profile" : "ur"
+filenamesymtag(Vsym) = Vsym ? "sym" : "asym"
+rossbyeigenfilename(nr, nℓ, rottag, symtag) = datadir("$(rottag)_nr$(nr)_nl$(nℓ)$(symtag).jld2")
+
 function rossbyeigenfilename(; operators, kw...)
     isdiffrot = get(kw, :diffrot, false)
     diffrotprof = get(kw, :diffrotprof, "")
-    filenametag = isdiffrot ? "dr_$diffrotprof" : "ur"
-    posttag = get(kw, :V_symmetric, true) ? "sym" : "asym"
+    Vsym = kw[:V_symmetric]
+    rottag = filenamerottag(isdiffrot, diffrotprof)
+    symtag = filenamesymtag(Vsym)
     @unpack nr, nℓ = operators.radial_params;
-    fname = datadir(rossbyeigenfilename(nr, nℓ, filenametag, posttag))
+    return rossbyeigenfilename(nr, nℓ, rottag, symtag)
 end
 function save_eigenvalues(f, mr; operators, kw...)
     lam, vec = filter_eigenvalues(f, mr; operators, kw...)
@@ -2463,12 +2463,12 @@ function save_eigenvalues(f, mr; operators, kw...)
     jldsave(fname; lam, vec, mr, kw, operators)
 end
 
-struct FilteredEigen{KW, S<:AbstractMatrix{<:Complex}, OP}
+struct FilteredEigen
     lams :: Vector{Vector{ComplexF64}}
-    vs :: Vector{S}
+    vs :: Vector{StructArray{ComplexF64, 2, NamedTuple{(:re, :im), Tuple{Matrix{Float64}, Matrix{Float64}}}, Int64}}
     mr :: UnitRange{Int}
-    kw :: KW
-    operators :: OP
+    kw :: Dict{Symbol, Any}
+    operators
 end
 
 function FilteredEigen(fname::String)
@@ -2479,16 +2479,16 @@ end
 
 function filter_eigenvalues(f::FilteredEigen; kw...)
     @unpack operators = f
-    λfs, vfs =
-        filter_eigenvalues(f.lams, f.vs, f.mr; operators, f.kw..., kw...);
     kw2 = merge(f.kw, kw)
+    λfs, vfs =
+        filter_eigenvalues(f.lams, f.vs, f.mr; operators, kw2...);
     FilteredEigen(λfs, vfs, f.mr, kw2, operators)
 end
 
 function filteredeigen(filename::String; kw...)
     feig = FilteredEigen(filename)
     operators = feig.operators
-    fkw = feig.kw::Dict{Symbol, Any}
+    fkw = feig.kw
     diffrot = fkw[:diffrot]::Bool
     V_symmetric = fkw[:V_symmetric]::Bool
     diffrot_profile = fkw[:diffrotprof]::Symbol
@@ -2633,6 +2633,6 @@ function eigenfunction_n_theta!(VWSinv, F, v, m;
 end
 
 # precompile
-precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64, NTuple{4,Float64}))
+precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64, NTuple{5,Float64}))
 
 end # module

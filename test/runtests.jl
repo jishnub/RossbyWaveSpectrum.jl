@@ -1254,17 +1254,18 @@ end
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     @unpack r_in, r_out, Δr = operators.radial_params
     @unpack BC = constraints;
+    ΔΩ_frac = 0.02
     @testset for m in [1, 5, 10]
         @testset "constant" begin
             λr, vr, Mr = RossbyWaveSpectrum.differential_rotation_spectrum(m; operators, constraints,
-                rotation_profile = :constant, ΔΩ_frac = 0.02);
+                rotation_profile = :constant, ΔΩ_frac);
             λrf, vrf = RossbyWaveSpectrum.filter_eigenvalues(λr, vr, Mr, m;
-                operators, constraints, Δl_cutoff = 7, n_cutoff = 9, ΔΩ_frac_low = -0.01,
-                ΔΩ_frac_high = 0.03, eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
+                operators, constraints, Δl_cutoff = 7, n_cutoff = 9,
+                eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
             @info "constant diff rot: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
             @testset "ℓ == m" begin
-                ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_frac = 0.02)
+                ω0 = RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_frac)
                 @test findmin(abs.(real(λrf) .- ω0))[1] < 1e-4
             end
             vfn = zeros(eltype(vrf), size(vrf, 1))
@@ -1316,14 +1317,13 @@ end
         end
         @testset "radial constant" begin
             λr, vr, Mr = RossbyWaveSpectrum.differential_rotation_spectrum(m; operators, constraints,
-                rotation_profile = :radial_constant);
+                rotation_profile = :radial_constant, ΔΩ_frac);
             λrf, vrf = RossbyWaveSpectrum.filter_eigenvalues(λr, vr, Mr, m;
-                operators, constraints, Δl_cutoff = 7, n_cutoff = 9, ΔΩ_frac_low = -0.01,
-                ΔΩ_frac_high = 0.03, eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
+                operators, constraints, Δl_cutoff = 7, n_cutoff = 9, eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
             @info "radial_constant diff rot: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
             @testset "ℓ == m" begin
-                ω0 = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_frac = 0.02)
+                ω0 = RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_frac)
                 @test findmin(abs.(real(λrf) .- ω0))[1] < 1e-4
             end
             vfn = zeros(eltype(vrf), size(vrf, 1))
@@ -1382,5 +1382,20 @@ include("run_threadedtests.jl")
     include(joinpath(dirname(dirname(pathof(RossbyWaveSpectrum))), "compute_rossby_spectrum.jl"))
     for V_symmetric in (true, false), diffrot in (true, false)
         ComputeRossbySpectrum.computespectrum(8, 6, 1:1, V_symmetric, diffrot, :radial_solar_equator, save = false)
+    end
+    @testset "filteredeigen" begin
+        nr, nℓ = 8,6
+        V_symmetric = true
+        diffrotprof = :radial_solar_equator
+        @testset for diffrot in (true, false)
+            ComputeRossbySpectrum.computespectrum(nr, nℓ, 1:1, V_symmetric, diffrot, diffrotprof)
+            filename = RossbyWaveSpectrum.rossbyeigenfilename(nr, nℓ,
+                RossbyWaveSpectrum.filenamerottag(diffrot, diffrotprof),
+                RossbyWaveSpectrum.filenamesymtag(V_symmetric))
+            f = filteredeigen(filename)
+            @test f.operators.radial_params[:nr] == nr
+            @test f.operators.radial_params[:nℓ] == nℓ
+            rm(filename)
+        end
     end
 end

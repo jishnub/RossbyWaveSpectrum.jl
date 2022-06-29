@@ -204,24 +204,14 @@ function spectrum(lam::AbstractArray, mr;
     end
 end
 
-function spectrum(feig::FilteredEigen; kw...)
-    @unpack operators = feig
-    spectrum(feig.lams, feig.mr; operators, feig.kw..., kw...)
-end
-
-function spectrum(fsym::FilteredEigen, fasym::FilteredEigen; kw...)
+function uniform_rotation_spectrum(fsym::FilteredEigen, fasym::FilteredEigen; kw...)
     f, axlist = subplots(2, 2, sharex = true)
-    spectrum(fsym.lams, fsym.mr; operators = fsym.operators,
-        fsym.kw..., kw..., f, ax = axlist[1,1], save = false)
-    spectrum(fasym.lams, fasym.mr; operators = fasym.operators,
-        fasym.kw..., kw..., f, ax = axlist[2,1], save = false)
+    spectrum(fsym; kw..., f, ax = axlist[1,1], save = false)
+    spectrum(fasym; kw..., f, ax = axlist[2,1], save = false)
 
-    damping_rossbyridge(fsym.lams, fsym.mr; operators = fsym.operators,
-            f, ax = axlist[1,2], fsym.kw..., kw..., save = false)
-    plot_high_frequency_ridge(fasym.lams, fasym.mr; operators = fasym.operators,
-            f, ax = axlist[2,1], fasym.kw..., kw..., save = false)
-    damping_highfreqridge(fasym.lams, fasym.mr; operators = fasym.operators,
-            f, ax = axlist[2,2], fasym.kw..., kw..., save = false)
+    damping_rossbyridge(fsym; f, ax = axlist[1,2], kw..., save = false)
+    plot_high_frequency_ridge(fasym; f, ax = axlist[2,1], kw..., save = false)
+    damping_highfreqridge(fasym; f, ax = axlist[2,2], kw..., save = false)
 
     f.set_size_inches(9,6)
     f.tight_layout()
@@ -316,13 +306,6 @@ function damping_highfreqridge(lam, mr; operators, f = figure(), ax = subplot(),
     return nothing
 end
 
-for f in [:damping_highfreqridge, :damping_rossbyridge]
-    @eval function $f(fasym::FilteredEigen; kw...)
-        @unpack operators = fasym
-        $f(fasym.lams, fasym.mr; operators, fasym.kw..., kw...)
-    end
-end
-
 function plot_high_frequency_ridge(lam, mr; operators, f = figure(), ax = subplot(), kw...)
     @unpack Ω0 = operators.constants
 
@@ -343,6 +326,12 @@ function plot_high_frequency_ridge(lam, mr; operators, f = figure(), ax = subplo
     return nothing
 end
 
+for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge, :plot_high_frequency_ridge]
+    @eval function $f(feig::FilteredEigen; kw...)
+        $f(feig.lams, feig.mr; operators = feig.operators, feig.kw..., kw...)
+    end
+end
+
 function piformatter(x, _)
     n = round(Int, 4x / pi)
     prestr = (n == 4 || n == 1) ? "" : iseven(n) ?
@@ -354,52 +343,36 @@ end
 function differential_rotation_spectrum(fconstsym::FilteredEigen,
     fconstasym::FilteredEigen, fradsym::FilteredEigen, fradasym::FilteredEigen; kw...)
 
-    differential_rotation_spectrum((fconstsym.lams, fconstasym.lams),
-        (fradsym.lams, fradasym.lams), fconstsym.mr;
-            operators = fconstsym.operators,
-            kwcsym  = fconstsym.kw,
-            kwcasym = fconstasym.kw,
-            kwrsym  = fradsym.kw,
-            kwrasym = fradasym.kw,
-            kw...)
-end
-
-function differential_rotation_spectrum(lam_constant::NTuple{2,Vector},
-        lam_radial::NTuple{2,Vector}, mr::AbstractVector; operators,
-            kwcsym, kwcasym, kwrsym = kwcsym, kwrasym = kwcasym, kw...)
-
     f, axlist = subplots(2, 3, sharex = "col")
-    @unpack r, r_chebyshev = operators.coordinates;
-    @unpack Ω0 = operators.constants;
+    @unpack r, r_chebyshev = fconstsym.operators.coordinates;
     r_frac = r ./ Rsun
+    Ω0_const = fconstsym.operators.constants[:Ω0];
+    Ω0_radial = fradsym.operators.constants[:Ω0];
 
-    lam_constant_sym, lam_constant_asym = lam_constant
-    lam_radial_sym, lam_radial_asym = lam_radial
-
-    νnHzunit = freqnHzunit(Ω0)
+    lam_constant_sym, lam_constant_asym = fconstsym.lams, fconstasym.lams
+    lam_radial_sym, lam_radial_asym = fradsym.lams, fradasym.lams
 
     ΔΩ_constant = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
-            operators, rotation_profile = :constant).ΔΩ
+            operators = fconstsym.operators, rotation_profile = :constant).ΔΩ
 
-    axlist[1,1].plot(r_frac, ΔΩ_constant.(r_chebyshev).*νnHzunit, color="0.2")
-    axlist[1,1].axhline(Ω0/2pi, color="black", ls="dotted", label="tracking rate")
+    axlist[1,1].plot(r_frac, ΔΩ_constant.(r_chebyshev) .* freqnHzunit(Ω0_const), color="0.2")
+    axlist[1,1].axhline(0, color="black", ls="dotted", label="tracking rate")
     axlist[1,1].set_title("Constant ΔΩ", fontsize=12)
     axlist[1,1].yaxis.set_major_locator(ticker.MaxNLocator(4))
     axlist[1,1].set_ylabel(L"\Delta\Omega/2\pi" * " [nHz]", fontsize=12)
     axlist[1,1].legend(loc="best")
 
-    kwextra = (; uniform_rotation_ridge = true, ΔΩ_frac = 0.02)
-    spectrum(lam_constant_sym, mr; operators, f = f, ax = axlist[1,2], kwcsym..., kwextra...)
-    spectrum(lam_constant_asym, mr; operators, f = f, ax = axlist[1,3], kwcasym..., kwextra...,
-        sectoral_rossby_ridge = false)
+    kwextra = (; uniform_rotation_ridge = true, ΔΩ_frac = ΔΩ_constant(0))
+    spectrum(fconstsym; f = f, ax = axlist[1,2], kwextra...)
+    spectrum(fconstasym; f = f, ax = axlist[1,3], kwextra..., sectoral_rossby_ridge = false)
     axlist[1,2].set_ylim(-200, 700)
     axlist[1,3].set_ylim(-200, 700)
 
     ΔΩ_solar_radial = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
-            operators, rotation_profile = :solar_equator).ΔΩ
+            operators = fradsym.operators, rotation_profile = :solar_equator).ΔΩ
 
-    axlist[2,1].plot(r_frac, ΔΩ_solar_radial.(r_chebyshev).*νnHzunit, color="0.2")
-    axlist[2,1].axhline(Ω0/2pi, color="black", ls="dotted", label="tracking rate")
+    axlist[2,1].plot(r_frac, ΔΩ_solar_radial.(r_chebyshev) .* freqnHzunit(Ω0_radial), color="0.2")
+    axlist[2,1].axhline(0, color="black", ls="dotted", label="tracking rate")
     axlist[2,1].set_title("Solar equatorial ΔΩ", fontsize=12)
     axlist[2,1].yaxis.set_major_locator(ticker.MaxNLocator(4))
     axlist[2,1].set_xlabel(L"r/R_\odot", fontsize=12)
@@ -407,8 +380,8 @@ function differential_rotation_spectrum(lam_constant::NTuple{2,Vector},
     axlist[2,1].legend(loc="best")
 
     kwextra = (; sectoral_rossby_ridge = false, uniform_rotation_ridge = true)
-    spectrum(lam_radial_sym, mr; operators, f = f, ax = axlist[2,2], kwrsym..., kwextra...)
-    spectrum(lam_radial_asym, mr; operators, f = f, ax = axlist[2,3], kwrasym..., kwextra...)
+    spectrum(fradsym; f = f, ax = axlist[2,2], kwextra...)
+    spectrum(fradasym; f = f, ax = axlist[2,3], kwextra...)
     axlist[2,2].set_ylim(-200, 700)
     axlist[2,3].set_ylim(-200, 700)
 

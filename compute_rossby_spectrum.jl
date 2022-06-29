@@ -18,10 +18,13 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
     print_timer = false
     scale_eigenvectors = false
 
+    trackingratescaling = 1.01
+    scalings = (; trackingratescaling)
+
     @info "operators"
     r_in_frac = 0.6
     r_out_frac = 0.985
-    @time operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 2e12);
+    @time operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 2e12, scalings);
 
     spectrumfn! = if diffrot
         d = RossbyWaveSpectrum.RotMatrix(V_symmetric, diffrotprof, nothing, RossbyWaveSpectrum.differential_rotation_spectrum!)
@@ -57,7 +60,7 @@ function main()
     nℓ = 30;
     mrange = 1:15;
     diffrot = true;
-    diffrotprof = :radial_solar_equator
+    diffrotprof = :constant
 
     taskno = parse(Int, ENV["SLURM_PROCID"])
     V_symmetric = (true, false)[taskno + 1]
