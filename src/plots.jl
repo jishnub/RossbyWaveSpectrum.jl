@@ -38,7 +38,7 @@ end
 function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
         ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
-            label = ΔΩ_frac == 0 ? "Sectoral" : "Doppler\nshifted",
+            label = ΔΩ_frac == 0 ? "2/(m+1)" : "Doppler\nshifted",
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
             zorder = 0,
@@ -59,7 +59,7 @@ function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridges
 
     if get(kw, :uniform_rotation_ridge, false)
         ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr) .* νnHzunit,
-            label = "Uniformly\nrotating",
+            label = "2/(m+1)",
             lw = 0.5,
             color = "black",
             ls = "dashed",
@@ -825,7 +825,7 @@ function plot_scale_heights(; operators, kw...)
 
     ax = axlist[2]
     ax.plot(r_frac, RossbyWaveSpectrum.superadiabaticity.(r), color="black")
-    ax.set_ylabel("Super-adiabaticity")
+    ax.set_ylabel("Super-adiabatic\ntemperature gradient")
     ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
     ax.xaxis.set_major_locator(ticker.MaxNLocator(3))
     ax.ticklabel_format(axis="y", style="sci", scilimits = (0,0), useMathText = true)
