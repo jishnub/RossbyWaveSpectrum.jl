@@ -5,6 +5,7 @@ version = "0.1.0"
 
 [deps]
 ApproxFun = "28f2ccd6-bb30-5033-b560-165f7b14dc2f"
+ApproxFunBase = "fbd15aa5-315a-5a7d-a8a4-24992e37be05"
 BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
 BitFlags = "d1d4a3ce-64b1-5f1a-9ba4-7e7e69966f35"
 BlockArrays = "8e7c35d0-a365-5155-bbbb-fb81a777f24e"
@@ -36,6 +37,7 @@ ZChop = "8603256b-76ad-53fe-b511-38a38e6437cd"
 
 [compat]
 ApproxFun = "0.13"
+ApproxFunBase = "0.5"
 BandedMatrices = "0.16, 0.17"
 BitFlags = "0.1"
 BlockArrays = "0.16"
