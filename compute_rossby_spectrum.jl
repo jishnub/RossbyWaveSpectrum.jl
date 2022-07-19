@@ -56,10 +56,10 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
 end
 
 function main()
-    nr = 60
-    nℓ = 30;
+    nr = 50
+    nℓ = 20;
     mrange = 1:15;
-    diffrot = true;
+    diffrot = false;
     diffrotprof = :constant
 
     taskno = parse(Int, ENV["SLURM_PROCID"])

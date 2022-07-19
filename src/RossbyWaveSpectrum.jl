@@ -1152,12 +1152,6 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     T4 = zeros(nr, nr);
     WWop = zeros(nr, nr);
 
-    Mcache1 = zeros(nr, nr)
-    Mcache2 = zeros(nr, nr)
-    Mcache3 = zeros(nr, nr)
-
-    ℓs = range(m, length = nℓ);
-
     # T1_1 terms
     d3dr3ηρMCU4 = matCU4(d3dr3_ηρ);
     ηρ_d3dr3MCU4 = matCU4(ηρ * d3dr3);
@@ -1536,8 +1530,6 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         map(matCU4, (ddrΔΩ_plus_ΔΩddr, 2ΔΩ_by_r, ddrΔΩ * DDr, ΔΩ * ddrDDr,
             ΔΩ_by_r2, ddrΔΩ * (ddr + 2onebyr), ΔΩ * ηρ_by_r))
 
-    ηρbyr_ΔΩMCU4 = matCU4(ηρ_by_r * ΔΩ)
-
     ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4 = zeros(nr, nr);
     T = zeros(nr, nr);
 
@@ -1562,7 +1554,6 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
             cosθ_ℓℓ′ = cosθo[ℓ, ℓ′]
             sinθdθ_ℓℓ′ = sinθdθo[ℓ, ℓ′]
-            ∇²_sinθdθ_ℓℓ′ = ∇²_sinθdθo[ℓ, ℓ′]
 
             @. T = -Rsun * two_over_ℓℓp1 *
                     (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byrMCU2 - ddrΔΩMCU2) +
@@ -1626,9 +1617,9 @@ end
 function solar_differential_rotation_profile(operators, thetaGL, rotation_profile = :solar; ΔΩ_frac = 0.01)
     nθ = length(thetaGL)
     if rotation_profile == :solar
-        return read_angular_velocity(operators, thetaGL)
+        return read_angular_velocity(operators)
     elseif rotation_profile == :radial
-        ΔΩ_rθ, Ω0 = read_angular_velocity(operators, thetaGL)
+        ΔΩ_rθ, Ω0 = read_angular_velocity(operators)
         θind_equator = findmin(abs.(thetaGL .- pi / 2))[2]
         ΔΩ_r = ΔΩ_rθ[:, θind_equator]
         return repeat(ΔΩ_r, 1, nθ), Ω0
