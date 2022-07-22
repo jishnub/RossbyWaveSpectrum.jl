@@ -4,6 +4,7 @@ using MKL
 
 using ApproxFun
 using ApproxFun: DomainSets
+using ApproxFunBase
 using BandedMatrices
 using BlockArrays
 using BlockBandedMatrices
