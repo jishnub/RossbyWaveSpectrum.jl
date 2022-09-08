@@ -25,14 +25,17 @@ using Folds
     λs, vs = RossbyWaveSpectrum.filter_eigenvalues(RossbyWaveSpectrum.uniform_rotation_spectrum!,
             mr; operators, constraints);
 
-    @testset for ind in eachindex(mr)
-        m = mr[ind]
-        λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints);
-        λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m; operators, constraints);
+    @testset "all m" begin
+        @testset for ind in eachindex(mr)
+            m = mr[ind]
+            λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints);
+            λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m; operators, constraints);
 
-        @test length(λuf) > 0
+            @test length(λuf) > 0
 
-        @test λuf ≈ λs[ind]
-        @test vuf ≈ vs[ind] rtol=2e-3
+            @testset "λ" begin @test λuf ≈ λs[ind] end
+            # TODO: why does this not converge exactly on some platforms?
+            @testset "v" begin @test vuf ≈ vs[ind] rtol=2e-3 end
+        end
     end
 end

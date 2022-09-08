@@ -3,27 +3,20 @@ module RossbyWaveSpectrum
 using MKL
 
 using ApproxFun
-using ApproxFun: DomainSets
-using ApproxFunBase
 using BandedMatrices
 using BlockArrays
 using BlockBandedMatrices
 using Dierckx
 using FastGaussQuadrature
-using FastTransforms
 using FillArrays
 using Folds
-using ForwardDiff
-using Infinities
 using JLD2
-using Kronecker
-const kron2 = Kronecker.KroneckerProduct
 using LinearAlgebra
 using LinearAlgebra: BLAS
 using LegendrePolynomials
 using OffsetArrays
 using OffsetArrays: Origin
-using SimpleDelimitedFiles: readdlm
+using DelimitedFiles: readdlm
 using SparseArrays
 using StructArrays
 using TimerOutputs
@@ -33,19 +26,22 @@ using ZChop
 export datadir
 export Filters
 export filteredeigen
+export FilteredEigen
+export Rsun
+
+include("uniqueinterval.jl")
 
 const SCRATCH = Ref("")
 const DATADIR = Ref("")
+const SOLARMODELDIR = Ref("")
 
 # cgs units
 const G = 6.6743e-8
 const Msun = 1.989e+33
 const Rsun = 6.959894677e+10
 
-const Tmul = TimesOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}}}
-const Tplus = PlusOperator{Float64,Tuple{InfiniteCardinal{0},InfiniteCardinal{0}}}
-const TFun = Fun{Chebyshev{ChebyshevInterval{Float64},Float64},Float64,Vector{Float64}}
-const TFunDeriv = ApproxFunBase.Fun{ApproxFunOrthogonalPolynomials.Ultraspherical{Int64, DomainSets.ChebyshevInterval{Float64}, Float64}, Float64, Vector{Float64}}
+const Tmul = typeof(Multiplication(Fun()) * Derivative())
+const Tplus = typeof(Multiplication(Fun()) + Derivative())
 
 const StructMatrix{T} = StructArray{T,2}
 const BlockMatrixType = BlockMatrix{Float64, Matrix{BlockBandedMatrix{Float64}},
@@ -54,62 +50,14 @@ const BlockMatrixType = BlockMatrix{Float64, Matrix{BlockBandedMatrix{Float64}},
 function __init__()
     SCRATCH[] = get(ENV, "SCRATCH", homedir())
     DATADIR[] = get(ENV, "DATADIR", joinpath(SCRATCH[], "RossbyWaves"))
+    SOLARMODELDIR[] = joinpath(@__DIR__, "solarmodel")
     if !ispath(RossbyWaveSpectrum.DATADIR[])
         mkdir(RossbyWaveSpectrum.DATADIR[])
     end
 end
 
 # Assume v is evaluated on an grid that is in increasing order (default in this project)
-chebyshevgrid_to_Fun(v) = Fun(Chebyshev(), ApproxFun.transform(Chebyshev(), reverse(v)))
-
-struct VWArrays{TV,TW}
-    V::TV
-    W::TW
-end
-Base.:(+)(x::VWArrays, y::VWArrays) = VWArrays(x.V + y.V, x.W + y.W)
-function (+ₜ)(x::VWArrays, y::VWArrays)
-    y.V .= x.V .+ y.V
-    y.W .= x.W .+ y.W
-    return y
-end
-function (+ₛ)(x::VWArrays, y::VWArrays...)
-    broadcast!(+, x.V, x.V, map(x -> x.V, y)...)
-    broadcast!(+, x.W, x.W, map(x -> x.W, y)...)
-    return x
-end
-Base.:(-)(x::VWArrays) = VWArrays(-x.V, -x.W)
-Base.:(-)(x::VWArrays, y::VWArrays) = VWArrays(x.V - y.V, x.W - y.W)
-function (-ₛ)(x::VWArrays, y::VWArrays)
-    x.V .-= y.V
-    x.W .-= y.W
-    return x
-end
-function (-ₜ)(x::VWArrays, y::VWArrays)
-    y.V .= x.V .- y.V
-    y.W .= x.W .- y.W
-    return y
-end
-
-Base.:(*)(A::Union{Number,AbstractMatrix}, B::VWArrays) = VWArrays(A * B.V, A * B.W)
-Base.:(*)(A::VWArrays, B::Union{Number,AbstractMatrix}) = VWArrays(A.V * B, A.W * B)
-function LinearAlgebra.mul!(out::VWArrays, A::AbstractMatrix, B::VWArrays)
-    mul!(out.V, A, B.V)
-    mul!(out.W, A, B.W)
-    out
-end
-
-struct RealSpace
-    r_chebyshev::Vector{Float64}
-    theta::Vector{Float64}
-    Pℓ::Matrix{Float64}
-    Tc::Matrix{Float64}
-end
-
-function (rop::RealSpace)(A)
-    Diagonal(vec(
-        inv_chebyshev_normalizedlegendre_transform(
-            A, rop.r_chebyshev, rop.theta; rop.Pℓ, rop.Tc)))
-end
+grid_to_Fun(v, radialspace) = Fun(radialspace, transform!(radialspace, Vector{Float64}(v)))
 
 datadir(f) = joinpath(DATADIR[], f)
 
@@ -121,143 +69,14 @@ datadir(f) = joinpath(DATADIR[], f)
 γ⁺ℓm(ℓ, m) = ℓ * α⁺ℓm(ℓ, m)
 γ⁻ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ, m) - β⁻ℓm(ℓ, m)
 
-function chebyshevnodes(n, a = -1.0, b = 1.0)
-    nodes = cos.(reverse(pi * ((1:n) .- 0.5) ./ n))
-    nodes_scaled = nodes * (b - a) / 2 .+ (b + a) / 2
-    nodes, nodes_scaled
+function operatormatrix(f::Fun, nr, spaceconversion::Pair)
+    operatormatrix(Multiplication(f), nr, spaceconversion)
 end
 
-function chebyshev_forward_inverse(n::Int, r_in::Float64 = -1.0, r_out::Float64 = 1.0)
-    r_chebyshev, r = chebyshevnodes(n, r_in, r_out)
-    Tcinv = zeros(n, n)
-    for (Tc, node) in zip(eachrow(Tcinv), r_chebyshev)
-        chebyshevpoly!(Tc, node)
-    end
-    Tcfwd = Tcinv' * 2 / n # each row is one node
-    Tcfwd[1, :] ./= 2
-    r, Tcfwd, Tcinv
-end
-precompile(chebyshev_forward_inverse, (Int, Float64, Float64))
-
-chebyshevtransform(A::AbstractVector) = chebyshevtransform!(similar(A), A)
-function chebyshevtransform!(B::AbstractVector, A::AbstractVector, PC = plan_chebyshevtransform!(B))
-    B .= @view A[end:-1:begin]
-    PC * B
-    return B
-end
-
-chebyshevtransform1(A::AbstractMatrix) = chebyshevtransform1!(similar(A), A)
-function chebyshevtransform1!(B::AbstractMatrix, A::AbstractMatrix)
-    v_temp = similar(A, size(A, 1))
-    PC = plan_chebyshevtransform!(v_temp)
-    for j in axes(A, 2)
-        v = @view A[:, j]
-        chebyshevtransform!(v_temp, v, PC)
-        B[:, j] .= v_temp
-    end
-    return B
-end
-
-chebyshevpoly(x, n) = chebyshevpoly!(zeros(n), x, n)
-function chebyshevpoly!(Tc, x, n = length(Tc))
-    @assert length(Tc) >= n
-    Tc[1] = 1
-    if n == 1
-        return Tc
-    end
-    Tc[2] = x
-    for k = 3:n
-        Tc[k] = 2x * Tc[k-1] - Tc[k-2]
-    end
-    Tc
-end
-
-function operatormatrix(f::Fun, nr, rangespace)::Matrix{Float64}
-    operatormatrix(ApproxFun.Multiplication(f), nr, rangespace)
-end
-
-function operatormatrix(A, nr, rangespace)::Matrix{Float64}
-    B = A:ApproxFun.Chebyshev()
-    C = ApproxFunBase.promoterangespace(B, rangespace)
+function operatormatrix(A, nr, spaceconversion::Pair)::Matrix{Float64}
+    domain_space, range_space = first(spaceconversion), last(spaceconversion)
+    C = A:domain_space → range_space
     C[1:nr, 1:nr]
-end
-
-# Legendre
-
-function legendretransform!(v::AbstractVector, PC = plan_chebyshevtransform!(v), PC2L = plan_cheb2leg(v))
-    v2 = PC * v
-    v2 .= PC2L * v2
-    return v2
-end
-
-function legendretransform2(A::AbstractMatrix)
-    At = permutedims(A)
-    for j in axes(At, 2)
-        v = @view At[:, j]
-        legendretransform!(v)
-    end
-    return permutedims(At)
-end
-
-function normalizelegendre!(v)
-    vo = Origin(0)(v)
-    for l in eachindex(vo)
-        vo[l] *= √(2 / (2l + 1))
-    end
-    return v
-end
-
-function normalizedlegendretransform!(v::AbstractVector, PC = plan_chebyshevtransform!(v), PC2L = plan_cheb2leg(v))
-    v2 = legendretransform!(v, PC, PC2L)
-    normalizelegendre!(v2)
-    return v2
-end
-
-normalizedlegendretransform2(A::AbstractMatrix) = normalizedlegendretransform2!(similar(A), A)
-function normalizedlegendretransform2!(B::AbstractMatrix, A::AbstractMatrix)
-    v_temp = similar(A, size(A, 2))
-    PC = plan_chebyshevtransform!(v_temp)
-    PC2L = plan_cheb2leg(v_temp)
-    for j in axes(A, 1)
-        v = @view A[j, :]
-        v_temp .= v
-        normalizedlegendretransform!(v_temp, PC, PC2L)
-        B[j, :] .= v_temp
-    end
-    return B
-end
-
-
-function chebyshev_normalizedlegendre_transform(A::AbstractMatrix)
-    B = chebyshevtransform1(A)
-    normalizedlegendretransform2!(B, B)
-    return B
-end
-
-function inv_chebyshev_normalizedlegendre_transform(Fnℓ, r_chebyshev, θ;
-    Pℓ = zeros(size(Fnℓ, 2), length(θ)),
-    Tc = zeros(size(Fnℓ, 1), length(r_chebyshev)))
-
-    nr = length(r_chebyshev)
-    nθ = length(θ)
-    ℓmax = size(Fnℓ, 2) - 1
-
-    for (θind, θi) in enumerate(θ)
-        costhetai = cos(θi)
-        Pℓ_i = @view Pℓ[:, θind]
-        collectPl!(Pℓ_i, costhetai)
-        # normalize
-        for n in 0:ℓmax
-            Pℓ_i[n+1] /= sqrt(2 / (2n + 1))
-        end
-    end
-
-    for (Tc_col, ri) in zip(eachcol(Tc), r_chebyshev)
-        chebyshevpoly!(Tc_col, ri)
-    end
-
-    T = kron(Pℓ, Tc)
-    reshape(sum(vec(Fnℓ) .* T, dims = 1), nr, nθ)
 end
 
 function gausslegendre_theta_grid(ntheta)
@@ -274,110 +93,43 @@ function ntheta_ℓmax(nℓ, m)
     ℓmax + 1
 end
 
-"""
-    associatedlegendretransform_matrices(nθ)
+function V_boundary_op(operators)
+    @unpack r = operators.rad_terms;
+    @unpack ddr = operators.diff_operators;
 
-Return matrices `(PLMfwd, PLMinv)`, where `PLMfwd` multiplies a function `f(θ)` to return `flm`,
-the coefficients of an associated Legendre polynomial expansion of `f(θ)`, and `PLMinv` performs
-the inverse transform and multiplies `flm` to return `f(θ)`.
-
-The matrices satisfy `Mfwd * Minv ≈ I` and `(PLMinv * PLMfwd) * PLMinv ≈ PLMinv`. Note that
-`(PLMinv * PLMfwd)` is not identity.
-"""
-function associatedlegendretransform_matrices(nℓ, m, costheta, w)
-    nθ = length(costheta)
-    nℓ_transform = nℓ
-    PLMfwd = zeros(nℓ_transform, nθ)
-    PLMinv = zeros(nθ, nℓ_transform)
-    ℓs = range(m, length = nℓ_transform)
-    Pcache = zeros(ℓs)
-    for (θind, costhetai) in enumerate(costheta)
-        collectPlm!(Pcache, costhetai; m, norm = Val(:normalized))
-        for (ℓind, ℓ) in enumerate(ℓs)
-            Pℓm = Pcache[ℓ]
-            PLMfwd[ℓind, θind] = Pℓm
-            PLMinv[θind, ℓind] = Pℓm
-        end
-    end
-    PLMfwd .*= w'
-    return (; PLMfwd, PLMinv)
-end
-function associatedlegendretransform_matrices(nℓ, m)
-    ntheta = ntheta_ℓmax(nℓ, m)
-    @unpack costheta, w = gausslegendre_theta_grid(ntheta)
-    associatedlegendretransform_matrices(nℓ, m, costheta, w)
-end
-
-for f in [:Vboundary, :Wboundary, :Sboundary]
-    f! = Symbol("$(f)!")
-    @eval $(f)(nconstraints, nchebyr, args...) = ($f!)(zeros(nconstraints, nchebyr), args...)
-end
-
-function Vboundary!(MVn, radial_params)
-    @unpack r_in, r_out, Δr = radial_params;
-    MVno = Origin(1,0)(MVn);
-    # constraints on V, Robin
-    for n in axes(MVno, 2)
-        # inner boundary
-        # impenetrable, stress-free
-        MVno[1, n] = (-1)^n * (n^2 + Δr / r_in)
-        # outer boundary
-        # impenetrable, stress-free
-        MVno[2, n] = n^2 - Δr / r_out
-    end
-    return MVn
-end
-
-function Wboundary!(MWn, args...)
-    # constraints on W, Dirichlet
-    MWno = Origin(1,0)(MWn);
-    for n in axes(MWno, 2)
-        # inner boundary
-        # impenetrable, stress-free
-        # equivalently, zero Dirichlet
-        MWno[1, n] = (-1)^n
-        # outer boundary
-        # impenetrable, stress-free
-        # equivalently, zero Dirichlet
-        MWno[2, n] = 1
-
-        MWno[3, n] = (-1)^n * n^2
-        MWno[4, n] = n^2
-    end
-    return MWn
-end
-
-function Sboundary!(MSn, args...)
-    # constraints on W, Dirichlet
-    MSno = Origin(1,0)(MSn);
-    # constraints on S
-    # zero Neumann
-    for n in axes(MSno, 2)
-        # inner boundary
-        MSno[1, n] = (-1)^n*n^2
-        # outer boundary
-        MSno[2, n] = n^2
-    end
-
-    return MSn
+    (r * ddr - 2) : operators.radialspace;
 end
 
 function constraintmatrix(operators; W_basis = 2, S_basis = 2)
     @unpack radial_params = operators;
     @unpack nr, nℓ = radial_params;
+    @unpack r_in, r_out = radial_params;
+    @unpack nr, nℓ, Δr = operators.radial_params;
     @unpack nvariables = operators;
 
-    nradconstraintsVS = 2;
-    nradconstraintsW = 4;
+    @unpack r = operators.rad_terms;
+    @unpack ddr = operators.diff_operators;
 
-    MVn = Vboundary(nradconstraintsVS, nr, radial_params);
-    ZMVn = BandedMatrix(nullspace(MVn));
+    V_BC_op = V_boundary_op(operators);
+    CV = [Evaluation(r_in) * V_BC_op; Evaluation(r_out) * V_BC_op];
+    nradconstraintsVS = size(CV,1);
+    MVn = Matrix(CV[:, 1:nr]);
+    QV = QuotientSpace(operators.radialspace, CV);
+    PV = Conversion(QV, operators.radialspace);
+    ZMVn = PV[1:nr, 1:nr-nradconstraintsVS];
 
-    MWn = Wboundary(nradconstraintsW, nr);
-    ZMWn = W_basis == 1 ? BandedMatrix(nullspace(MWn)) : normalizecols!(dirichlet_neumann_chebyshev_matrix(nr));
+    CW = [Dirichlet(operators.radialspace); Dirichlet(operators.radialspace, 1) * Δr/2];
+    nradconstraintsW = size(CW,1);
+    MWn = Matrix(CW[:, 1:nr]);
+    QW = QuotientSpace(operators.radialspace, CW);
+    PW = Conversion(QW, operators.radialspace);
+    ZMWn = PW[1:nr, 1:nr-nradconstraintsW];
 
-    MSn = Sboundary(nradconstraintsVS, nr);
-    ZMSn = S_basis == 1 ? BandedMatrix(nullspace(MSn)) : normalizecols!(neumann_chebyshev_matrix(nr));
+    CS = Dirichlet(operators.radialspace, 1) * Δr/2;
+    MSn = Matrix(CS[:, 1:nr]);
+    QS = QuotientSpace(operators.radialspace, CS);
+    PS = Conversion(QS, operators.radialspace);
+    ZMSn = PS[1:nr, 1:nr-nradconstraintsVS];
 
     rowsB_VS = Fill(nradconstraintsVS, nℓ);
     rowsB_W = Fill(nradconstraintsW, nℓ);
@@ -400,14 +152,14 @@ function constraintmatrix(operators; W_basis = 2, S_basis = 2)
     end;
     ZC_block = mortar(Diagonal(Z_blocks))
 
-    fieldmatrices = nvariables == 3 ? [MVn, MWn, MSn] : [MVn, MWn]
-
-    for (Mind, M) in enumerate(fieldmatrices)
+    BCmatrices = nvariables == 3 ? [MVn, MWn, MSn] : [MVn, MWn]
+    for (Mind, M) in enumerate(BCmatrices)
         BCi = B_blocks[Mind]
         for ℓind = 1:nℓ
             BCi[Block(ℓind, ℓind)] = M
         end
     end
+
     nullspacematrices = nvariables == 3 ? [ZMVn, ZMWn, ZMSn] : [ZMVn, ZMWn];
     for (Zind, Z) in enumerate(nullspacematrices)
         ZCi = Z_blocks[Zind]
@@ -419,21 +171,7 @@ function constraintmatrix(operators; W_basis = 2, S_basis = 2)
     BC = computesparse(BC_block)
     ZC = computesparse(ZC_block)
 
-    (; BC, ZC, nullspacematrices)
-end
-
-"""
-    constraintnullspacematrix(M)
-
-Given a constraint matrix `M` of size `m×n` that satisfies `Mv=0` for the sought eigenvectors `v`, return a matrix `C` of size `n×(n-m)`
-whose columns lie in the null space of `M`, and for an arbitrary `y`, the vector `v = C*y` satisfies the constraint `Mv=0`.
-"""
-function constraintnullspacematrix(M)
-    m, n = size(M)
-    @assert n >= m
-    _, R = qr(M);
-    Q, _ = qr(R')
-    return collect(Q)[:, end-(n-m)+1:end]
+    (; BC, ZC, nullspacematrices, BCmatrices)
 end
 
 function parameters(nr, nℓ; r_in = 0.7Rsun, r_out = 0.98Rsun)
@@ -444,7 +182,7 @@ function parameters(nr, nℓ; r_in = 0.7Rsun, r_out = 0.98Rsun)
     return (; nchebyr, r_in, r_out, Δr, nr, nparams, nℓ, r_mid)
 end
 
-function superadiabaticity(r; r_out = Rsun)
+function superadiabaticity(r::Real; r_out = Rsun)
     δcz = 3e-6
     δtop = 3e-5
     dtrans = dtop = 0.05Rsun
@@ -467,146 +205,23 @@ function sph_points(N)
     return π / N * (0.5:(N-0.5)), 2π / M * (0:(M-1))
 end
 
-function spherical_harmonic_transform_plan(ntheta)
-    # spherical harmonic transform parameters
-    lmax = ntheta - 1
-    θϕ_sh = sph_points(lmax)
-    shtemp = zeros(length.(θϕ_sh))
-    PSPH2F = plan_sph2fourier(shtemp)
-    PSPHA = plan_sph_analysis(shtemp)
-    (; shtemp, PSPHA, PSPH2F, θϕ_sh, lmax)
-end
-
 function costheta_operator(nℓ, m)
     dl = [α⁻ℓm(ℓ, m) for ℓ in m .+ (1:nℓ-1)]
     d = zeros(nℓ)
-    Matrix(SymTridiagonal(d, dl)')
+    SymTridiagonal(d, dl)'
 end
 
 function sintheta_dtheta_operator(nℓ, m)
     dl = [γ⁻ℓm(ℓ, m) for ℓ in m .+ (1:nℓ-1)]
     d = zeros(nℓ)
     du = [γ⁺ℓm(ℓ, m) for ℓ in m .+ (0:nℓ-2)]
-    Matrix(Tridiagonal(dl, d, du)')
+    Tridiagonal(dl, d, du)'
 end
 
-# defined for normalized Legendre polynomials
-function invsintheta_dtheta_operator(nℓ)
-    M = zeros(nℓ, nℓ)
-    Mo = Origin(0)(M)
-    for n in 0:nℓ-1, k in n-1:-2:0
-        Mo[n, k] = -√((2n + 1) * (2k + 1))
-    end
-    return Matrix(M')
-end
+read_solar_model() = readdlm(joinpath(SOLARMODELDIR[], "ModelS.detailed"))::Matrix{Float64}
 
-# defined for normalized Legendre polynomials
-function cottheta_dtheta_operator(nℓ)
-    M = zeros(nℓ, nℓ)
-    Mo = Origin(0)(M)
-    for n in 0:nℓ-1
-        Mo[n, n] = -n
-        for k in n-2:-2:0
-            Mo[n, k] = -√((2n + 1) * (2k + 1))
-        end
-    end
-    Matrix(M')
-end
-
-function normalizecols!(M)
-    foreach(normalize!, eachcol(M))
-    return M
-end
-function chebynormalize!(M)
-    for col in eachcol(M)
-        N2 = col[1]^2 * pi
-        for ind in 2:lastindex(col)
-            N2 += col[ind]^2 * pi/2
-        end
-        N = sqrt(N2)
-        col ./= N
-    end
-    return M
-end
-
-# converts from Heinrichs basis to Chebyshev, so Cn = Anm Bm where Cn are the Chebyshev
-# coefficients, and Bm are the Heinrichs ones
-αheinrichs(n) = n < 0 ? 0 : n == 0 ? 2 : 1
-function dirichlet_chebyshev_matrix(n)
-    M = BandedMatrix(Zeros(n, n-2), (2, 2))
-    Mo = Origin(0)(M)
-    for n in axes(Mo,1), m in intersect(n-2:2:n+2, axes(Mo,2))
-        T = 0.0
-        if m == n-2
-            T = -1/4 * αheinrichs(m)
-        elseif m == n
-            T = 1 - 1/4*(αheinrichs(n-1) + αheinrichs(n))
-        elseif m == n + 2
-            T = -1/4
-        end
-        Mo[n, m] = T
-    end
-    return M
-end
-
-function dirichlet_neumann_chebyshev_matrix(n)
-    M = BandedMatrix(Zeros(n, n-4), (4, 4))
-    Mo = Origin(0)(M)
-    pT4coeffs = OffsetArray([1/16, 0, -1/4, 0, 3/8, 0, -1/4, 0, 1/16], -4:4)
-    for n in 0:3
-        for (ind, pc) in pairs(pT4coeffs)
-            Mo[abs(n + ind), n] += pc
-        end
-    end
-    for n in 4:lastindex(Mo,2)
-        Mo[n .+ (-4:4), n] = parent(pT4coeffs)
-    end
-    return M
-end
-
-n2coeff_neumann(n) = -(n/(n+2))^2
-function neumann_chebyshev_matrix(n)
-    M = BandedMatrix(Zeros(n, n-2), (2, 0))
-    Mo = Origin(0)(M)
-    for n in axes(Mo, 2)
-        Mo[n, n] = 1
-        Mo[n+2, n] = n2coeff_neumann(n)
-    end
-    M
-end
-
-function r2neumann_chebyshev_matrix(ncheby, radial_params)
-    @unpack Δr, r_mid = radial_params
-    M = BandedMatrix(Zeros(ncheby, ncheby-2), (4, 2))
-    Mo = Origin(0)(M)
-
-    T0 = 1/2*(Δr/2)^2 + r_mid^2
-    T1 = r_mid * (Δr/2)
-    T2 = 1/4*(Δr/2)^2
-    C = OffsetArray([T2, T1, T0, T1, T2] ./ Rsun^2, -2:2)
-
-    # B1
-    Mo[0, 0] = C[0]
-    @views @. Mo[1:2, 0] = 2C[1:2]
-    # B2
-    @views @. Mo[0:3, 1] = C[-1:2]
-    Mo[1, 1] += C[2]
-    @views @. Mo[1:5, 1] -= C[-2:2]/3
-
-    # B3 onwards
-    for n in 2:last(axes(Mo,2))
-        colv = @view Mo[n-2:2:n+2, n]
-        colv[1] = 1/(n-1)
-        colv[2] = -(1/(n-1) + 1/(n+1))
-        colv[3] = 1/(n+1)
-    end
-    return M
-end
-
-
-
-function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only for tests =# = true)
-    ModelS = readdlm(joinpath(@__DIR__, "ModelS.detailed"))
+function solar_structure_parameter_splines(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only for tests =# = true)
+    ModelS = read_solar_model()
     r_modelS = @view ModelS[:, 1];
     r_inds = r_in .<= r_modelS .<= r_out;
     r_modelS = reverse(r_modelS[r_inds]);
@@ -654,18 +269,6 @@ function read_solar_model(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only fo
     (; splines, rad_terms)
 end
 
-struct SpectralOperatorForm
-    fwd::Matrix{Float64}
-    inv::Matrix{Float64}
-end
-
-function (op::SpectralOperatorForm)(A::Diagonal)
-    op.fwd * A * op.inv
-end
-function (op::SpectralOperatorForm)(A::AbstractVector)
-    op(Diagonal(A))
-end
-
 iszerofun(v) = ncoefficients(v) == 0 || (ncoefficients(v) == 1 && coefficients(v)[] == 0.0)
 function replaceemptywitheps(f::Fun, eps = 1e-100)
     T = eltype(coefficients(f))
@@ -676,6 +279,7 @@ function checkncoeff(v, vname, nr)
     if ncoefficients(v) > 2/3*nr
         @debug "number of coefficients in $vname is $(ncoefficients(v)), but nr = $nr"
     end
+    return nothing
 end
 macro checkncoeff(v, nr)
     :(checkncoeff($(esc(v)), $(String(v)), $(esc(nr))))
@@ -699,42 +303,42 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         (Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling))
     r_in = r_in_frac * Rsun;
     r_out = r_out_frac * Rsun;
+    radialdomain = UniqueInterval(r_in..r_out)
+    radialspace = Chebyshev(radialdomain)
     radial_params = parameters(nr, nℓ; r_in, r_out);
     @unpack Δr, nchebyr, r_mid = radial_params;
-    r, Tcrfwd, Tcrinv = chebyshev_forward_inverse(nr, r_in, r_out);
-    Tcrinvc = complex.(Tcrinv)
-    r_chebyshev = (r .- r_mid) ./ (Δr / 2);
+    rpts = points(radialspace, nr);
 
-    pseudospectralop_radial = SpectralOperatorForm(Tcrfwd, Tcrinv);
+    r = Fun(radialspace);
+    r2 = r^2;
+    r3 = r * r2;
+    r4 = r2^2;
 
-    r_cheby = Fun(ApproxFun.Chebyshev(), [r_mid, Δr / 2]);
-    r2_cheby = r_cheby * r_cheby;
-
-    @unpack splines = read_solar_model(; r_in, r_out, _stratified);
+    @unpack splines = solar_structure_parameter_splines(; r_in, r_out, _stratified);
 
     @unpack sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
         sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ, sT, sηT = splines;
 
-    ddr = ApproxFun.Derivative() * (2 / Δr);
-    rddr = (r_cheby * ddr)::Tmul;
-    d2dr2 = (ddr * ddr)::Tmul;
-    d3dr3 = (ddr * d2dr2)::Tmul;
-    d4dr4 = (d2dr2 * d2dr2)::Tmul;
-    r2d2dr2 = (r2_cheby * d2dr2)::Tmul;
+    ddr = ApproxFun.Derivative();
+    rddr = (r * ddr)::Tmul;
+    d2dr2 = ApproxFun.Derivative(2);
+    d3dr3 = ApproxFun.Derivative(3);
+    d4dr4 = ApproxFun.Derivative(4);
+    r2d2dr2 = (r2 * d2dr2)::Tmul;
 
     # density stratification
-    ηρ = replaceemptywitheps(ApproxFun.chop(Fun(sηρ ∘ r_cheby, ApproxFun.Chebyshev())::TFun, 1e-3));
+    ηρ = replaceemptywitheps(ApproxFun.chop(Fun(sηρ, radialspace), 1e-3));
     @checkncoeff ηρ nr
 
-    ηT = replaceemptywitheps(ApproxFun.chop(Fun(sηT ∘ r_cheby, ApproxFun.Chebyshev())::TFun, 1e-2));
+    ηT = replaceemptywitheps(ApproxFun.chop(Fun(sηT, radialspace), 1e-2));
     @checkncoeff ηT nr
 
-    ddr_lnρT = ηρ + ηT
+    ηρT = ηρ + ηT
 
     DDr = (ddr + ηρ)::Tplus
-    rDDr = (r_cheby * DDr)::Tmul
+    rDDr = (r * DDr)::Tmul
 
-    onebyr = (1 / r_cheby)::typeof(r_cheby)
+    onebyr = (1 / r)::typeof(r)
     twobyr = 2onebyr
     onebyr2 = onebyr*onebyr
     onebyr3 = onebyr2*onebyr
@@ -743,7 +347,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     ddr_plus_2byr = (ddr + 2onebyr)::Tplus
 
     # ηρ_by_r = onebyr * ηρ
-    ηρ_by_r = chop(Fun(sηρ_by_r ∘ r_cheby, Chebyshev())::TFun, 1e-2);
+    ηρ_by_r = chop(Fun(sηρ_by_r ∘ r, radialspace), 1e-2);
     @checkncoeff ηρ_by_r nr
 
     ηρ_by_r2 = ηρ * onebyr2
@@ -752,20 +356,20 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     ηρ_by_r3 = ηρ_by_r2 * onebyr
     @checkncoeff ηρ_by_r3 nr
 
-    ddr_ηρ = chop(Fun(ddrsηρ ∘ r_cheby, Chebyshev())::TFun, 1e-2)
+    ddr_ηρ = chop(Fun(ddrsηρ, radialspace), 1e-2)
     @checkncoeff ddr_ηρ nr
 
-    ddr_ηρbyr = chop(Fun(ddrsηρ_by_r ∘ r_cheby, Chebyshev())::TFun, 1e-2)
+    ddr_ηρbyr = chop(Fun(ddrsηρ_by_r, radialspace), 1e-2)
     @checkncoeff ddr_ηρbyr nr
 
     # ddr_ηρbyr = ddr * ηρ_by_r
-    d2dr2_ηρ = chop(Fun(d2dr2sηρ ∘ r_cheby, Chebyshev())::TFun, 1e-2)
+    d2dr2_ηρ = chop!(Fun(d2dr2sηρ, radialspace, 20), 1e-2);
     @checkncoeff d2dr2_ηρ nr
 
-    d3dr3_ηρ = chop(Fun(d3dr3sηρ ∘ r_cheby, Chebyshev())::TFun, 1e-2)
+    d3dr3_ηρ = chop(Fun(d3dr3sηρ, radialspace), 1e-2)
     @checkncoeff d3dr3_ηρ nr
 
-    ddr_ηρbyr2 = chop(Fun(ddrsηρ_by_r2 ∘ r_cheby, Chebyshev())::TFun, 5e-3)
+    ddr_ηρbyr2 = chop(Fun(ddrsηρ_by_r2, radialspace), 5e-3)
     @checkncoeff ddr_ηρbyr2 nr
 
     # ddr_ηρbyr2 = ddr * ηρ_by_r2
@@ -778,17 +382,19 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     ddrDDr = (d2dr2 + (ηρ * ddr)::Tmul + ddr_ηρ)::Tplus
     d2dr2DDr = (d3dr3 + (ηρ * d2dr2)::Tmul + (ddr_ηρ * ddr)::Tmul + d2dr2_ηρ)::Tplus
 
-    g = Fun(sg ∘ r_cheby, Chebyshev())::TFun
+    g = Fun(sg, radialspace)
 
-    Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity(r_out_frac) * trackingratescaling
+    Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity_surface(r_out_frac) * trackingratescaling
 
     # viscosity
     ν /= Ω0 * Rsun^2
     κ = ν
 
+    δ = Fun(superadiabaticity, radialspace, 20);
     γ = 1.64
     cp = 1.7e8
-    ddr_S0_by_cp = ApproxFun.chop(Fun(x -> γ * superadiabaticity(r_cheby(x)) * ηρ(x) / cp, Chebyshev())::TFun, 1e-3)
+
+    ddr_S0_by_cp = γ/cp * δ * ηρ;
     @checkncoeff ddr_S0_by_cp nr
 
     ddr_S0_by_cp_by_r2 = chop(onebyr2 * ddr_S0_by_cp, 1e-4)
@@ -798,8 +404,8 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     # matrix representations
 
-    matCU2 = x -> operatormatrix(x, nr, Ultraspherical(2))
-    matCU4 = x -> operatormatrix(x, nr, Ultraspherical(4))
+    matCU2 = x -> operatormatrix(x, nr, radialspace => rangespace(d2dr2:radialspace))
+    matCU4 = x -> operatormatrix(x, nr, radialspace => rangespace(d4dr4:radialspace))
 
     # matrix forms of operators
     onebyrMCU2 = matCU2(onebyr)
@@ -808,7 +414,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     onebyr2MCU4 = matCU4(onebyr2);
 
     ddrMCU4 = matCU4(ddr)
-    rMCU4 = matCU4(r_cheby)
+    rMCU4 = matCU4(r)
     ddr_minus_2byrMCU4 = @. ddrMCU4 - 2*onebyrMCU4
     d2dr2MCU2 = matCU2(d2dr2)
     d2dr2MCU4 = matCU4(d2dr2)
@@ -821,7 +427,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     # uniform rotation terms
     onebyr2_IplusrηρMCU4 = matCU4(onebyr2 + ηρ * onebyr);
-    ∇r2_plus_ddr_lnρT_ddr = (d2dr2 + (twobyr * ddr)::Tmul + (ddr_lnρT * ddr)::Tmul)::Tplus;
+    ∇r2_plus_ddr_lnρT_ddr = (d2dr2 + (twobyr * ddr)::Tmul + (ηρT * ddr)::Tmul)::Tplus;
     κ_∇r2_plus_ddr_lnρT_ddrMCU2 = lmul!(κ, matCU2(∇r2_plus_ddr_lnρT_ddr));
     κ_by_r2MCU2 = lmul!(κ, matCU2(onebyr2));
     ddr_S0_by_cp_by_r2MCU2 = matCU2(ddr_S0_by_cp_by_r2);
@@ -846,14 +452,12 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     identities = (; Ir, Iℓ) |> pairs |> Dict
 
     coordinates = Dict{Symbol, Vector{Float64}}()
-    @pack! coordinates = r, r_chebyshev
+    @pack! coordinates = rpts
 
-    transforms = (; Tcrfwd, Tcrinv, Tcrinvc, pseudospectralop_radial)
-
-    rad_terms = Dict{Symbol, TFun}();
+    rad_terms = Dict{Symbol, typeof(r)}();
     @pack! rad_terms = onebyr, ηρ, ηT,
         onebyr2, onebyr3, onebyr4,
-        ddr_lnρT, ddr_S0_by_cp, g, r_cheby, r2_cheby,
+        ηρT, ddr_S0_by_cp, g, r, r2,
         ηρ_by_r, ηρ_by_r2, ηρ2_by_r2, ddr_ηρbyr, ddr_ηρbyr2, ηρ_by_r3,
         ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddr_S0_by_cp_by_r2,
         ddrηρ_by_r, d2dr2ηρ_by_r
@@ -861,7 +465,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     diff_operators = (; DDr, DDr_minus_2byr, rDDr, rddr, ddrDDr, d2dr2DDr,
         ddr, d2dr2, d3dr3, d4dr4, r2d2dr2, ddr_plus_2byr)
 
-    operator_matrices = Dict{Symbol, Matrix{Float64}}();
+    operator_matrices = Dict{Symbol, typeof(IU2)}();
     @pack! operator_matrices = DDrMCU2,
         ddrMCU4, d2dr2MCU2, d2dr2MCU4,
         ddrDDrMCU4,
@@ -878,13 +482,16 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         rMCU4, IU2
 
     op = (;
+        radialdomain,
+        radialspace,
         nvariables,
         constants, rad_terms,
         scalings,
         splines,
         diff_operators,
-        transforms, coordinates,
-        radial_params, identities,
+        coordinates,
+        radial_params,
+        identities,
         operator_matrices,
         matCU2, matCU4,
         _stratified,
@@ -1012,19 +619,19 @@ function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
     # W, S terms
     W_ℓs = ℓrange(m, nℓ, !V_symmetric)
 
-    @views for ℓind in 1:nℓ
+    @views for ℓind in eachindex(V_ℓs)
         VV[Block(ℓind, ℓind)] .= IU2
         if nvariables == 3
             SS[Block(ℓind, ℓind)] .= IU2
         end
     end
 
-    ddrDDr_minus_ℓℓp1_by_r2MCU4 = similar(ddrDDrMCU4);
+    T = similar(ddrDDrMCU4);
     @views for (ℓind, ℓ) in enumerate(W_ℓs)
         ℓℓp1 = ℓ * (ℓ+1)
 
-        @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
-        WW[Block(ℓind, ℓind)] .= (Weqglobalscaling * Rsun^2) .* ddrDDr_minus_ℓℓp1_by_r2MCU4
+        @. T = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
+        WW[Block(ℓind, ℓind)] .= (Weqglobalscaling * Rsun^2) .* T
     end
 
     return B
@@ -1065,7 +672,6 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
     cosθ = OffsetArray(costheta_operator(nCS, m), ℓs, ℓs);
     sinθdθ = OffsetArray(sintheta_dtheta_operator(nCS, m), ℓs, ℓs);
 
-    ddrDDr_minus_ℓℓp1_by_r2MCU4 = similar(ddrDDrMCU4);
     T = zeros(nr, nr)
 
     # V terms
@@ -1094,10 +700,10 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
         ℓℓp1 = ℓ * (ℓ + 1)
         twom_by_ℓℓp1 = 2m/ℓℓp1
 
-        @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
+        @. T = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
 
         WW[Block(ℓind, ℓind)] .= (Weqglobalscaling * twom_by_ℓℓp1 * Rsun^2) .*
-                                (ddrDDr_minus_ℓℓp1_by_r2MCU4 .- ℓℓp1 .* ηρ_by_rMCU4)
+                                (T .- ℓℓp1 .* ηρ_by_rMCU4)
 
         if nvariables == 3
             @. T = - gMCU4 / (Ω0^2 * Rsun)  * Wscaling/Sscaling
@@ -1216,40 +822,42 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     return A
 end
 
-smoothed_spline(r, v; s) = Spline1D(r, v, s = sum(abs2, v) * s)
+smoothed_spline(rpts, v; s) = Spline1D(rpts, v, s = sum(abs2, v) * s)
 function interp1d(xin, z, xout = xin; s = 0.0)
-    spline = smoothed_spline(xin, z; s)
+    p = sortperm(xin)
+    spline = smoothed_spline(xin[p], z[p]; s)
     spline(xout)
 end
 
 function interp2d(xin, yin, z, xout = xin, yout = yin; s = 0.0)
-    evalgrid(Spline2D(xin, yin, z; s = sum(abs2, z) * s), xout, yout)
+    px = sortperm(xin)
+    py = sortperm(yin)
+    evalgrid(Spline2D(xin[px], yin[py], z[px, py]; s = sum(abs2, z) * s), xout, yout)
 end
 
-function read_angular_velocity_radii(dir)
-    r_ΔΩ_raw = vec(readdlm(joinpath(dir, "rmesh.orig")))
+function read_angular_velocity_radii(dir = SOLARMODELDIR[])
+    r_ΔΩ_raw = vec(readdlm(joinpath(dir, "rmesh.orig")))::Vector{Float64}
     r_ΔΩ_raw[1:4:end]
 end
 
-function read_angular_velocity_raw(dir)
-    ν_raw = readdlm(joinpath(dir, "rot2d.hmiv72d.ave"), ' ')
+function read_angular_velocity_raw(dir = SOLARMODELDIR[])
+    ν_raw = readdlm(joinpath(dir, "rot2d.hmiv72d.ave"))::Matrix{Float64}
     ν_raw = [ν_raw reverse(ν_raw[:, 1:end-1], dims = 2)]
     2pi * 1e-9 * ν_raw
 end
 
-function equatorial_rotation_angular_velocity(r_frac)
-    parentdir = dirname(@__DIR__)
-    r_ΔΩ_raw = read_angular_velocity_radii(parentdir)
-    Ω_raw = read_angular_velocity_raw(parentdir)
-    equatorial_rotation_angular_velocity(r_frac, r_ΔΩ_raw, Ω_raw)
+function equatorial_rotation_angular_velocity_surface(r_frac::Number = 1.0,
+        r_ΔΩ_raw = read_angular_velocity_radii(), Ω_raw = read_angular_velocity_raw())
+    Ω_raw_r_eq = equatorial_rotation_angular_velocity_radial_profile(Ω_raw)
+    r_frac_ind = findmin(abs, r_ΔΩ_raw .- r_frac)[2]
+    Ω_raw_r_eq[r_frac_ind]
 end
 
-function equatorial_rotation_angular_velocity(r_frac, r_ΔΩ_raw, Ω_raw)
+function equatorial_rotation_angular_velocity_radial_profile(Ω_raw = read_angular_velocity_raw())
     nθ = size(Ω_raw, 2)
-    lats_raw = LinRange(0, pi, nθ)
-    θind_equator = findmin(abs.(lats_raw .- pi / 2))[2]
-    r_frac_ind = findmin(abs.(r_ΔΩ_raw .- r_frac))[2]
-    Ω_raw[r_frac_ind, θind_equator]
+    lats_raw = range(0, pi, length=nθ)
+    θind_equator = findmin(abs, lats_raw .- pi/2)[2]
+    @view Ω_raw[:, θind_equator]
 end
 
 function legendre_to_associatedlegendre(vℓ, ℓ1, ℓ2, m)
@@ -1363,13 +971,12 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 end
 
 function read_angular_velocity(operators; smoothing_param = 1e-4)
-    @unpack r = operators.coordinates;
+    @unpack rpts = operators.coordinates;
     @unpack r_out = operators.radial_params;
     @unpack Ω0 = operators.constants
 
-    parentdir = dirname(@__DIR__)
-    r_ΔΩ_raw = read_angular_velocity_radii(parentdir)
-    Ω_raw = read_angular_velocity_raw(parentdir)
+    r_ΔΩ_raw = read_angular_velocity_radii(SOLARMODELDIR[])
+    Ω_raw = read_angular_velocity_raw(SOLARMODELDIR[])
     ΔΩ_raw = Ω_raw .- Ω0
 
     nθ = size(ΔΩ_raw, 2)
@@ -1379,18 +986,18 @@ function read_angular_velocity(operators; smoothing_param = 1e-4)
 end
 
 function equatorial_radial_rotation_profile(; operators, smoothing_param = 4e-5)
-    @unpack r = operators.coordinates
+    @unpack rpts = operators.coordinates
     @unpack Ω0 = operators.constants
     splΔΩ2D = read_angular_velocity(operators; smoothing_param)
-    ΔΩ_r = splΔΩ2D.(r, pi/2)
-    ddrΔΩ_r = derivative(splΔΩ2D, r, pi/2, nux = 1, nuy = 0)
-    d2dr2ΔΩ_r = derivative(splΔΩ2D, r, pi/2, nux = 2, nuy = 0)
+    ΔΩ_r = splΔΩ2D.(rpts, pi/2)
+    ddrΔΩ_r = derivative.((splΔΩ2D,), rpts, pi/2, nux = 1, nuy = 0)
+    d2dr2ΔΩ_r = derivative.((splΔΩ2D,), rpts, pi/2, nux = 2, nuy = 0)
     ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
 end
 
 function radial_differential_rotation_profile(; operators, rotation_profile = :solar_equator, ΔΩ_frac = 0.01, kw...)
 
-    @unpack r = operators.coordinates
+    @unpack rpts = operators.coordinates
     @unpack r_out, nr, r_in = operators.radial_params
     @unpack Ω0 = operators.constants
 
@@ -1398,7 +1005,7 @@ function radial_differential_rotation_profile(; operators, rotation_profile = :s
         ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = equatorial_radial_rotation_profile(; operators, kw...)
     elseif rotation_profile == :linear # for testing
         f = ΔΩ_frac / (r_in / Rsun - 1)
-        ΔΩ_r = @. Ω0 * f * (r / Rsun - 1)
+        ΔΩ_r = @. Ω0 * f * (rpts / Rsun - 1)
         ddrΔΩ_r = fill(Ω0 * f / Rsun, nr)
         d2dr2ΔΩ_r = zero(ΔΩ_r)
     elseif rotation_profile == :constant # for testing
@@ -1409,9 +1016,9 @@ function radial_differential_rotation_profile(; operators, rotation_profile = :s
         pre = (Ω0*ΔΩ_frac)*1/2
         σr = 0.08Rsun
         r0 = 0.6Rsun
-        ΔΩ_r = @. pre * (1 - tanh((r - r0)/σr))
-        ddrΔΩ_r = @. pre * (-sech((r - r0)/σr)^2 * 1/σr)
-        d2dr2ΔΩ_r = @. pre * (2sech((r - r0)/σr)^2 * tanh((r - r0)/σr) * 1/σr^2)
+        ΔΩ_r = @. pre * (1 - tanh((rpts - r0)/σr))
+        ddrΔΩ_r = @. pre * (-sech((rpts - r0)/σr)^2 * 1/σr)
+        d2dr2ΔΩ_r = @. pre * (2sech((rpts - r0)/σr)^2 * tanh((rpts - r0)/σr) * 1/σr^2)
     else
         error("$rotation_profile is not a valid rotation model")
     end
@@ -1421,17 +1028,17 @@ function radial_differential_rotation_profile(; operators, rotation_profile = :s
     return ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
 end
 
-function rotationprofile_radialderiv(r, ΔΩ_terms, Δr)
+function rotationprofile_radialderiv(rpts, ΔΩ_terms, Δr, radialspace)
     ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = ΔΩ_terms
     nr = length(ΔΩ_r)
 
-    ΔΩ = chop(chebyshevgrid_to_Fun(ΔΩ_r), 1e-2);
+    ΔΩ = chop(grid_to_Fun(ΔΩ_r, radialspace), 1e-2);
     @checkncoeff ΔΩ nr
 
-    ddrΔΩ = chop(chebyshevgrid_to_Fun(interp1d(r, ddrΔΩ_r, s = 1e-2)), 1e-2);
+    ddrΔΩ = chop(grid_to_Fun(interp1d(rpts, ddrΔΩ_r, s = 1e-2), radialspace), 1e-2);
     @checkncoeff ddrΔΩ nr
 
-    d2dr2ΔΩ = chop(chebyshevgrid_to_Fun(interp1d(r, d2dr2ΔΩ_r, s = 1e-2)), 1e-2);
+    d2dr2ΔΩ = chop(grid_to_Fun(interp1d(rpts, d2dr2ΔΩ_r, s = 1e-2), radialspace), 1e-2);
     @checkncoeff d2dr2ΔΩ nr
 
     return ΔΩ, ddrΔΩ, d2dr2ΔΩ
@@ -1439,12 +1046,12 @@ end
 
 function radial_differential_rotation_profile_derivatives(; operators, kw...)
 
-    @unpack r = operators.coordinates;
+    @unpack rpts = operators.coordinates;
     @unpack nℓ, Δr = operators.radial_params;
 
     f = radial_differential_rotation_profile(; operators, kw...);
 
-    ΔΩ, ddrΔΩ, d2dr2ΔΩ = replaceemptywitheps.(rotationprofile_radialderiv(r, f, Δr));
+    ΔΩ, ddrΔΩ, d2dr2ΔΩ = replaceemptywitheps.(rotationprofile_radialderiv(rpts, f, Δr, operators.radialspace));
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ)
 end
 
@@ -1615,25 +1222,6 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
-function solar_differential_rotation_profile(operators, thetaGL, rotation_profile = :solar; ΔΩ_frac = 0.01)
-    nθ = length(thetaGL)
-    if rotation_profile == :solar
-        return read_angular_velocity(operators)
-    elseif rotation_profile == :radial
-        ΔΩ_rθ, Ω0 = read_angular_velocity(operators)
-        θind_equator = findmin(abs.(thetaGL .- pi / 2))[2]
-        ΔΩ_r = ΔΩ_rθ[:, θind_equator]
-        return repeat(ΔΩ_r, 1, nθ), Ω0
-    elseif rotation_profile == :constant # for testing
-        @unpack radial_params = operators
-        @unpack r_out, nr = radial_params
-        Ω0 = equatorial_rotation_angular_velocity(r_out / Rsun)
-        return fill(ΔΩ_frac * Ω0, nr, nθ), Ω0
-    else
-        error(rotation_profile, "is not a valid rotation model")
-    end
-end
-
 function cutoff_degree(v, cutoff_power = 0.9)
     tr = sum(abs2, v)
     iszero(tr) && return 0
@@ -1653,166 +1241,10 @@ function cutoff_chebyshev_degree(ΔΩ_nℓ, cutoff_power = 0.9)
     maximum(col -> cutoff_degree(col, cutoff_power), eachcol(ΔΩ_nℓ))
 end
 
-function solar_differential_rotation_terms!(M, m;
-    operators, rotation_profile = :constant)
-
-    @unpack nvariables = operators
-    @unpack Iℓ, Ir = operators.identities
-    @unpack ddr, DDr, d2dr2, rddr, r2d2dr2, DDr_minus_2byr = operators.diff_operators
-    @unpack Tcrfwd, Tcrinv = operators.transforms
-    @unpack g_cheby, onebyr, onebyr2, r2_cheby, r_cheby = operators.rad_terms
-    @unpack r, r_chebyshev = operators.coordinates
-    two_over_g = 2g_cheby^-1
-
-    ddr_plus_2byr = ddr + 2onebyr_cheby
-
-    # for the stream functions
-    @unpack PLMfwd, PLMinv = associatedlegendretransform_matrices(nℓ, m)
-    fwdbig_SF = kron(PLMfwd, Tcrfwd)
-    invbig_SF = kron(PLMinv, Tcrinv)
-    spectralop = SpectralOperatorForm(fwdbig_SF, invbig_SF)
-
-    VV = matrix_block(M, 1, 1, nvariables)
-    VW = matrix_block(M, 1, 2, nvariables)
-    WV = matrix_block(M, 2, 1, nvariables)
-    WW = matrix_block(M, 2, 2, nvariables)
-    SV = matrix_block(M, 3, 1, nvariables)
-    SW = matrix_block(M, 3, 2, nvariables)
-
-    # this is somewhat arbitrary, as we don't know the maximum ℓ of Ω before reading it in
-    ntheta = ntheta_ℓmax(nℓ, m)
-    @unpack thetaGL = gausslegendre_theta_grid(ntheta)
-
-    nℓ_Ω = nℓ
-    ΔΩ_rθ, Ω0 = solar_differential_rotation_profile(operators, thetaGL, rotation_profile)
-    ΔΩ_nℓ = chebyshev_normalizedlegendre_transform(ΔΩ_rθ)
-    ΔΩ_nℓ = ΔΩ_nℓ[:, 1:nℓ_Ω]
-
-    # temporary arrays used in the transformation to real space
-    Pℓtemp = zeros(nℓ_Ω, length(thetaGL))
-    Tctemp = zeros(nr, length(r_chebyshev))
-    realspaceop = RealSpace(r_chebyshev, thetaGL, Pℓtemp, Tctemp)
-
-    pseudospectral_op = spectralop ∘ realspaceop
-
-    ΔΩ = pseudospectral_op(ΔΩ_nℓ)
-    r²ΔΩ = pseudospectral_op(r2_cheby * ΔΩ_nℓ)
-    ddr_r²ΔΩ = pseudospectral_op(ddr * r2_cheby * ΔΩ_nℓ)
-    rddrΔΩ = pseudospectral_op(rddr * ΔΩ_nℓ)
-    r2d2dr2ΔΩ = pseudospectral_op(r2d2dr2 * ΔΩ_nℓ)
-    ddr_plus_2byr_ΔΩ_nℓ = ddr_plus_2byr * ΔΩ_nℓ
-    ddr_plus_2byr_ΔΩ = pseudospectral_op(ddr_plus_2byr_ΔΩ_nℓ)
-
-    cosθ_Ω = costheta_operator(nℓ_Ω, 0)
-    sinθdθ_Ω = sintheta_dtheta_operator(nℓ_Ω, 0)
-    cotθdθ_Ω = cottheta_dtheta_operator(nℓ_Ω)
-    invsinθdθ_Ω = invsintheta_dtheta_operator(nℓ_Ω)
-
-    ΔΩ_ℓn = permutedims(ΔΩ_nℓ)
-    ddrΔΩ_ℓn = permutedims(ddr * ΔΩ_nℓ)
-
-    ∇²Ω = laplacian_operator(nℓ_Ω, 0)
-    ∇²ΔΩ = pseudospectral_op(ΔΩ_nℓ .* diag(∇²Ω)')
-    sinθdθΔΩ_plus_2cosθΔΩ = pseudospectral_op(permutedims((sinθdθ_Ω + 2cosθ_Ω) * ΔΩ_ℓn))
-    cotθdθΔΩ = pseudospectral_op(permutedims(cotθdθ_Ω * ΔΩ_ℓn))
-    invsinθdθΔΩ = pseudospectral_op(permutedims(invsinθdθ_Ω * ΔΩ_ℓn))
-
-    dzΔΩ = pseudospectral_op(
-        reshape((kron(cosθ_Ω, ddr) - kron(sinθdθ_Ω, onebyr)) * vec(ΔΩ_nℓ), nr, nℓ_Ω)
-    )
-
-    ωΩr = sinθdθΔΩ_plus_2cosθΔΩ
-    drωΩr = pseudospectral_op(permutedims((sinθdθ_Ω + 2cosθ_Ω) * ddrΔΩ_ℓn))
-    ωΩθ_by_rsinθ = -ddr_plus_2byr_ΔΩ
-    invsinθdθ_ωΩθ_by_rsinθ = pseudospectral_op(permutedims(-invsinθdθ_Ω * permutedims(ddr_plus_2byr_ΔΩ_nℓ)))
-    invsinθdθ_ωΩr = ∇²ΔΩ - 2ΔΩ + 2cotθdθΔΩ
-    ∇²ωΩθ_by_rsinθ = pseudospectral_op(ddr_plus_2byr_ΔΩ_nℓ .* adjoint(-diag(∇²Ω)))
-    ∇²_plus_4rddr_plus_r2d2dr2_plus_2cotθdθ_ΔΩ = ∇²ΔΩ + 4rddrΔΩ + r2d2dr2ΔΩ + cotθdθΔΩ
-    negrinvsinθ_curlωΩϕ = ∇²_plus_4rddr_plus_r2d2dr2_plus_2cotθdθ_ΔΩ
-
-    sinθdθ = sintheta_dtheta_operator(nℓ, m)
-    ∇² = laplacian_operator(nℓ, m)
-    ∇²_by_r2 = kron2(∇², onebyr2)
-    ddrDDr_minus_ℓ′ℓ′p1_by_r2 = kron(Iℓ, ddr * DDr) + ∇²_by_r2
-
-    ir²ufr = VWArrays(0, kron(-∇², Ir))
-    irsinθufθ = VWArrays(-m, kron(sinθdθ, DDr))
-    r²ωfr = VWArrays(kron(-∇², Ir), 0)
-    r²negmωfr = VWArrays(kron(m * ∇², Ir), 0)
-
-    rsinθufϕ = VWArrays(kron(sinθdθ, -Ir), kron(m * Iℓ, DDr))
-    rsinθωfθ = VWArrays(kron(sinθdθ, ddr), -m * ddrDDr_minus_ℓ′ℓ′p1_by_r2)
-    r³sinθ_ωfθ = VWArrays(kron(sinθdθ, r2_cheby * ddr),
-        -m * (kron(Iℓ, r2_cheby * ddr * DDr) + kron(∇², Ir)))
-
-    r³sinθ_curlωfϕ = VWArrays(Matrix(kron2(sinθdθ, r2d2dr2) + kron2(sinθdθ * ∇², Ir)),
-        Matrix(kron2(-m * Iℓ, r2d2dr2 * DDr) - kron2(m * ∇², DDr_minus_2byr)))
-
-    @unpack Wscaling, Sscaling = operators.constants.scalings
-
-    V_rhs = +ₛ((ωΩr * kron(-Iℓ, DDr_minus_2byr) + ωΩθ_by_rsinθ * kron2(sinθdθ, -Ir) + drωΩr) * ir²ufr,
-        invsinθdθ_ωΩr * irsinθufθ,
-        ΔΩ * r²negmωfr)
-
-    r²_ωΩ_dot_ωf = ωΩr * r²ωfr +ₛ ωΩθ_by_rsinθ * r³sinθ_ωfθ
-    r²_div_uf_cross_ωΩ = r²_ωΩ_dot_ωf +ₜ negrinvsinθ_curlωΩϕ * rsinθufϕ
-    r²_div_uΩ_cross_ωf = r²_ωΩ_dot_ωf -ₛ ΔΩ * r³sinθ_curlωfϕ
-    r²_div_u_cross_ω = r²_div_uf_cross_ωΩ +ₛ r²_div_uΩ_cross_ωf
-
-    ddr_r²ΔΩ_plus_r²ΔΩ_ddr = ddr_r²ΔΩ + r²ΔΩ * kron(Iℓ, ddr)
-    r²_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_V = ddr_r²ΔΩ_plus_r²ΔΩ_ddr * kron2(sinθdθ, -Ir)
-    r²_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_W = kron(m * ∇², Ir) * ΔΩ +
-                                          ddr_r²ΔΩ_plus_r²ΔΩ_ddr * kron(m * Iℓ, DDr)
-
-    r²_u_cross_ω_r = VWArrays(
-        r²_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_V,
-        r²_uf_cross_ωΩ_plus_uΩ_cross_ωf_r_W)
-
-    sinθdθ_big = kron2(sinθdθ, Ir)
-
-    ∇²h_uf_cross_ωΩ_r = (ωΩθ_by_rsinθ * kron2(-∇², Ir) .- ∇²ωΩθ_by_rsinθ .-
-                         2 .* invsinθdθ_ωΩθ_by_rsinθ * sinθdθ_big) * rsinθufϕ
-
-    ∇²h_uΩ_cross_ωf_r = (-∇²ΔΩ .+ ΔΩ * kron2(-∇², Ir) .- 2 .* invsinθdθΔΩ * sinθdθ_big) * rsinθωfθ
-
-    ∇²h_u_cross_ω_r = ∇²h_uf_cross_ωΩ_r +ₛ ∇²h_uΩ_cross_ωf_r
-
-    negr²Ω0W_rhs = +ₛ(kron(-Iℓ, ddr) * r²_div_u_cross_ω,
-        kron2(Iℓ, d2dr2) * r²_u_cross_ω_r,
-        ∇²h_u_cross_ω_r)
-
-    S_rhs_V = kron2(-m * Iℓ, two_over_g) * dzΔΩ
-    S_rhs_W = dzΔΩ * kron2(sinθdθ, two_over_g * DDr)
-    S_rhs = VWArrays(S_rhs_V, S_rhs_W)
-
-    ℓs = range(m, length = nℓ)
-    for ℓ in ℓs
-        ℓℓp1 = ℓ * (ℓ + 1)
-        invℓℓp1_invΩ0 = (1 / ℓℓp1) * (1 / Ω0)
-        Gℓ = greenfn_cheby(ℓ, operators)
-        Gℓ_invℓℓp1_invΩ0 = Gℓ * invℓℓp1_invΩ0
-        Gℓ_invℓℓp1_invΩ0_Wscaling = Wscaling * Gℓ_invℓℓp1_invΩ0
-        for ℓ′ in ℓs
-            inds_ℓℓ′ = blockinds((m, nr), ℓ, ℓ′)
-            @views @. VV[inds_ℓℓ′] += invℓℓp1_invΩ0 * V_rhs.V[inds_ℓℓ′]
-            @views @. VW[inds_ℓℓ′] += invℓℓp1_invΩ0 * V_rhs.W[inds_ℓℓ′] / Wscaling
-            @views WV[inds_ℓℓ′] .+= Gℓ_invℓℓp1_invΩ0_Wscaling * negr²Ω0W_rhs.V[inds_ℓℓ′]
-            @views WW[inds_ℓℓ′] .+= Gℓ_invℓℓp1_invΩ0 * negr²Ω0W_rhs.W[inds_ℓℓ′]
-
-            @views @. SV[inds_ℓℓ′] += Sscaling * S_rhs.V[inds_ℓℓ′]
-            @views @. SW[inds_ℓℓ′] .+= (Sscaling/Wscaling) * S_rhs.W[inds_ℓℓ′]
-        end
-    end
-
-    return M
-end
-
 function rotationtag(rotation_profile)
     rstr = String(rotation_profile)
     if startswith(rstr, "radial")
         return Symbol(split(rstr, "radial_")[2])
-    elseif startswith(rstr, "solar")
-        return Symbol(split(rstr, "solar_")[2])
     else
         return Symbol(rotation_profile)
     end
@@ -1823,8 +1255,6 @@ function _differential_rotation_matrix!(M, m; rotation_profile, kw...)
     tag = rotationtag(rotation_profile)
     if startswith(rstr, "radial")
         radial_differential_rotation_terms!(M, m; rotation_profile = tag, kw...)
-    elseif startswith(rstr, "solar")
-        solar_differential_rotation_terms!(M, m; rotation_profile = tag, kw...)
     elseif Symbol(rotation_profile) == :constant
         constant_differential_rotation_terms!(M, m; kw...)
     else
@@ -1874,14 +1304,6 @@ function compute_constrained_matrix(B::AbstractMatrix{<:Real}, constraints,
     @unpack B_constrained = cache
     compute_constrained_matrix!(B_constrained, constraints, computesparse(B))
     return B_constrained
-end
-
-function balance_matrix!(M, nvariables, scales)
-    for colind in 1:nvariables, rowind in 1:nvariables
-        Mv = matrix_block(M, rowind, colind, nvariables)
-        Mv .*= scales[rowind, colind]
-    end
-    return nothing
 end
 
 function realmatcomplexmatmul(A, B, (v, temp)::NTuple{2,AbstractMatrix})
@@ -1938,24 +1360,6 @@ function uniform_rotation_spectrum!((A, B), m; operators, kw...)
         mass_matrix!(B, m; operators, kw...)
     end
     constrained_eigensystem_timed((A, B); operators, timer, kw...)
-end
-
-function real_to_chebyassocleg(ΔΩ_r_thetaGL, operators, thetaop)
-    @unpack PLMfwd, PLMinv = thetaop
-    @unpack transforms, radial_params = operators
-    @unpack nℓ, nchebyr = radial_params
-    @unpack Tcrfwd, Tcrinv = transforms
-    pad = nchebyr * nℓ
-    PaddedMatrix((PLMfwd ⊗ Tcrfwd) * Diagonal(vec(ΔΩ_r_thetaGL)) * (PLMinv ⊗ Tcrinv), pad)
-end
-
-function real_to_r_assocleg(ΔΩ_r_thetaGL, operators, thetaop)
-    @unpack PLMfwd, PLMinv = thetaop
-    @unpack radial_params = operators
-    @unpack nℓ, nchebyr = radial_params
-    Ir = I(nchebyr)
-    pad = nchebyr * nℓ
-    PaddedMatrix((PLMfwd ⊗ Ir) * Diagonal(vec(ΔΩ_r_thetaGL)) * (PLMinv ⊗ Ir), pad)
 end
 
 function differential_rotation_spectrum(m::Integer; operators, kw...)
@@ -2055,7 +1459,7 @@ function eigvec_spectrum_filter!(F, v, m, operators;
     filterfieldpowercutoff = 1e-4,
     kw...)
 
-    VW = eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
+    VW = eigenfunction_spectrum_2D!(F, v; operators, kw...)
     Δl_inds = Δl_cutoff ÷ 2
 
     @unpack nparams = operators.radial_params
@@ -2329,14 +1733,20 @@ function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:Abstrac
         vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector{<:Integer}, matrixfn!; kw...)
 
     nblasthreads = BLAS.get_num_threads()
+    TMapReturnEltype = Tuple{eltype(λs), eltype(vs)}
     try
         BLAS.set_num_threads(max(1, round(Int, nblasthreads/nt)))
-        Folds.map(zip(λs, vs, mr)) do (λm, vm, m)
-            AB = take!(c)
-            Y = filter_map(λm, vm, AB, m, matrixfn!; kw...)
-            put!(c, AB)
-            Y
-        end::Vector{Tuple{eltype(λs), eltype(vs)}}
+        z = zip(λs, vs, mr)
+        if length(z) > 0
+            Folds.map(z) do (λm, vm, m)
+                AB = take!(c)
+                Y = filter_map(λm, vm, AB, m, matrixfn!; kw...)
+                put!(c, AB)
+                Y
+            end::Vector{TMapReturnEltype}
+        else
+            TMapReturnEltype[]
+        end
     finally
         BLAS.set_num_threads(nblasthreads)
     end
@@ -2366,20 +1776,24 @@ function eigvec_spectrum_filter_map!(Ctid, spectrumfn!::F, m, operators, constra
     filter_eigenvalues(X..., m; operators, constraints, kw...)
 end
 
-const TMapReturn = Vector{Tuple{Vector{ComplexF64},
-                    StructArray{ComplexF64, 2, @NamedTuple{re::Matrix{Float64},im::Matrix{Float64}}, Int64}}}
-
 function eigvec_spectrum_filter_map_nthreads!(c, nt, spectrumfn!, mr, operators, constraints; kw...)
     nblasthreads = BLAS.get_num_threads()
     nt = Threads.nthreads()
+
+    TMapReturnEltype = Tuple{Vector{ComplexF64},
+                    StructArray{ComplexF64, 2, @NamedTuple{re::Matrix{Float64},im::Matrix{Float64}}, Int64}}
     try
         BLAS.set_num_threads(max(1, round(Int, nblasthreads/nt)))
-        Folds.map(mr) do m
-            Ctid = take!(c)
-            Y = eigvec_spectrum_filter_map!(Ctid, spectrumfn!, m, operators, constraints; kw...)
-            put!(c, Ctid)
-            Y
-        end::TMapReturn
+        if length(mr) > 0
+            Folds.map(mr) do m
+                Ctid = take!(c)
+                Y = eigvec_spectrum_filter_map!(Ctid, spectrumfn!, m, operators, constraints; kw...)
+                put!(c, Ctid)
+                Y
+            end::Vector{TMapReturnEltype}
+        else
+            TMapReturnEltype[]
+        end
     finally
         BLAS.set_num_threads(nblasthreads)
     end
@@ -2409,20 +1823,19 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
         if nthreads_trailing_elems > 0 && div(nblasthreads, nthreads_trailing_elems) > max(1, div(nblasthreads, nthreads))
             # in this case the extra elements may be run using a higher number of blas threads
             mr1 = @view mr[1:end-nthreads_trailing_elems]
-            λv1 = eigvec_spectrum_filter_map_nthreads!(c, Threads.nthreads(), spectrumfn!, mr, operators, constraints; kw...)
-            @timeit to "result" λs, vs = map(first, λv1), map(last, λv1)
-
             mr2 = @view mr[end-nthreads_trailing_elems+1:end]
-            λv2 = eigvec_spectrum_filter_map_nthreads!(c, nthreads_trailing_elems, spectrumfn!, mr, operators, constraints; kw...)
 
-            @timeit to "result"  begin
-                λs2, vs2 = map(first, λv2), map(last, λv2)
-                append!(λs, λs2)
-                append!(vs, vs2)
-            end
+            λv1 = eigvec_spectrum_filter_map_nthreads!(c, Threads.nthreads(), spectrumfn!, mr1, operators, constraints; kw...)
+
+            λv2 = eigvec_spectrum_filter_map_nthreads!(c, nthreads_trailing_elems, spectrumfn!, mr2, operators, constraints; kw...)
+
+            λs, vs = map(first, λv1), map(last, λv1)
+            λs2, vs2 = map(first, λv2), map(last, λv2)
+            append!(λs, λs2)
+            append!(vs, vs2)
         else
             λv = eigvec_spectrum_filter_map_nthreads!(c, Threads.nthreads(), spectrumfn!, mr, operators, constraints; kw...)
-            @timeit to "result" λs, vs = map(first, λv), map(last, λv)
+            λs, vs = map(first, λv), map(last, λv)
         end
     end
     println(to)
@@ -2495,7 +1908,7 @@ function filteredeigen(filename::String; kw...)
     filter_eigenvalues(feig; matrixfn!, fkw..., kw...)
 end
 
-function eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
+function eigenfunction_spectrum_2D!(F, v; operators, kw...)
     @unpack radial_params = operators
     @unpack nparams, nr, nℓ = radial_params
     @unpack nvariables = operators
@@ -2511,30 +1924,43 @@ function eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
     (; V, W, S)
 end
 
+function invtransform1!(radialspace::Space, out::AbstractMatrix, coeffs::AbstractMatrix,
+        itransplan! = ApproxFunBase.plan_itransform!(radialspace, @view(out[:, 1])),
+        )
+
+    copyto!(out, coeffs)
+    for outcol in eachcol(out)
+        itransplan! * outcol
+    end
+    return out
+end
+
 function eigenfunction_rad_sh!(VWSinvsh, F, v; operators, n_cutoff = -1, kw...)
-    VWS = eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
-    @unpack Tcrinvc = operators.transforms;
+    VWS = eigenfunction_spectrum_2D!(F, v; operators, kw...)
     @unpack V, W, S = VWS
+    @unpack radialspace = operators;
 
     Vinv = VWSinvsh.V
     Winv = VWSinvsh.W
     Sinv = VWSinvsh.S
 
+    itransplan! = ApproxFunBase.plan_itransform!(radialspace, @view(Vinv[:, 1]))
+
     if n_cutoff >= 0
-        temp = similar(V)
-        temp .= V
-        temp[n_cutoff+1:end, :] .= 0
-        mul!(Vinv, Tcrinvc, temp)
-        temp .= W
-        temp[n_cutoff+1:end, :] .= 0
-        mul!(Winv, Tcrinvc, temp)
-        temp .= S
-        temp[n_cutoff+1:end, :] .= 0
-        mul!(Sinv, Tcrinvc, temp)
+        field_lowpass = similar(V)
+        field_lowpass .= V
+        field_lowpass[n_cutoff+1:end, :] .= 0
+        invtransform1!(radialspace, Vinv, field_lowpass, itransplan!)
+        field_lowpass .= W
+        field_lowpass[n_cutoff+1:end, :] .= 0
+        invtransform1!(radialspace, Winv, field_lowpass, itransplan!)
+        field_lowpass .= S
+        field_lowpass[n_cutoff+1:end, :] .= 0
+        invtransform1!(radialspace, Sinv, field_lowpass, itransplan!)
     else
-        mul!(Vinv, Tcrinvc, V)
-        mul!(Winv, Tcrinvc, W)
-        mul!(Sinv, Tcrinvc, S)
+        invtransform1!(radialspace, Vinv, V, itransplan!)
+        invtransform1!(radialspace, Winv, W, itransplan!)
+        invtransform1!(radialspace, Sinv, S, itransplan!)
     end
 
     return VWSinvsh
@@ -2621,7 +2047,7 @@ function eigenfunction_n_theta!(VWSinv, F, v, m;
     Plcosθ = allocate_Pl(m, nℓ),
     kw...)
 
-    VW = eigenfunction_cheby_ℓm_spectrum!(F, v; operators, kw...)
+    VW = eigenfunction_spectrum_2D!(F, v; operators, kw...)
     invshtransform2!(VWSinv, VW, m; nℓ, Plcosθ, kw...)
 end
 

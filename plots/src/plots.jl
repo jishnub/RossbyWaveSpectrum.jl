@@ -1,20 +1,48 @@
+module plots
+
+Base.Experimental.@optlevel 1
+
 using PyCall
 using PyPlot
-using RossbyWaveSpectrum
-using RossbyWaveSpectrum: Rsun, rossbyeigenfilename, StructMatrix, FilteredEigen
-using LaTeXStrings
-using SimpleDelimitedFiles
-using JLD2
-using Printf
-using LinearAlgebra
-using UnPack
-using OrderedCollections
-using FastTransforms
-import ApproxFun: ncoefficients
 
-plotdir = joinpath(dirname(dirname(@__DIR__)), "plots")
-ticker = pyimport("matplotlib.ticker")
-axes_grid1 = pyimport("mpl_toolkits.axes_grid1")
+using RossbyWaveSpectrum
+
+import ApproxFun: ncoefficients, itransform
+using LaTeXStrings
+using LinearAlgebra
+using OrderedCollections
+using Printf
+using StructArrays
+using UnPack
+
+const StructMatrix{T} = StructArray{T,2}
+
+export spectrum
+export uniform_rotation_spectrum
+export differential_rotation_spectrum
+export plot_diffrot_radial
+export eigenfunction
+export eigenfunction_spectrum
+export eigenfunction_rossbyridge
+export eigenfunction_rossbyridge_allstreamfn
+export eigenfunctions_allstreamfn
+export multiple_eigenfunctions_surface_m
+export compare_terms
+export plot_scale_heights
+export plot_constraint_basis
+export damping_rossbyridge
+export damping_highfreqridge
+export plot_matrix
+export plot_matrix_block
+
+const plotdir = dirname(@__DIR__)
+const ticker = PyNULL()
+const axes_grid1 = PyNULL()
+
+function __init__()
+	copy!(ticker, pyimport("matplotlib.ticker"))
+	copy!(axes_grid1, pyimport("mpl_toolkits.axes_grid1"))
+end
 
 realview(M::StructMatrix{<:Complex}) = M.re
 function realview(M::AbstractMatrix{Complex{T}}) where {T}
@@ -38,7 +66,7 @@ end
 function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
         ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
-            label = ΔΩ_frac == 0 ? "2/(m+1)" : "Doppler\nshifted",
+            label = ΔΩ_frac == 0 ? "2Ω/(m+1)" : "Doppler\nshifted",
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
             zorder = 0,
@@ -344,8 +372,8 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
     fconstasym::FilteredEigen, fradsym::FilteredEigen, fradasym::FilteredEigen; kw...)
 
     f, axlist = subplots(2, 3, sharex = "col")
-    @unpack r, r_chebyshev = fconstsym.operators.coordinates;
-    r_frac = r ./ Rsun
+    @unpack rpts = fconstsym.operators.coordinates;
+    r_frac = rpts ./ Rsun
     Ω0_const = fconstsym.operators.constants[:Ω0];
     Ω0_radial = fradsym.operators.constants[:Ω0];
 
@@ -355,7 +383,7 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
     ΔΩ_constant = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
             operators = fconstsym.operators, rotation_profile = :constant).ΔΩ
 
-    axlist[1,1].plot(r_frac, ΔΩ_constant.(r_chebyshev) .* freqnHzunit(Ω0_const), color="0.2")
+    axlist[1,1].plot(r_frac, ΔΩ_constant.(rpts) .* freqnHzunit(Ω0_const), color="0.2")
     axlist[1,1].axhline(0, color="black", ls="dotted", label="tracking rate")
     axlist[1,1].set_title("Constant ΔΩ", fontsize=12)
     axlist[1,1].yaxis.set_major_locator(ticker.MaxNLocator(4))
@@ -371,7 +399,7 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
     ΔΩ_solar_radial = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
             operators = fradsym.operators, rotation_profile = :solar_equator).ΔΩ
 
-    axlist[2,1].plot(r_frac, ΔΩ_solar_radial.(r_chebyshev) .* freqnHzunit(Ω0_radial), color="0.2")
+    axlist[2,1].plot(r_frac, ΔΩ_solar_radial.(rpts) .* freqnHzunit(Ω0_radial), color="0.2")
     axlist[2,1].axhline(0, color="black", ls="dotted", label="tracking rate")
     axlist[2,1].set_title("Solar equatorial ΔΩ", fontsize=12)
     axlist[2,1].yaxis.set_major_locator(ticker.MaxNLocator(4))
@@ -398,8 +426,8 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
 end
 
 function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
-    operators,
-    field = :V, f = figure(), component = real, kw...)
+        operators, field = :V, f = figure(), component = real, kw...)
+
     V = getproperty(VWSinv, field)::Matrix{ComplexF64}
     Vr = copy(component(V))
     scale = get(kw, :scale) do
@@ -409,8 +437,8 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         Vr ./= scale
     end
     @unpack coordinates = operators
-    @unpack r = coordinates
-    r_frac = r ./ Rsun
+    @unpack rpts = coordinates
+    r_frac = rpts ./ Rsun
     nθ = length(θ)
     equator_ind = nθ÷2
     Δθ_scan = div(nθ, 5)
@@ -470,9 +498,9 @@ function eigenfunction(feig::FilteredEigen, m::Integer, ind::Integer; kw...)
     eigenfunction(feig.vs[m][:, ind], m; operators, feig.kw..., kw...)
 end
 
-function eigenfunction(v::AbstractVector{<:Number}, m::Integer; operators, f = figure(), kw...)
+function eigenfunction(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
     (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
-    eigenfunction(VWSinv, θ, m; operators, f, kw...)
+    eigenfunction(VWSinv, θ, m; operators, kw...)
 end
 
 function eigenfunctions_allstreamfn(f::FilteredEigen, m::Integer, vind::Integer; kw...)
@@ -556,6 +584,9 @@ end
 function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMatrix, m;
         operators, f = figure(), kw...)
 
+    @unpack rpts = operators.coordinates;
+    rsurfind = argmax(rpts)
+
     ax = f.add_subplot()
     ax.set_xlabel("colatitude (θ) [radians]", fontsize = 12)
     ax.set_ylabel("Angular profile", fontsize = 12)
@@ -576,7 +607,7 @@ function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMa
         (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators)
         @unpack V = VWSinv
         Vr = realview(V)
-        Vr_surf = Vr[end, :]
+        Vr_surf = Vr[rsurfind, :]
 
         Vrmax_sign = sign(eignorm(Vr_surf))
         Vr_surf .*= Vrmax_sign
@@ -714,28 +745,42 @@ function plot_matrix_block(M, rowind, colind, nℓ, ℓind, ℓ′ind, nvariable
     f.tight_layout()
 end
 
+function _plot_diffrot_radial(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ; ncoeffs = true, labelpre = "", kw...)
+    r_frac = rpts/Rsun
+    axlist[1].plot(r_frac, ΔΩ.(rpts);
+        label = labelpre * (ncoeffs ? "ncoeff = $(ncoefficients(ΔΩ))" : ""), kw...)
+    axlist[1].axhline(0, ls="dotted", color="black")
+    axlist[1].set_ylabel(L"\Delta\Omega")
+    axlist[2].plot(r_frac, ddrΔΩ.(rpts).* Rsun;
+        label = labelpre * (ncoeffs ? "ncoeff = $(ncoefficients(ddrΔΩ))" : ""), kw...)
+    axlist[2].set_ylabel(L"R_\odot \frac{d\Delta\Omega}{dr}")
+    axlist[3].plot(r_frac, d2dr2ΔΩ.(rpts).* Rsun^2;
+        label = labelpre * (ncoeffs ? "ncoeff = $(ncoefficients(d2dr2ΔΩ))" : ""), kw...)
+    axlist[3].set_ylabel(L"R_\odot^2 \frac{d^2\Delta\Omega}{dr^2}")
+    return nothing
+end
 function plot_diffrot_radial(; operators, kw...)
-    @unpack r, r_chebyshev = operators.coordinates
+    @unpack rpts = operators.coordinates
 
-    (; Ω0, ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+    @unpack Ω0 = operators.constants
+    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
         operators, kw...);
 
     f, axlist = subplots(3, 1, sharex = true)
-
-    r_frac = r/Rsun
-    axlist[1].plot(r_frac, ΔΩ.(r_chebyshev), ".-", label = "ncoeff = $(ncoefficients(ΔΩ))")
-    axlist[1].axhline(Ω0, ls="dotted", color="black")
-    axlist[1].set_ylabel(L"\Delta\Omega")
-    axlist[2].plot(r_frac, ddrΔΩ.(r_chebyshev).* Rsun, ".-", label = "ncoeff = $(ncoefficients(ddrΔΩ))")
-    axlist[2].set_ylabel(L"R_\odot \frac{d\Delta\Omega}{dr}")
-    axlist[3].plot(r_frac, d2dr2ΔΩ.(r_chebyshev).* Rsun^2, ".-", label = "ncoeff = $(ncoefficients(d2dr2ΔΩ))")
-    axlist[3].set_ylabel(L"R_\odot^2 \frac{d^2\Delta\Omega}{dr^2}")
+    _plot_diffrot_radial(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ, zorder = 2, color="0.5",
+        labelpre = "model, ", marker = ".", ls = "solid")
+    if get(kw, :rotation_profile, :solar_equator) !== :solar_equator
+        (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+        operators, kw..., rotation_profile = :solar_equator);
+        _plot_diffrot_radial(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ, labelpre = "solar",
+            ncoeffs = false, color="0.6", zorder = 1, ls = "dashed")
+    end
 
     for ax in axlist
         ax.legend(loc="best")
     end
 
-    f.set_size_inches(4, 4)
+    f.set_size_inches(8, 4)
     f.tight_layout()
 end
 
@@ -772,12 +817,12 @@ function compare_terms(@nospecialize(terms); x = nothing, y = nothing,
 end
 
 function plot_constraint_basis(; operators, constraints = RossbyWaveSpectrum.constraintmatrix(operators), kw...)
-    (; nullspacematrices) = constraints
+    @unpack nullspacematrices = constraints
+    @unpack radialspace = operators;
+    @unpack rpts = operators.coordinates
+
     f, axlist = subplots(1,3, sharex = true)
     n_cutoff = 4
-
-    nr = size(nullspacematrices[1], 1)
-    r = FastTransforms.chebyshevpoints(nr)
 
     ls = ["solid", "dashed", "dotted"]
     color = ["black", "0.6"]
@@ -788,11 +833,9 @@ function plot_constraint_basis(; operators, constraints = RossbyWaveSpectrum.con
     for (ind, (ax, M, fld)) in enumerate(zip(axlist, nullspacematrices, title_field))
         for (colind, (col, st)) in enumerate(zip(Iterators.take(eachcol(M), n_cutoff), linestyle))
             ls, c = st
-            v = FastTransforms.ichebyshevtransform(col)
-            ax.plot(r, v; label = "q=$(colind-1)", ls, c)
+            v = itransform(radialspace, col)
+            ax.plot(rpts, v; label = "q=$(colind-1)", ls, c)
             ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
-            # if ind == length(axlist)
-            # end
         end
         ax.set_xlabel(L"\bar{r}", fontsize=11)
         ax.set_title("Basis for "*fld, fontsize=11)
@@ -810,13 +853,13 @@ function plot_constraint_basis(; operators, constraints = RossbyWaveSpectrum.con
 end
 
 function plot_scale_heights(; operators, kw...)
-    f, axlist = subplots(1,2)
-    @unpack r, r_chebyshev = operators.coordinates
+    f, axlist = subplots(1,2, sharex = true)
+    @unpack rpts = operators.coordinates
     @unpack ηρ, ηT = operators.rad_terms
-    r_frac = r/Rsun
+    r_frac = rpts/Rsun
     ax = axlist[1]
-    ax.plot(r_frac, .-ηρ.(r_chebyshev).*Rsun, label = L"\rho", color="black")
-    ax.plot(r_frac, .-ηT.(r_chebyshev).*Rsun, label = L"T", color="black", ls="dashed")
+    ax.plot(r_frac, .-ηρ.(rpts).*Rsun, label = L"\rho", color="black")
+    ax.plot(r_frac, .-ηT.(rpts).*Rsun, label = L"T", color="black", ls="dashed")
     ax.set_xlabel(L"r/R_\odot")
     ax.set_ylabel("Inverse scale height\n(normalized)")
     ax.legend(loc="best")
@@ -824,7 +867,7 @@ function plot_scale_heights(; operators, kw...)
     ax.xaxis.set_major_locator(ticker.MaxNLocator(3))
 
     ax = axlist[2]
-    ax.plot(r_frac, RossbyWaveSpectrum.superadiabaticity.(r), color="black")
+    ax.plot(r_frac, RossbyWaveSpectrum.superadiabaticity.(rpts), color="black")
     ax.set_ylabel("Super-adiabatic\ntemperature gradient")
     ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
     ax.xaxis.set_major_locator(ticker.MaxNLocator(3))
@@ -841,3 +884,6 @@ function plot_scale_heights(; operators, kw...)
     end
     return nothing
 end
+
+
+end # module plots

@@ -2,9 +2,8 @@ module ComputeRossbySpectrum
 @time using RossbyWaveSpectrum
 using LinearAlgebra
 
-flush(stdout)
-
 function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; save = true)
+    flush(stdout)
     # boundary condition tolerance
     bc_atol = 1e-5
 
@@ -35,7 +34,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
         RossbyWaveSpectrum.RotMatrix(V_symmetric, :uniform, nothing, RossbyWaveSpectrum.uniform_rotation_spectrum!)
     end
 
-    @show nr nℓ mrange Δl_cutoff n_cutoff
+    @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac
     @show eigvec_spectrum_power_cutoff eigen_rtol V_symmetric diffrot;
     @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads();
 
