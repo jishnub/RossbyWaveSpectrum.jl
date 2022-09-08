@@ -2,7 +2,7 @@
 
 julia_version = "1.8.1"
 manifest_format = "2.0"
-project_hash = "7bf54835c2cc750b45e5a4a06d7e6c36cf49cd27"
+project_hash = "e9407a30cfe247be15992f41db763831cfa04aaf"
 
 [[deps.AbstractFFTs]]
 deps = ["ChainRulesCore", "LinearAlgebra"]
@@ -42,9 +42,11 @@ version = "0.3.0"
 
 [[deps.ApproxFunOrthogonalPolynomials]]
 deps = ["AbstractFFTs", "ApproxFunBase", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "DomainSets", "FFTW", "FastGaussQuadrature", "FastTransforms", "FillArrays", "IntervalSets", "LinearAlgebra", "Reexport", "SpecialFunctions", "Statistics"]
-git-tree-sha1 = "352ae4471fbcfafebe7484693f2e0ed2f2a597b4"
+git-tree-sha1 = "fefee15535dba4fc5154e19fa5952c12e280204c"
+repo-rev = "bleeding_edge"
+repo-url = "https://github.com/jishnub/ApproxFunOrthogonalPolynomials.jl"
 uuid = "b70543e2-c0d9-56b8-a290-0d4d6d4de211"
-version = "0.5.2"
+version = "0.5.3"
 
 [[deps.ApproxFunSingularities]]
 deps = ["ApproxFunBase", "ApproxFunOrthogonalPolynomials", "DomainSets", "IntervalSets", "LinearAlgebra", "Reexport", "Statistics"]

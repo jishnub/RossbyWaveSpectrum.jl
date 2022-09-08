@@ -15,7 +15,6 @@ using LinearAlgebra
 using LinearAlgebra: BLAS
 using LegendrePolynomials
 using OffsetArrays
-using OffsetArrays: Origin
 using DelimitedFiles: readdlm
 using SparseArrays
 using StructArrays
@@ -100,13 +99,11 @@ function V_boundary_op(operators)
     (r * ddr - 2) : operators.radialspace;
 end
 
-function constraintmatrix(operators; W_basis = 2, S_basis = 2)
+function constraintmatrix(operators)
     @unpack radial_params = operators;
-    @unpack nr, nℓ = radial_params;
     @unpack r_in, r_out = radial_params;
     @unpack nr, nℓ, Δr = operators.radial_params;
     @unpack nvariables = operators;
-
     @unpack r = operators.rad_terms;
     @unpack ddr = operators.diff_operators;
 
@@ -153,13 +150,13 @@ function constraintmatrix(operators; W_basis = 2, S_basis = 2)
     ZC_block = mortar(Diagonal(Z_blocks))
 
     BCmatrices = nvariables == 3 ? [MVn, MWn, MSn] : [MVn, MWn]
+
     for (Mind, M) in enumerate(BCmatrices)
         BCi = B_blocks[Mind]
         for ℓind = 1:nℓ
             BCi[Block(ℓind, ℓind)] = M
         end
     end
-
     nullspacematrices = nvariables == 3 ? [ZMVn, ZMWn, ZMSn] : [ZMVn, ZMWn];
     for (Zind, Z) in enumerate(nullspacematrices)
         ZCi = Z_blocks[Zind]
@@ -301,6 +298,7 @@ function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _strati
 end
 function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν,
         (Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling))
+
     r_in = r_in_frac * Rsun;
     r_out = r_out_frac * Rsun;
     radialdomain = UniqueInterval(r_in..r_out)
@@ -860,16 +858,6 @@ function equatorial_rotation_angular_velocity_radial_profile(Ω_raw = read_angul
     @view Ω_raw[:, θind_equator]
 end
 
-function legendre_to_associatedlegendre(vℓ, ℓ1, ℓ2, m)
-    vℓo = OffsetArray(vℓ, OffsetArrays.Origin(0))
-    sum(vℓi * intPl1mPl20Pl3m(ℓ1, ℓ, ℓ2, m) for (ℓ, vℓi) in pairs(vℓo))
-end
-
-function dlegendre_to_associatedlegendre(vℓ, ℓ1, ℓ2, m)
-    vℓo = OffsetArray(vℓ, OffsetArrays.Origin(0))
-    sum(vℓi * intPl1mP′l20Pl3m(ℓ1, ℓ, ℓ2, m) for (ℓ, vℓi) in pairs(vℓo))
-end
-
 function laplacian_operator(nℓ, m)
     ℓs = range(m, length = nℓ)
     Diagonal(@. -ℓs * (ℓs + 1))
@@ -971,7 +959,6 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 end
 
 function read_angular_velocity(operators; smoothing_param = 1e-4)
-    @unpack rpts = operators.coordinates;
     @unpack r_out = operators.radial_params;
     @unpack Ω0 = operators.constants
 
@@ -985,10 +972,10 @@ function read_angular_velocity(operators; smoothing_param = 1e-4)
     Spline2D(r_ΔΩ_raw * Rsun, lats_raw, ΔΩ_raw; s = sum(abs2, ΔΩ_raw)*smoothing_param)
 end
 
-function equatorial_radial_rotation_profile(; operators, smoothing_param = 4e-5)
+function equatorial_radial_rotation_profile(; operators, kw...)
     @unpack rpts = operators.coordinates
     @unpack Ω0 = operators.constants
-    splΔΩ2D = read_angular_velocity(operators; smoothing_param)
+    splΔΩ2D = read_angular_velocity(operators; kw...)
     ΔΩ_r = splΔΩ2D.(rpts, pi/2)
     ddrΔΩ_r = derivative.((splΔΩ2D,), rpts, pi/2, nux = 1, nuy = 0)
     d2dr2ΔΩ_r = derivative.((splΔΩ2D,), rpts, pi/2, nux = 2, nuy = 0)
@@ -1013,12 +1000,31 @@ function radial_differential_rotation_profile(; operators, rotation_profile = :s
         ddrΔΩ_r = zero(ΔΩ_r)
         d2dr2ΔΩ_r = zero(ΔΩ_r)
     elseif rotation_profile == :core
-        pre = (Ω0*ΔΩ_frac)*1/2
+        pre = (Ω0*ΔΩ_frac)*5
         σr = 0.08Rsun
         r0 = 0.6Rsun
         ΔΩ_r = @. pre * (1 - tanh((rpts - r0)/σr))
         ddrΔΩ_r = @. pre * (-sech((rpts - r0)/σr)^2 * 1/σr)
         d2dr2ΔΩ_r = @. pre * (2sech((rpts - r0)/σr)^2 * tanh((rpts - r0)/σr) * 1/σr^2)
+    elseif rotation_profile == :solar_equator_core
+        ΔΩ_r_sun, = equatorial_radial_rotation_profile(; operators, kw...)
+        σr = 0.08Rsun
+        r0 = 0.6Rsun
+        ΔΩ_r_core = maximum(abs, ΔΩ_r_sun)/5 * @. (1 - tanh((rpts - r0)/σr))/2
+        r_cutoff = 0.4Rsun
+        Δr_cutoff = 0.1Rsun
+        r_in_inds = rpts .<= (r_cutoff-Δr_cutoff)
+        r_out_inds = rpts .>= (r_cutoff+Δr_cutoff)
+        r_in = rpts[r_in_inds]
+        r_out = rpts[r_out_inds]
+        perminds_in = sortperm(r_in)
+        perminds_out = sortperm(r_out)
+        r_new = [r_in[perminds_in]; r_out[perminds_out]]
+        ΔΩ_r_new = [ΔΩ_r_core[r_in_inds][perminds_in]; ΔΩ_r_sun[r_out_inds][perminds_out]]
+        ΔΩ_spl = smoothed_spline(r_new, ΔΩ_r_new; s = get(kw, :smoothing_param, 1e-3))
+        ΔΩ_r = ΔΩ_spl(rpts)
+        ddrΔΩ_r = derivative.((ΔΩ_spl,), rpts)
+        d2dr2ΔΩ_r = derivative.((ΔΩ_spl,), rpts, nu=2)
     else
         error("$rotation_profile is not a valid rotation model")
     end
@@ -1090,17 +1096,17 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
     @unpack matCU4, matCU2 = operators;
 
-    VV = matrix_block(M.re, 1, 1)
-    VW = matrix_block(M.re, 1, 2)
-    WV = matrix_block(M.re, 2, 1)
-    WW = matrix_block(M.re, 2, 2)
+    VV = matrix_block(M.re, 1, 1);
+    VW = matrix_block(M.re, 1, 2);
+    WV = matrix_block(M.re, 2, 1);
+    WW = matrix_block(M.re, 2, 2);
     if nvariables === 3
-        SV = matrix_block(M.re, 3, 1)
-        SW = matrix_block(M.re, 3, 2)
-        SS = matrix_block(M.re, 3, 3)
+        SV = matrix_block(M.re, 3, 1);
+        SW = matrix_block(M.re, 3, 2);
+        SS = matrix_block(M.re, 3, 3);
     end
 
-    @unpack Ω0 = operators.constants
+    @unpack Ω0 = operators.constants;
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv;
 
     ΔΩMCU2 = matCU2(ΔΩ);
@@ -1142,9 +1148,9 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     T = zeros(nr, nr);
 
     # V terms
-    V_ℓs = ℓrange(m, nℓ, V_symmetric)
+    V_ℓs = ℓrange(m, nℓ, V_symmetric);
     # W, S terms
-    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
+    W_ℓs = ℓrange(m, nℓ, !V_symmetric);
 
     @views for (ℓind, ℓ) in enumerate(V_ℓs)
         ℓℓp1 = ℓ * (ℓ + 1)
@@ -1220,25 +1226,6 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         # end
     end
     return M
-end
-
-function cutoff_degree(v, cutoff_power = 0.9)
-    tr = sum(abs2, v)
-    iszero(tr) && return 0
-    s = zero(eltype(v))
-    for (i, vi) in enumerate(v)
-        s += abs2(vi)
-        if (s / tr) >= cutoff_power
-            return i - 1
-        end
-    end
-    return length(v) - 1
-end
-function cutoff_legendre_degree(ΔΩ_nℓ, cutoff_power = 0.9)
-    maximum(row -> cutoff_degree(row, cutoff_power), eachrow(ΔΩ_nℓ))
-end
-function cutoff_chebyshev_degree(ΔΩ_nℓ, cutoff_power = 0.9)
-    maximum(col -> cutoff_degree(col, cutoff_power), eachcol(ΔΩ_nℓ))
 end
 
 function rotationtag(rotation_profile)
@@ -1770,7 +1757,7 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     map(first, λv), map(last, λv)
 end
 
-function eigvec_spectrum_filter_map!(Ctid, spectrumfn!::F, m, operators, constraints; kw...) where {F}
+function eigvec_spectrum_filter_map!(Ctid, spectrumfn!, m, operators, constraints; kw...)
     M, cache, temp_projectback = Ctid;
     X = spectrumfn!(M, m; operators, constraints, cache, temp_projectback, kw...);
     filter_eigenvalues(X..., m; operators, constraints, kw...)

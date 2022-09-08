@@ -2,7 +2,7 @@
 
 julia_version = "1.8.0"
 manifest_format = "2.0"
-project_hash = "4ed06f5de0f53c2d52ee0bce63d96653874799ac"
+project_hash = "fa980e02b205935ffe94e4fcce92c87750585cee"
 
 [[deps.AbstractFFTs]]
 deps = ["ChainRulesCore", "LinearAlgebra"]
@@ -137,12 +137,6 @@ git-tree-sha1 = "417b0ed7b8b838aa6ca0a87aadf1bb9eb111ce40"
 uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.12.8"
 
-[[deps.CommonSubexpressions]]
-deps = ["MacroTools", "Test"]
-git-tree-sha1 = "7b8a93dba8af7e3b42fecabf646260105ac373f7"
-uuid = "bbf7d656-a473-5ed7-a52c-81e309532950"
-version = "0.3.0"
-
 [[deps.Compat]]
 deps = ["Base64", "Dates", "DelimitedFiles", "Distributed", "InteractiveUtils", "LibGit2", "Libdl", "LinearAlgebra", "Markdown", "Mmap", "Pkg", "Printf", "REPL", "Random", "SHA", "Serialization", "SharedArrays", "Sockets", "SparseArrays", "Statistics", "Test", "UUIDs", "Unicode"]
 git-tree-sha1 = "78bee250c6826e1cf805a88b7f1e86025275d208"
@@ -222,18 +216,6 @@ deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "Pk
 git-tree-sha1 = "6596b96fe1caff3db36415eeb6e9d3b50bfe40ee"
 uuid = "cd4c43a9-7502-52ba-aa6d-59fb2a88580b"
 version = "0.1.0+0"
-
-[[deps.DiffResults]]
-deps = ["StaticArrays"]
-git-tree-sha1 = "c18e98cba888c6c25d1c3b048e4b3380ca956805"
-uuid = "163ba53b-c6d8-5494-b064-1a9d43ac40c5"
-version = "1.0.3"
-
-[[deps.DiffRules]]
-deps = ["IrrationalConstants", "LogExpFunctions", "NaNMath", "Random", "SpecialFunctions"]
-git-tree-sha1 = "992a23afdb109d0d2f8802a30cf5ae4b1fe7ea68"
-uuid = "b552c78f-8df3-52c6-915a-8e097449b14b"
-version = "1.11.1"
 
 [[deps.Distributed]]
 deps = ["Random", "Serialization", "Sockets"]
@@ -328,12 +310,6 @@ deps = ["Accessors", "BangBang", "Baselet", "DefineSingletons", "Distributed", "
 git-tree-sha1 = "638109532de382a1f99b1aae1ca8b5d08515d85a"
 uuid = "41a02a25-b8f0-4f67-bc48-60067656b558"
 version = "0.2.8"
-
-[[deps.ForwardDiff]]
-deps = ["CommonSubexpressions", "DiffResults", "DiffRules", "LinearAlgebra", "LogExpFunctions", "NaNMath", "Preferences", "Printf", "Random", "SpecialFunctions", "StaticArrays"]
-git-tree-sha1 = "187198a4ed8ccd7b5d99c41b69c679269ea2b2d4"
-uuid = "f6369f11-7733-5829-9624-2563aa707210"
-version = "0.10.32"
 
 [[deps.Future]]
 deps = ["Random"]
@@ -672,7 +648,7 @@ uuid = "ae029012-a4dd-5104-9daa-d747884805df"
 version = "1.3.0"
 
 [[deps.RossbyWaveSpectrum]]
-deps = ["ApproxFun", "BandedMatrices", "BitFlags", "BlockArrays", "BlockBandedMatrices", "DelimitedFiles", "Dierckx", "FastGaussQuadrature", "FastTransforms", "FillArrays", "Folds", "ForwardDiff", "Infinities", "JLD2", "LaTeXStrings", "LegendrePolynomials", "LinearAlgebra", "MKL", "OffsetArrays", "OrderedCollections", "Printf", "SparseArrays", "StructArrays", "TimerOutputs", "UnPack", "ZChop"]
+deps = ["ApproxFun", "ApproxFunOrthogonalPolynomials", "BandedMatrices", "BitFlags", "BlockArrays", "BlockBandedMatrices", "DelimitedFiles", "Dierckx", "FastGaussQuadrature", "FastTransforms", "FillArrays", "Folds", "IntervalSets", "JLD2", "LegendrePolynomials", "LinearAlgebra", "MKL", "OffsetArrays", "SparseArrays", "StructArrays", "TimerOutputs", "UnPack", "ZChop"]
 path = ".."
 uuid = "7fbe2b4f-a8e1-4092-9718-18aa0af13fd5"
 version = "0.1.0"
