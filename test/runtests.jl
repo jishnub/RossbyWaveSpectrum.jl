@@ -5,7 +5,6 @@ using OffsetArrays
 using Aqua
 using FastTransforms
 using Dierckx
-using FastGaussQuadrature
 using ApproxFun
 using PerformanceTestTools
 using UnPack

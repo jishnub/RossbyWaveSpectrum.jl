@@ -7,7 +7,6 @@ using BandedMatrices
 using BlockArrays
 using BlockBandedMatrices
 using Dierckx
-using FastGaussQuadrature
 using FillArrays
 using Folds
 using JLD2

@@ -648,7 +648,7 @@ uuid = "ae029012-a4dd-5104-9daa-d747884805df"
 version = "1.3.0"
 
 [[deps.RossbyWaveSpectrum]]
-deps = ["ApproxFun", "ApproxFunOrthogonalPolynomials", "BandedMatrices", "BitFlags", "BlockArrays", "BlockBandedMatrices", "DelimitedFiles", "Dierckx", "FastGaussQuadrature", "FastTransforms", "FillArrays", "Folds", "IntervalSets", "JLD2", "LegendrePolynomials", "LinearAlgebra", "MKL", "OffsetArrays", "SparseArrays", "StructArrays", "TimerOutputs", "UnPack", "ZChop"]
+deps = ["ApproxFun", "ApproxFunOrthogonalPolynomials", "BandedMatrices", "BitFlags", "BlockArrays", "BlockBandedMatrices", "DelimitedFiles", "Dierckx", "FastTransforms", "FillArrays", "Folds", "IntervalSets", "JLD2", "LegendrePolynomials", "LinearAlgebra", "MKL", "OffsetArrays", "SparseArrays", "StructArrays", "TimerOutputs", "UnPack", "ZChop"]
 path = ".."
 uuid = "7fbe2b4f-a8e1-4092-9718-18aa0af13fd5"
 version = "0.1.0"
