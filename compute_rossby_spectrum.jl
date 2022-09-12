@@ -18,7 +18,9 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
     print_timer = false
     scale_eigenvectors = false
 
-    trackingratescaling = 1.01
+    # bit of a hack to reduce the doppler shift in the radial differential rotation case
+    # should be removed to compare with the Sun
+    trackingratescaling = (diffrot && (diffrotprof = :radial_solar_equator)) ? 1.01 : 1.0
     scalings = (; trackingratescaling)
 
     @info "operators"
