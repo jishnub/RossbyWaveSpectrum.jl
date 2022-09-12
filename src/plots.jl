@@ -71,8 +71,8 @@ end
 
 struct Measurement
     value :: Float64
-    lowerr :: Float64
     higherr :: Float64
+    lowerr :: Float64
 end
 Measurement(a, b) = Measurement(a, b, b)
 value(m::Measurement) = m.value
