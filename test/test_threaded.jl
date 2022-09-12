@@ -33,6 +33,6 @@ using Folds
         @test length(λuf) > 0
 
         @test λuf ≈ λs[ind]
-        @test vuf ≈ vs[ind]
+        @test vuf ≈ vs[ind] rtol=2e-3
     end
 end

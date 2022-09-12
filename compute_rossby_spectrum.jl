@@ -56,8 +56,8 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
 end
 
 function main()
-    nr = 50
-    nℓ = 20;
+    nr = 60
+    nℓ = 30;
     mrange = 1:15;
     diffrot = false;
     diffrotprof = :constant
