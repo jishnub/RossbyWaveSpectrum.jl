@@ -360,7 +360,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     @checkncoeff ddr_ηρbyr nr
 
     # ddr_ηρbyr = ddr * ηρ_by_r
-    d2dr2_ηρ = chop!(Fun(d2dr2sηρ, radialspace, 20), 1e-2);
+    d2dr2_ηρ = chop!(Fun(d2dr2sηρ, radialspace), 1e-2);
     @checkncoeff d2dr2_ηρ nr
 
     d3dr3_ηρ = chop(Fun(d3dr3sηρ, radialspace), 1e-2)
@@ -387,7 +387,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     ν /= Ω0 * Rsun^2
     κ = ν
 
-    δ = Fun(superadiabaticity, radialspace, 20);
+    δ = Fun(superadiabaticity, radialspace);
     γ = 1.64
     cp = 1.7e8
 
