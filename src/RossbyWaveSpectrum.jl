@@ -344,7 +344,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     ddr_plus_2byr = (ddr + 2onebyr)::Tplus
 
     # ηρ_by_r = onebyr * ηρ
-    ηρ_by_r = chop(Fun(sηρ_by_r ∘ r, radialspace), 1e-2);
+    ηρ_by_r = chop(Fun(sηρ_by_r, radialspace), 1e-2);
     @checkncoeff ηρ_by_r nr
 
     ηρ_by_r2 = ηρ * onebyr2
