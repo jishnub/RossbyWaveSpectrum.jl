@@ -312,8 +312,11 @@ function damping_highfreqridge(lam, mr; operators, f = figure(), ax = subplot(),
 
     # model
     λs_HFRridge = [
-    (isempty(λ) || m < 6 ? eltype(λ)(NaN + im*NaN) :
-        λ[argmin(abs.(real.(λ) .- 3 * RossbyWaveSpectrum.rossby_ridge(m)))]) for (m,λ) in zip(mr, lam)]
+    isempty(λ) || m < 5 ? eltype(λ)(NaN + im*NaN) : begin
+        approx_HFR_freq = 2.5 * RossbyWaveSpectrum.rossby_ridge(m)
+        λ_below = λ[real.(λ) .< approx_HFR_freq]
+        λ_below[argmin(abs.(real.(λ_below) .- approx_HFR_freq))]
+        end for (m,λ) in zip(mr, lam)]
 
     ax.plot(mr, imag.(λs_HFRridge) .* 2 #= HWHM to FWHM =# * νnHzunit,
             ls="dotted", color="grey", marker="o", mfc="white",
