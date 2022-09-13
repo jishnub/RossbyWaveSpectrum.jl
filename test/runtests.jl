@@ -376,7 +376,7 @@ end
         nparams = nr * nℓ
         m = 1
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-        @unpack diff_operators, rad_terms, coordinates, radial_params, identities = operators;
+        @unpack diff_operators, rad_terms, coordinates, radial_params = operators;
         @unpack rpts = coordinates;
         @unpack nvariables = operators;
         @unpack ν = operators.constants;
@@ -384,7 +384,6 @@ end
         Δr = radial_params.Δr::Float64;
         a = 1 / (Δr / 2);
         b = -r_mid / (Δr / 2);
-        @unpack Iℓ = identities;
         @unpack ddr, d2dr2, DDr = diff_operators;
         @unpack r2, r, ηρ = rad_terms;
         @unpack r_in, r_out = operators.radial_params;

@@ -313,8 +313,8 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     @unpack splines = solar_structure_parameter_splines(; r_in, r_out, _stratified);
 
-    @unpack sρ, sg, sηρ, ddrsηρ, d2dr2sηρ,
-        sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ, sT, sηT = splines;
+    @unpack sg, sηρ, ddrsηρ, d2dr2sηρ,
+        sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ, sηT = splines;
 
     ddr = ApproxFun.Derivative();
     rddr = (r * ddr)::Tmul;
@@ -396,9 +396,6 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     ddr_S0_by_cp_by_r2 = chop(onebyr2 * ddr_S0_by_cp, 1e-4)
 
-    Ir = I(nchebyr)
-    Iℓ = I(nℓ)
-
     # matrix representations
 
     matCU2 = x -> operatormatrix(x, nr, radialspace => rangespace(d2dr2:radialspace))
@@ -446,7 +443,6 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     @pack! scalings = Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling
 
     constants = (; κ, ν, Ω0) |> pairs |> Dict
-    identities = (; Ir, Iℓ) |> pairs |> Dict
 
     coordinates = Dict{Symbol, Vector{Float64}}()
     @pack! coordinates = rpts
@@ -454,7 +450,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     rad_terms = Dict{Symbol, typeof(r)}();
     @pack! rad_terms = onebyr, ηρ, ηT,
         onebyr2, onebyr3, onebyr4,
-        ηρT, ddr_S0_by_cp, g, r, r2,
+        ηρT, g, r, r2,
         ηρ_by_r, ηρ_by_r2, ηρ2_by_r2, ddr_ηρbyr, ddr_ηρbyr2, ηρ_by_r3,
         ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddr_S0_by_cp_by_r2,
         ddrηρ_by_r, d2dr2ηρ_by_r
@@ -488,7 +484,6 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         diff_operators,
         coordinates,
         radial_params,
-        identities,
         operator_matrices,
         matCU2, matCU4,
         _stratified,
