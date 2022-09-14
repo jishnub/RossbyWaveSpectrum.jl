@@ -587,7 +587,7 @@ end
 function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMatrix, m;
         operators, f = figure(), kw...)
 
-    @unpack rpts = operators.coordinates;
+    @unpack rpts = operators;
     rsurfind = argmax(rpts)
 
     ax = f.add_subplot()
@@ -763,7 +763,7 @@ function _plot_diffrot_radial(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ; ncoeffs = 
     return nothing
 end
 function plot_diffrot_radial(; operators, kw...)
-    @unpack rpts = operators.coordinates
+    @unpack rpts = operators
 
     @unpack Ω0 = operators.constants
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
@@ -822,7 +822,7 @@ end
 function plot_constraint_basis(; operators, constraints = RossbyWaveSpectrum.constraintmatrix(operators), kw...)
     @unpack nullspacematrices = constraints
     @unpack radialspace = operators;
-    @unpack rpts = operators.coordinates
+    @unpack rpts = operators
 
     f, axlist = subplots(1,3, sharex = true)
     n_cutoff = 4
@@ -857,7 +857,7 @@ end
 
 function plot_scale_heights(; operators, kw...)
     f, axlist = subplots(1,2, sharex = true)
-    @unpack rpts = operators.coordinates
+    @unpack rpts = operators
     @unpack ηρ, ηT = operators.rad_terms
     r_frac = rpts/Rsun
     ax = axlist[1]

@@ -25,7 +25,7 @@ end
         nr, nℓ = 50, 25
         @testset "shallow" begin
             operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.7);
-            @unpack rpts = operators.coordinates;
+            @unpack rpts = operators;
             @unpack sρ, sg, sηρ, ddrsηρ, d2dr2sηρ, d3dr3sηρ, sT, sηT = operators.splines;
             @unpack ηρ, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ = operators.rad_terms;
 
@@ -37,7 +37,7 @@ end
 
         @testset "deep" begin
             operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, r_in_frac = 0.5);
-            @unpack rpts = operators.coordinates;
+            @unpack rpts = operators;
             @unpack sρ, sg, sηρ, ddrsηρ, d2dr2sηρ, d3dr3sηρ, sT, sηT = operators.splines;
             @unpack ηρ, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ = operators.rad_terms;
 
@@ -97,7 +97,7 @@ end
     @unpack sρ, sT, sg, sηρ, sηT = RossbyWaveSpectrum.solar_structure_parameter_splines(; r_in, r_out).splines;
 
     operators = RossbyWaveSpectrum.radial_operators(50, 2; r_in_frac, r_out_frac);
-    @unpack rpts = operators.coordinates;
+    @unpack rpts = operators;
 
     ModelS = RossbyWaveSpectrum.read_solar_model()
     r_modelS = @view ModelS[:, 1];
@@ -376,8 +376,7 @@ end
         nparams = nr * nℓ
         m = 1
         operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-        @unpack diff_operators, rad_terms, coordinates, radial_params = operators;
-        @unpack rpts = coordinates;
+        @unpack diff_operators, rad_terms, rpts, radial_params = operators;
         @unpack nvariables = operators;
         @unpack ν = operators.constants;
         r_mid = radial_params.r_mid::Float64;
@@ -398,7 +397,7 @@ end
         @testset "convergence of diff rot profile" begin
             local nr, nℓ = 50, 10
             local operators1 = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-            local r1 = operators1.coordinates[:rpts];
+            local r1 = operators1.rpts;
             local operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
             local operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
 

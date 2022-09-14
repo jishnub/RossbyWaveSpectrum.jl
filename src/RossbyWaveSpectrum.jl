@@ -306,6 +306,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     radial_params = parameters(nr, nℓ; r_in, r_out);
     @unpack Δr, nchebyr, r_mid = radial_params;
     rpts = points(radialspace, nr);
+    surface_ind = argmin(abs.(rpts .- 1));
 
     r = Fun(radialspace);
     r2 = r^2;
@@ -446,9 +447,6 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     constants = (; κ, ν, Ω0) |> pairs |> Dict
 
-    coordinates = Dict{Symbol, Vector{Float64}}()
-    @pack! coordinates = rpts
-
     rad_terms = Dict{Symbol, typeof(r)}();
     @pack! rad_terms = onebyr, ηρ, ηT,
         onebyr2, onebyr3, onebyr4,
@@ -484,7 +482,8 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         scalings,
         splines,
         diff_operators,
-        coordinates,
+        rpts,
+        surface_ind,
         radial_params,
         operator_matrices,
         matCU2, matCU4,
@@ -969,7 +968,7 @@ function read_angular_velocity(operators; smoothing_param = 1e-4)
 end
 
 function equatorial_radial_rotation_profile(; operators, kw...)
-    @unpack rpts = operators.coordinates
+    @unpack rpts = operators
     @unpack Ω0 = operators.constants
     splΔΩ2D = read_angular_velocity(operators; kw...)
     ΔΩ_r = splΔΩ2D.(rpts, pi/2)
@@ -980,7 +979,7 @@ end
 
 function radial_differential_rotation_profile(; operators, rotation_profile = :solar_equator, ΔΩ_frac = 0.01, kw...)
 
-    @unpack rpts = operators.coordinates
+    @unpack rpts = operators
     @unpack r_out, nr, r_in = operators.radial_params
     @unpack Ω0 = operators.constants
 
@@ -1048,7 +1047,7 @@ end
 
 function radial_differential_rotation_profile_derivatives(; operators, kw...)
 
-    @unpack rpts = operators.coordinates;
+    @unpack rpts = operators;
     @unpack nℓ, Δr = operators.radial_params;
 
     f = radial_differential_rotation_profile(; operators, kw...);
@@ -1462,6 +1461,10 @@ end
 
 allocate_Pl(m, nℓ) = zeros(range(m, length = 2nℓ + 1))
 
+function peakindabs1(X)
+    findmax(ind -> sum(abs2, @view X[ind, :]), axes(X, 1))[2]
+end
+
 function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     θ_cutoff = deg2rad(60), equator_power_cutoff_frac = 0.3;
     nℓ = operators.radial_params.nℓ,
@@ -1477,7 +1480,8 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     for X in fields
-        peak_latprofile = @view X[end, :]
+        r_ind_peak = peakindabs1(X)
+        peak_latprofile = @view X[r_ind_peak, :]
         θlowind = searchsortedfirst(θ, θ_cutoff)
         θhighind = searchsortedlast(θ, pi - θ_cutoff)
         powfrac = sum(abs2, @view peak_latprofile[θlowind:θhighind]) / sum(abs2, peak_latprofile)
