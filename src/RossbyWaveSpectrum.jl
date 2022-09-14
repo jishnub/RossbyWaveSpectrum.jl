@@ -22,6 +22,7 @@ using UnPack
 using ZChop
 
 export datadir
+export rossbyeigenfilename
 export Filters
 export filteredeigen
 export FilteredEigen
@@ -1833,7 +1834,8 @@ end
 
 filenamerottag(isdiffrot, diffrot_profile) = isdiffrot ? "dr_$diffrot_profile" : "ur"
 filenamesymtag(Vsym) = Vsym ? "sym" : "asym"
-rossbyeigenfilename(nr, nℓ, rottag, symtag) = datadir("$(rottag)_nr$(nr)_nl$(nℓ)$(symtag).jld2")
+rossbyeigenfilename(nr, nℓ, rottag, symtag, modeltag = "") =
+    datadir("$(rottag)_nr$(nr)_nl$(nℓ)_$(symtag)$((isempty(modeltag) ? "" : "_") * modeltag).jld2")
 
 function rossbyeigenfilename(; operators, kw...)
     isdiffrot = get(kw, :diffrot, false)

@@ -66,7 +66,7 @@ end
 function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
         ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
-            label = ΔΩ_frac == 0 ? "2Ω/(m+1)" : "Doppler\nshifted",
+            label = ΔΩ_frac == 0 ? L"\frac{2(Ω/2π)}{m+1}" : "Doppler\nshifted",
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
             zorder = 0,
