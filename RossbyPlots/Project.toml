@@ -1,4 +1,4 @@
-name = "plots"
+name = "RossbyPlots"
 uuid = "acc5d94c-3556-452d-bda2-c31719193afc"
 authors = ["Jishnu Bhattacharya <jishnub@users.noreply.github.com>"]
 version = "0.1.0"

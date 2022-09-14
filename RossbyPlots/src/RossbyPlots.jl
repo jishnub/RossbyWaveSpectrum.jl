@@ -1,4 +1,4 @@
-module plots
+module RossbyPlots
 
 Base.Experimental.@optlevel 1
 
