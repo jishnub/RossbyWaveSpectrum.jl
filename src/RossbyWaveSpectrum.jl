@@ -1016,7 +1016,7 @@ function radial_differential_rotation_profile(; operators, rotation_profile = :s
         perminds_out = sortperm(r_out)
         r_new = [r_in[perminds_in]; r_out[perminds_out]]
         ΔΩ_r_new = [ΔΩ_r_core[r_in_inds][perminds_in]; ΔΩ_r_sun[r_out_inds][perminds_out]]
-        ΔΩ_spl = smoothed_spline(r_new, ΔΩ_r_new; s = get(kw, :smoothing_param, 1e-3))
+        ΔΩ_spl = smoothed_spline(r_new, ΔΩ_r_new; s = get(kw, :smoothing_param, 1e-5))
         ΔΩ_r = ΔΩ_spl(rpts)
         ddrΔΩ_r = derivative.((ΔΩ_spl,), rpts)
         d2dr2ΔΩ_r = derivative.((ΔΩ_spl,), rpts, nu=2)

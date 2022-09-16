@@ -8,8 +8,8 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
     bc_atol = 1e-5
 
     # filtering parameters
-    Δl_cutoff = min(25, nℓ-2);
-    n_cutoff = min(25, nr-2)
+    Δl_cutoff = min(15, nℓ-2);
+    n_cutoff = min(15, nr-2)
     eigvec_spectrum_power_cutoff = 0.9;
 
     eigen_rtol = 0.01;
@@ -19,7 +19,8 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
 
     # bit of a hack to reduce the doppler shift in the radial differential rotation case
     # should be removed to compare with the Sun
-    trackingratescaling = (diffrot && (diffrotprof = :radial_solar_equator)) ? 1.01 : 1.0
+    trackingratescaling = 1.0
+    # trackingratescaling = (diffrot && (diffrotprof = :radial_solar_equator)) ? 1.01 : 1.0
     scalings = (; trackingratescaling)
 
     @info "operators"
@@ -60,8 +61,8 @@ function main()
     nr = 60
     nℓ = 30;
     mrange = 1:15;
-    diffrot = false;
-    diffrotprof = :constant
+    diffrot = true;
+    diffrotprof = :radial_solar_equator
 
     taskno = parse(Int, ENV["SLURM_PROCID"])
     V_symmetric = (true, false)[taskno + 1]
