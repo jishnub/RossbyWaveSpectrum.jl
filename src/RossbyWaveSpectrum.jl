@@ -306,7 +306,6 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
     radial_params = parameters(nr, nℓ; r_in, r_out);
     @unpack Δr, nchebyr, r_mid = radial_params;
     rpts = points(radialspace, nr);
-    surface_ind = argmin(abs.(rpts .- 1));
 
     r = Fun(radialspace);
     r2 = r^2;
@@ -478,15 +477,16 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         radialdomain,
         radialspace,
         nvariables,
-        constants, rad_terms,
+        constants,
+        rad_terms,
         scalings,
         splines,
         diff_operators,
         rpts,
-        surface_ind,
         radial_params,
         operator_matrices,
-        matCU2, matCU4,
+        matCU2,
+        matCU4,
         _stratified,
     )
 
@@ -953,7 +953,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
-function read_angular_velocity(operators; smoothing_param = 1e-4)
+function read_angular_velocity(operators; smoothing_param = 1e-5)
     @unpack r_out = operators.radial_params;
     @unpack Ω0 = operators.constants
 

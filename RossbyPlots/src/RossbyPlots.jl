@@ -748,7 +748,33 @@ function plot_matrix_block(M, rowind, colind, nℓ, ℓind, ℓ′ind, nvariable
     f.tight_layout()
 end
 
-function _plot_diffrot_radial(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ; ncoeffs = true, labelpre = "", kw...)
+function plot_diffrot_radial(; operators, kw...)
+    r_raw = RossbyWaveSpectrum.read_angular_velocity_radii()
+    Ω_raw = RossbyWaveSpectrum.read_angular_velocity_raw()
+    θinds = axes(Ω_raw,2)
+    eqind = first(θinds) + (first(θinds) + last(θinds)) ÷ 2
+    Ω_raw_eq = Ω_raw[:, eqind]
+    @unpack Ω0 = operators.constants
+    ΔΩ_raw_eq = Ω_raw_eq .- Ω0
+
+    plot(r_raw, ΔΩ_raw_eq*1e9/2pi)
+
+    @unpack rpts = operators
+    (; ΔΩ,) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+        operators, rotation_profile = :solar_equator, kw...);
+
+    plot(rpts/Rsun, ΔΩ.(rpts)*Ω0*1e9/2pi)
+    xmin, xmax = extrema(rpts)./Rsun
+    Δx = xmax - xmin
+    pad = Δx*0.1
+    xlim(xmin - pad, xmax + pad)
+    axhline(0, ls="dotted", color="black")
+    axvline(operators.radial_params[:r_out]/Rsun, ls="dotted", color="black")
+    xlabel(L"r/R_\odot")
+    ylabel(L"\Delta\Omega/2\pi" * " [nHz]")
+end
+
+function _plot_diffrot_radial_derivatives(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ; ncoeffs = true, labelpre = "", kw...)
     r_frac = rpts/Rsun
     axlist[1].plot(r_frac, ΔΩ.(rpts);
         label = labelpre * (ncoeffs ? "ncoeff = $(ncoefficients(ΔΩ))" : ""), kw...)
@@ -762,7 +788,7 @@ function _plot_diffrot_radial(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ; ncoeffs = 
     axlist[3].set_ylabel(L"R_\odot^2 \frac{d^2\Delta\Omega}{dr^2}")
     return nothing
 end
-function plot_diffrot_radial(; operators, kw...)
+function plot_diffrot_radial_derivatives(; operators, kw...)
     @unpack rpts = operators
 
     @unpack Ω0 = operators.constants
@@ -770,12 +796,12 @@ function plot_diffrot_radial(; operators, kw...)
         operators, kw...);
 
     f, axlist = subplots(3, 1, sharex = true)
-    _plot_diffrot_radial(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ, zorder = 2, color="0.5",
+    _plot_diffrot_radial_derivatives(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ, zorder = 2, color="0.5",
         labelpre = "model, ", marker = ".", ls = "solid")
     if get(kw, :rotation_profile, :solar_equator) !== :solar_equator
         (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
         operators, kw..., rotation_profile = :solar_equator);
-        _plot_diffrot_radial(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ, labelpre = "solar",
+        _plot_diffrot_radial_derivatives(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ, labelpre = "solar",
             ncoeffs = false, color="0.6", zorder = 1, ls = "dashed")
     end
 

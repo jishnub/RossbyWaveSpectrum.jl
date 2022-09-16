@@ -417,14 +417,14 @@ end
                 # make sure that nothing nonsensical is happening, and the points are scaled
                 @test !isapprox(ΔΩ1.(r1), zeros(nr), atol=1e-12)
                 @test ΔΩ1.(r1) ≈ ΔΩ2.(r1) rtol=1e-2
-                @test ddrΔΩ1.(r1) ≈ ddrΔΩ2.(r1) rtol=5e-2
-                @test d2dr2ΔΩ1.(r1) ≈ d2dr2ΔΩ2.(r1) rtol=1e-1
+                @test ddrΔΩ1.(r1) ≈ ddrΔΩ2.(r1) rtol=8e-2
+                @test d2dr2ΔΩ1.(r1) ≈ d2dr2ΔΩ2.(r1) rtol=2e-1
             end
 
             @testset "nr+5, nℓ+5" begin
                 @test ΔΩ1.(r1) ≈ ΔΩ3.(r1) rtol=1e-2
-                @test ddrΔΩ1.(r1) ≈ ddrΔΩ3.(r1) rtol=5e-2
-                @test d2dr2ΔΩ1.(r1) ≈ d2dr2ΔΩ3.(r1) rtol=1e-1
+                @test ddrΔΩ1.(r1) ≈ ddrΔΩ3.(r1) rtol=8e-2
+                @test d2dr2ΔΩ1.(r1) ≈ d2dr2ΔΩ3.(r1) rtol=2e-1
             end
         end
 
@@ -456,7 +456,7 @@ end
                         M2_ssv = matrix_block(M_subsample.re, rowind, colind);
                         M1v = matrix_block(M1.re, rowind, colind);
 
-                        rtol = rowind == colind == 2 ? 5e-2 : 1e-2
+                        rtol = rowind == colind == 2 ? 8e-2 : 1e-2
 
                         @test blockwise_isapprox(M2_ssv, M1v; rtol)
                     end
@@ -475,7 +475,7 @@ end
                         M3_ssv = matrix_block(M_subsample.re, rowind, colind)
                         M1v = matrix_block(M1.re, rowind, colind)
 
-                        rtol = rowind == colind == 2 ? 5e-2 : 1e-2
+                        rtol = rowind == colind == 2 ? 8e-2 : 1e-2
 
                         @test blockwise_isapprox(M3_ssv, M1v; rtol)
                     end
