@@ -135,6 +135,22 @@ const HansonHFFit = OrderedDict(
     14 => (; ν = Measurement(-181.4, 23.5, 22.8), γ = Measurement(42.7, 76.1, 28.4)),
 )
 
+const HansonGONGfit = OrderedDict(
+    3 => (; ν = Measurement(-242.8, 3.1), γ = Measurement(30.4, 7.7, 6.2)),
+    4 => (; ν = Measurement(-197.7, 2.7), γ = Measurement(24.8, 6.8, 5.3)),
+    5 => (; ν = Measurement(-153.2, 3.7), γ = Measurement(29.2, 9.9, 7.4)),
+    6 => (; ν = Measurement(-122.1, 4.4), γ = Measurement(51.2, 11.2, 9.2)),
+    7 => (; ν = Measurement(-110.4, 2.7), γ = Measurement(28.6, 6.4, 5.3)),
+    8 => (; ν = Measurement(-91.7, 2.7), γ = Measurement(30.6, 6.3, 5.2)),
+    9 => (; ν = Measurement(-84.0, 3.2), γ = Measurement(35.7, 7.7, 6.3)),
+    10 => (; ν = Measurement(-74.8, 3.0), γ = Measurement(28.1, 7.4, 5.9)),
+    11 => (; ν = Measurement(-55.6, 4.0), γ = Measurement(36.7, 10.3, 8.1)),
+    12 => (; ν = Measurement(-60.0, 3.2), γ = Measurement(26.4, 8.5, 6.5)),
+    13 => (; ν = Measurement(-54.9, 4.8), γ = Measurement(46.7, 12.6, 9.9)),
+    14 => (; ν = Measurement(-51.6, 4.9), γ = Measurement(38.1, 13.8, 10.1)),
+    15 => (; ν = Measurement(-43.0, 4.5), γ = Measurement(44.5, 11.8, 9.3)),
+)
+
 function errorbars_pyplot(mmnt::AbstractVector{Measurement})
     hcat(lowerr.(mmnt), higherr.(mmnt))'
 end
@@ -230,6 +246,7 @@ function spectrum(lam::AbstractArray, mr;
         rotation = get(kw, :rotation, "uniform")
         f.savefig(joinpath(plotdir, "$(rotation)_rotation_spectrum_$(filenametag).eps"))
     end
+    f, ax
 end
 
 function uniform_rotation_spectrum(fsym::FilteredEigen, fasym::FilteredEigen; kw...)
@@ -361,6 +378,62 @@ for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge, :plot_high_fr
     @eval function $f(feig::FilteredEigen; kw...)
         $f(feig.lams, feig.mr; operators = feig.operators, feig.kw..., kw...)
     end
+end
+
+function diffrot_rossby_ridge(Frsym, ΔΩ_frac_target = 0.005; plot_lower_cutoff = false, plot_spectrum = false)
+    lams = Frsym.lams
+    mr = 8:15 # only fit at high m, anyway these are the ones that converge
+    lams = lams[mr]
+    @unpack Ω0 = Frsym.operators.constants
+    ν0 = freqnHzunit(Ω0)
+    ν0_Sun = 453.1
+    λRossby = RossbyWaveSpectrum.rossby_ridge.(mr, ΔΩ_frac = ΔΩ_frac_target)
+    lams_realfilt = map(zip(mr, lams, λRossby)) do (m, lam, λR)
+        λRossby_low = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_frac = 0.02)
+        lams_realfilt = filter(lam) do λ
+            λRossby_low < real(λ) < λR
+        end
+        lams_realfilt[argmin(abs.(imag.(lams_realfilt)))]
+    end
+    lams_realfilt_plot = lams_realfilt.*ν0
+    plot_spectrum && begin
+        f, ax = spectrum(Frsym)
+        ax.plot(mr, lams_realfilt_plot, ".-")
+        plot_lower_cutoff && ax.plot(mr, λRossby.*ν0, ".--")
+    end
+
+    f, ax = subplots(1,1)
+    mr_Hanson = collect(keys(HansonGONGfit))
+    ν0_uniform_at_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr_Hanson).*(-ν0_Sun)
+    γ_H = [HansonGONGfit[m].ν for m in mr_Hanson]
+    γ_H_val = value.(γ_H)
+
+    ax.errorbar(mr_Hanson, γ_H_val .- ν0_uniform_at_tracking_rate,
+        yerr = errorbars_pyplot(γ_H),
+        color= "brown", ls="None", capsize = 3, label="Hanson 2020 [GONG]",
+        zorder = 3, marker = ".", ms = 5, mfc = "k")
+
+    ΔΩ_frac_fit_Hanson = 0.0025 # ideally least square estimate
+    ν0_Rossby_shifted_Hanson = RossbyWaveSpectrum.rossby_ridge.(mr_Hanson, ΔΩ_frac = ΔΩ_frac_fit_Hanson).*(-ν0_Sun)
+    ax.plot(mr_Hanson, ν0_Rossby_shifted_Hanson .- ν0_uniform_at_tracking_rate, "--",
+        label=L"ν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_frac_fit_Hanson * ν0_Sun, sigdigits=2)) nHz]", zorder=1)
+
+    ν0_uniform_at_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr).*(-ν0)
+
+    ax.plot(mr, -lams_realfilt_plot - ν0_uniform_at_tracking_rate,
+        "o", color="grey", ms=4, label="model, radial rotation", zorder=5)
+
+    ΔΩ_frac_fit = 0.015 # ideally least square estimate
+    ν0_Rossby_shifted = RossbyWaveSpectrum.rossby_ridge.(mr, ΔΩ_frac = ΔΩ_frac_fit).*(-ν0)
+    ax.plot(mr, ν0_Rossby_shifted - ν0_uniform_at_tracking_rate, "--",
+        label=L"ν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_frac_fit * ν0, sigdigits=2)) nHz]", zorder=1)
+
+
+    ax.axhline(0, ls="dotted", color="black")
+    ax.set_xlabel("m")
+    ax.set_ylabel(L"\nu + \frac{2\Omega_\mathrm{eq}\,/2\pi}{m+1}" * " [nHz]")
+    ax.legend(loc="best")
+    f.tight_layout()
 end
 
 function piformatter(x, _)
@@ -757,13 +830,16 @@ function plot_diffrot_radial(; operators, kw...)
     @unpack Ω0 = operators.constants
     ΔΩ_raw_eq = Ω_raw_eq .- Ω0
 
-    plot(r_raw, ΔΩ_raw_eq*1e9/2pi)
+    @unpack r_in = operators.radial_params
+    r_in_frac = r_in / Rsun
+
+    plot(r_raw[r_raw .>= r_in_frac], ΔΩ_raw_eq[r_raw .>= r_in_frac]*1e9/2pi, label="solar equatorial rotation")
 
     @unpack rpts = operators
     (; ΔΩ,) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
         operators, rotation_profile = :solar_equator, kw...);
 
-    plot(rpts/Rsun, ΔΩ.(rpts)*Ω0*1e9/2pi)
+    plot(rpts/Rsun, ΔΩ.(rpts)*Ω0*1e9/2pi, label="smoothed model")
     xmin, xmax = extrema(rpts)./Rsun
     Δx = xmax - xmin
     pad = Δx*0.1
@@ -772,6 +848,7 @@ function plot_diffrot_radial(; operators, kw...)
     axvline(operators.radial_params[:r_out]/Rsun, ls="dotted", color="black")
     xlabel(L"r/R_\odot")
     ylabel(L"\Delta\Omega/2\pi" * " [nHz]")
+    legend(loc="best")
 end
 
 function _plot_diffrot_radial_derivatives(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ; ncoeffs = true, labelpre = "", kw...)
