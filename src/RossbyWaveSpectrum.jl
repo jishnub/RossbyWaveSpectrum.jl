@@ -292,11 +292,12 @@ Base.propertynames(y::OperatorWrap) = Base.propertynames(getfield(y, :x))
 
 const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
 function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
+    trackingrate = :cutoff,
     scalings = DefaultScalings)
     scalings = merge(DefaultScalings, scalings)
-    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, Tuple(scalings))
+    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate, Tuple(scalings))
 end
-function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν,
+function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate,
         (Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling))
 
     r_in = r_in_frac * Rsun;
@@ -382,7 +383,14 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
 
     g = Fun(sg, radialspace)
 
-    Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity_surface(r_out_frac) * trackingratescaling
+    tracking_rate_rad = if trackingrate === :cutoff
+            r_out_frac
+        elseif trackingrate === :surface
+            1.0
+        else
+            throw(ArgumentError("trackingrate must be one of :cutoff or :surface"))
+        end
+    Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity_surface(tracking_rate_rad) * trackingratescaling
 
     # viscosity
     ν /= Ω0 * Rsun^2
@@ -977,6 +985,18 @@ function equatorial_radial_rotation_profile(; operators, kw...)
     ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
 end
 
+function equatorial_radial_rotation_profile_squished(; operators, kw...)
+    @unpack rpts = operators;
+    @unpack r_out = operators.radial_params;
+    @unpack Ω0 = operators.constants;
+    splΔΩ2D = read_angular_velocity(operators; kw...)
+    rpts_stretched = rpts ./ r_out .* Rsun
+    ΔΩ_r = splΔΩ2D.(rpts_stretched, pi/2)
+    ddrΔΩ_r = derivative.((splΔΩ2D,), rpts_stretched, pi/2, nux = 1, nuy = 0)
+    d2dr2ΔΩ_r = derivative.((splΔΩ2D,), rpts_stretched, pi/2, nux = 2, nuy = 0)
+    ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
+end
+
 function radial_differential_rotation_profile(; operators, rotation_profile = :solar_equator, ΔΩ_frac = 0.01, kw...)
 
     @unpack rpts = operators
@@ -985,6 +1005,8 @@ function radial_differential_rotation_profile(; operators, rotation_profile = :s
 
     if rotation_profile == :solar_equator
         ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = equatorial_radial_rotation_profile(; operators, kw...)
+    elseif rotation_profile == :solar_equator_squished
+        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = equatorial_radial_rotation_profile_squished(; operators, kw...)
     elseif rotation_profile == :linear # for testing
         f = ΔΩ_frac / (r_in / Rsun - 1)
         ΔΩ_r = @. Ω0 * f * (rpts / Rsun - 1)
@@ -1101,8 +1123,10 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         SS = matrix_block(M.re, 3, 3);
     end
 
-    @unpack Ω0 = operators.constants;
+    # @unpack Ω0 = operators.constants;
+    @unpack r_out = operators.radial_params;
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv;
+    Ω0 = ΔΩ(r_out)
 
     ΔΩMCU2 = matCU2(ΔΩ);
     ddrΔΩMCU2 = matCU2(ddrΔΩ);
@@ -2040,6 +2064,6 @@ function eigenfunction_n_theta!(VWSinv, F, v, m;
 end
 
 # precompile
-precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64, NTuple{5,Float64}))
+precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64, Symbol, NTuple{5,Float64}))
 
 end # module

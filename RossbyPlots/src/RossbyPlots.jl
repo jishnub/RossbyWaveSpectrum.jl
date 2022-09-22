@@ -11,6 +11,7 @@ import ApproxFun: ncoefficients, itransform
 using LaTeXStrings
 using LinearAlgebra
 using OrderedCollections
+using Polynomials
 using Printf
 using StructArrays
 using UnPack
@@ -20,6 +21,7 @@ const StructMatrix{T} = StructArray{T,2}
 export spectrum
 export uniform_rotation_spectrum
 export differential_rotation_spectrum
+export diffrot_rossby_ridg
 export plot_diffrot_radial
 export eigenfunction
 export eigenfunction_spectrum
@@ -190,7 +192,7 @@ function spectrum(lam::AbstractArray, mr;
     vmin, vmax = extrema(lamimcat)
     vmin = min(0, vmin)
     mcat = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr, lam)])
-    s = ax.scatter(mcat, lamcat; c = lamimcat, ScatterParams..., vmax = vmax, vmin = vmin)
+    s = ax.scatter(mcat, lamcat; c = lamimcat, ScatterParams..., vmax = vmax, vmin = vmin, zorder=get(kw, :zorder, 1))
     divider = axes_grid1.make_axes_locatable(ax)
     cax = divider.append_axes("right", size = "3%", pad = 0.05)
     cb = colorbar(mappable = s, cax = cax)
@@ -380,53 +382,66 @@ for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge, :plot_high_fr
     end
 end
 
-function diffrot_rossby_ridge(Frsym, ΔΩ_frac_target = 0.005; plot_lower_cutoff = false, plot_spectrum = false)
+function diffrot_rossby_ridge(Frsym, mr=8:15, ΔΩ_frac_low = 0.005, ΔΩ_frac_high = 0.04; plot_spectrum = false,
+        plot_lower_cutoff = plot_spectrum, plot_upper_cutoff = plot_spectrum)
+
     lams = Frsym.lams
-    mr = 8:15 # only fit at high m, anyway these are the ones that converge
     lams = lams[mr]
     @unpack Ω0 = Frsym.operators.constants
     ν0 = freqnHzunit(Ω0)
     ν0_Sun = 453.1
-    λRossby = RossbyWaveSpectrum.rossby_ridge.(mr, ΔΩ_frac = ΔΩ_frac_target)
-    lams_realfilt = map(zip(mr, lams, λRossby)) do (m, lam, λR)
-        λRossby_low = RossbyWaveSpectrum.rossby_ridge(m, ΔΩ_frac = 0.02)
+    λRossby_high = RossbyWaveSpectrum.rossby_ridge.(mr, ΔΩ_frac = ΔΩ_frac_low)
+    λRossby_low = RossbyWaveSpectrum.rossby_ridge.(mr, ΔΩ_frac = ΔΩ_frac_high)
+    lams_realfilt = map(zip(mr, lams, λRossby_low, λRossby_high)) do (m, lam, λRl, λRh)
         lams_realfilt = filter(lam) do λ
-            λRossby_low < real(λ) < λR
+            λRl < real(λ) < λRh
         end
-        lams_realfilt[argmin(abs.(imag.(lams_realfilt)))]
+        real.(lams_realfilt)[argmin(abs.(imag.(lams_realfilt)))]
     end
     lams_realfilt_plot = lams_realfilt.*ν0
     plot_spectrum && begin
-        f, ax = spectrum(Frsym)
-        ax.plot(mr, lams_realfilt_plot, ".-")
-        plot_lower_cutoff && ax.plot(mr, λRossby.*ν0, ".--")
+        f, ax = spectrum(Frsym, zorder=2)
+        ax.plot(mr, lams_realfilt_plot, marker="o", ls="dotted",
+            mec="black", mfc="None", ms=6, color="grey", zorder=1)
+        plot_lower_cutoff && ax.plot(mr, λRossby_low.*ν0, ".--", color="orange", zorder=0)
+        plot_upper_cutoff && ax.plot(mr, λRossby_high.*ν0, ".--", color="orange", zorder=0)
+        plot_lower_cutoff && plot_lower_cutoff && ax.fill_between(mr,
+                λRossby_low.*ν0, λRossby_high.*ν0, color="navajowhite", zorder=0)
+        ax.set_ylim(bottom = minimum(λRossby_low)*ν0*1.2)
     end
 
     f, ax = subplots(1,1)
     mr_Hanson = collect(keys(HansonGONGfit))
     ν0_uniform_at_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr_Hanson).*(-ν0_Sun)
-    γ_H = [HansonGONGfit[m].ν for m in mr_Hanson]
-    γ_H_val = value.(γ_H)
+    ν_H = [HansonGONGfit[m].ν for m in mr_Hanson]
+    ν_H_val = value.(ν_H)
 
-    ax.errorbar(mr_Hanson, γ_H_val .- ν0_uniform_at_tracking_rate,
-        yerr = errorbars_pyplot(γ_H),
+    δν = ν_H_val .- ν0_uniform_at_tracking_rate
+    ax.errorbar(mr_Hanson, δν,
+        yerr = errorbars_pyplot(ν_H),
         color= "brown", ls="None", capsize = 3, label="Hanson 2020 [GONG]",
         zorder = 3, marker = ".", ms = 5, mfc = "k")
 
-    ΔΩ_frac_fit_Hanson = 0.0025 # ideally least square estimate
-    ν0_Rossby_shifted_Hanson = RossbyWaveSpectrum.rossby_ridge.(mr_Hanson, ΔΩ_frac = ΔΩ_frac_fit_Hanson).*(-ν0_Sun)
-    ax.plot(mr_Hanson, ν0_Rossby_shifted_Hanson .- ν0_uniform_at_tracking_rate, "--",
-        label=L"ν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_frac_fit_Hanson * ν0_Sun, sigdigits=2)) nHz]", zorder=1)
+    fit_m_min = 8
+    fit_inds = mr_Hanson .>= fit_m_min
+    mr_fit = mr_Hanson[fit_inds]
+    fit_x = (m -> (m - 2/(m+1))).(mr_fit)
+    yerr = max.(higherr.(ν_H), lowerr.(ν_H))[fit_inds]
+    linear_Ro_doppler_fit = fit(fit_x, δν[fit_inds], 1, weights=1 ./ yerr.^2)
+    ΔΩ_fit = Polynomials.derivative(linear_Ro_doppler_fit)(0)
+    ax.plot(mr_Hanson, linear_Ro_doppler_fit.(mr_Hanson), "--",
+        label=L"ν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_fit, sigdigits=2)) nHz]", zorder=1)
 
     ν0_uniform_at_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr).*(-ν0)
 
-    ax.plot(mr, -lams_realfilt_plot - ν0_uniform_at_tracking_rate,
+    δν = -lams_realfilt_plot - ν0_uniform_at_tracking_rate
+    fit_x = (m -> (m - 2/(m+1))).(mr)
+    linear_Ro_doppler_fit = fit(fit_x, δν, 1)
+    ΔΩ_fit = Polynomials.derivative(linear_Ro_doppler_fit)(0)
+    ax.plot(mr, δν,
         "o", color="grey", ms=4, label="model, radial rotation", zorder=5)
-
-    ΔΩ_frac_fit = 0.015 # ideally least square estimate
-    ν0_Rossby_shifted = RossbyWaveSpectrum.rossby_ridge.(mr, ΔΩ_frac = ΔΩ_frac_fit).*(-ν0)
-    ax.plot(mr, ν0_Rossby_shifted - ν0_uniform_at_tracking_rate, "--",
-        label=L"ν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_frac_fit * ν0, sigdigits=2)) nHz]", zorder=1)
+    ax.plot(mr, linear_Ro_doppler_fit.(mr), "--",
+        label=L"ν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_fit, digits=1)) nHz]", zorder=1)
 
 
     ax.axhline(0, ls="dotted", color="black")
@@ -837,7 +852,7 @@ function plot_diffrot_radial(; operators, kw...)
 
     @unpack rpts = operators
     (; ΔΩ,) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
-        operators, rotation_profile = :solar_equator, kw...);
+        operators, rotation_profile = get(kw, :rotation_profile, :solar_equator), kw...);
 
     plot(rpts/Rsun, ΔΩ.(rpts)*Ω0*1e9/2pi, label="smoothed model")
     xmin, xmax = extrema(rpts)./Rsun
