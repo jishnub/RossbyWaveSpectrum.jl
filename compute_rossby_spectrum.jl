@@ -61,7 +61,7 @@ function main(taskno = parse(Int, ENV["SLURM_PROCID"]))
     nr = 60
     nℓ = 30;
     mrange = 1:15;
-    diffrot = true;
+    diffrot = false;
     diffrotprof = :radial_solar_equator_squished
 
     V_symmetric = (true, false)[taskno + 1]

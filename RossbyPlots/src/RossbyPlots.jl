@@ -67,7 +67,7 @@ end
 
 function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
-        ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
+        ax.plot(mr, -RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
             label = ΔΩ_frac == 0 ? L"\frac{2(Ω/2π)}{m+1}" : "Doppler\nshifted",
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
@@ -77,7 +77,7 @@ function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridges
     end
 
     if !isnothing(ridgescalefactor)
-        ax.plot(mr, ridgescalefactor .* RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit ,
+        ax.plot(mr, -ridgescalefactor .* RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit ,
             label = ΔΩ_frac == 0 ? "high-frequency" :
                     L"\Delta\Omega/\Omega_0 = " * string(round(ΔΩ_frac, sigdigits = 1)),
             lw = 1,
@@ -88,7 +88,7 @@ function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridges
     end
 
     if get(kw, :uniform_rotation_ridge, false)
-        ax.plot(mr, RossbyWaveSpectrum.rossby_ridge.(mr) .* νnHzunit,
+        ax.plot(mr, -RossbyWaveSpectrum.rossby_ridge.(mr) .* νnHzunit,
             label = "2/(m+1)",
             lw = 0.5,
             color = "black",
@@ -185,14 +185,15 @@ function spectrum(lam::AbstractArray, mr;
     @unpack Ω0 = operators.constants
 
     νnHzunit = freqnHzunit(Ω0)
-    ax.set_ylim(0.05 * νnHzunit, 1.5 * νnHzunit)
+    ax.set_ylim(minmax(-0.05 * νnHzunit, -1.5 * νnHzunit)...)
 
     lamcat = mapreduce(real, vcat, lam) .* νnHzunit
     lamimcat = mapreduce(imag, vcat, lam) .* νnHzunit
     vmin, vmax = extrema(lamimcat)
     vmin = min(0, vmin)
     mcat = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr, lam)])
-    s = ax.scatter(mcat, lamcat; c = lamimcat, ScatterParams..., vmax = vmax, vmin = vmin, zorder=get(kw, :zorder, 1))
+    s = ax.scatter(mcat, -lamcat; c = lamimcat, ScatterParams...,
+        vmax = vmax, vmin = vmin, zorder=get(kw, :zorder, 1))
     divider = axes_grid1.make_axes_locatable(ax)
     cax = divider.append_axes("right", size = "3%", pad = 0.05)
     cb = colorbar(mappable = s, cax = cax)
@@ -211,14 +212,14 @@ function spectrum(lam::AbstractArray, mr;
         lamimcat_inset = mapreduce(imag, vcat, lam[m_zoom]) .* νnHzunit
         mcat_inset = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr[m_zoom], lam[m_zoom])])
 
-        axins = ax.inset_axes([0.5, 0.6, 0.4, 0.3])
+        axins = ax.inset_axes([0.3, 0.1, 0.4, 0.4])
         ymax = (RossbyWaveSpectrum.rossby_ridge(minimum(m_zoom)) + 0.005) * νnHzunit
         ymin = (RossbyWaveSpectrum.rossby_ridge(maximum(m_zoom)) - 0.02) * νnHzunit
-        axins.set_ylim((ymin, ymax))
+        axins.set_ylim(minmax(-ymin, -ymax)...)
         axins.xaxis.set_major_locator(ticker.NullLocator())
         axins.yaxis.set_major_locator(ticker.NullLocator())
         plt.setp(axins.spines.values(), color = "0.2", lw = "0.5")
-        axins.scatter(mcat_inset, lamcat_inset; c = lamimcat_inset, ScatterParams...,
+        axins.scatter(mcat_inset, -lamcat_inset; c = lamimcat_inset, ScatterParams...,
             vmax = vmax, vmin = vmin)
 
         if rossbyridges
@@ -364,7 +365,7 @@ function plot_high_frequency_ridge(lam, mr; operators, f = figure(), ax = subplo
     # observations
     m_H = collect(keys(HansonHFFit))
     ν_H = [x.ν for x in values(HansonHFFit)]
-    ax.errorbar(m_H, .-value.(ν_H),
+    ax.errorbar(m_H, value.(ν_H),
         yerr = errorbars_pyplot(ν_H),
         color= "0.3", ls="dashed", capsize = 3, label="H22")
 
@@ -527,8 +528,7 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
     if scale != 0
         Vr ./= scale
     end
-    @unpack coordinates = operators
-    @unpack rpts = coordinates
+    @unpack rpts = operators
     r_frac = rpts ./ Rsun
     nθ = length(θ)
     equator_ind = nθ÷2
@@ -539,41 +539,78 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
     V_peak_depthprofile = @view Vr[:, ind_max]
     r_max_ind = argmax(abs.(V_peak_depthprofile))
 
-    spec = f.add_gridspec(3, 3)
+    cmap = get(kw, :cmap, "Greys")
 
-    axprofile = f.add_subplot(py"$(spec)[1:, 1:]")
-    axsurf = f.add_subplot(py"$(spec)[0, 1:]", sharex = axprofile)
-    axdepth = f.add_subplot(py"$(spec)[1:, 0]", sharey = axprofile)
+    polar = get(kw, :polar, false)
+    crossections = get(kw, :crossections, !polar)
 
-    axsurf.plot(θ, (@view Vr[r_max_ind, :]), color = "black")
-    if get(kw, :setylabel, true)
-        axsurf.set_ylabel("Angular\nprofile", fontsize = 11)
+    if !polar && crossections
+        spec = f.add_gridspec(3, 3)
+        axprofile = get(kw, :axprofile) do
+            f.add_subplot(py"$(spec)[1:, 1:]")
+        end
+        axsurf = let axprofile=axprofile
+            get(kw, :axsurf) do
+                f.add_subplot(py"$(spec)[0, 1:]", sharex = axprofile)
+            end
+        end
+        axdepth = let axprofile=axprofile
+            get(kw, :axdepth) do
+                f.add_subplot(py"$(spec)[1:, 0]", sharey = axprofile)
+            end
+        end
+    else
+        axprofile = get(kw, :axprofile) do
+            f.add_subplot()
+        end
     end
-    axsurf.set_xticks(pi * (1/4:1/4:1))
-    axsurf.xaxis.set_major_formatter(ticker.FuncFormatter(piformatter))
-    yfmt = ticker.ScalarFormatter(useMathText = true)
-    yfmt.set_powerlimits((-1,1))
-    axsurf.yaxis.set_major_formatter(yfmt)
 
-    axdepth.axvline(0, ls="dotted", color="0.3")
-    axdepth.plot(V_peak_depthprofile, r_frac,
-        color = "black",
-    )
-    axdepth.set_xlabel("Depth profile", fontsize = 11)
-    axdepth.set_ylabel(L"r/R_\odot", fontsize = 11)
-    axdepth.yaxis.set_major_locator(ticker.MaxNLocator(4))
-    axdepth.xaxis.set_major_locator(ticker.MaxNLocator(2))
-    xfmt = ticker.ScalarFormatter(useMathText = true)
-    xfmt.set_powerlimits((-1,1))
-    axdepth.xaxis.set_major_formatter(xfmt)
-    axdepth.xaxis.tick_top()
+    if !polar
+        axsurf.plot(θ, (@view Vr[r_max_ind, :]), color = "black")
+        if get(kw, :setylabel, true)
+            axsurf.set_ylabel("Angular\nprofile", fontsize = 11)
+        end
+        axsurf.set_xticks(pi * (1/4:1/4:1))
+        axsurf.xaxis.set_major_formatter(ticker.FuncFormatter(piformatter))
+        yfmt = ticker.ScalarFormatter(useMathText = true)
+        yfmt.set_powerlimits((-1,1))
+        axsurf.yaxis.set_major_formatter(yfmt)
 
-    axprofile.pcolormesh(θ, r_frac, Vr, cmap = "Greys", rasterized = true, shading = "auto")
-    xlabel = get(kw, :longxlabel, true) ? "colatitude (θ) [radians]" : "θ [radians]"
-    axprofile.set_xlabel(xlabel, fontsize = 11)
+        axdepth.axvline(0, ls="dotted", color="0.3")
+        axdepth.plot(V_peak_depthprofile, r_frac,
+            color = "black",
+        )
+        axdepth.set_xlabel("Depth profile", fontsize = 11)
+        axdepth.set_ylabel(L"r/R_\odot", fontsize = 11)
+        axdepth.yaxis.set_major_locator(ticker.MaxNLocator(4))
+        axdepth.xaxis.set_major_locator(ticker.MaxNLocator(2))
+        xfmt = ticker.ScalarFormatter(useMathText = true)
+        xfmt.set_powerlimits((-1,1))
+        axdepth.xaxis.set_major_formatter(xfmt)
+        axdepth.xaxis.tick_top()
+
+        axprofile.pcolormesh(θ, r_frac, Vr, cmap = cmap, rasterized = true, shading = "auto")
+        xlabel = get(kw, :longxlabel, true) ? "colatitude (θ) [radians]" : "θ [radians]"
+        axprofile.set_xlabel(xlabel, fontsize = 11)
+    else
+        x = r_frac .* sin.(θ)'
+        z = r_frac .* cos.(θ)'
+        p = axprofile.pcolormesh(x, z, Vr, cmap = cmap, rasterized = true,
+            shading = "auto")
+        axprofile.yaxis.set_major_locator(ticker.MaxNLocator(3))
+        axprofile.xaxis.set_major_locator(ticker.MaxNLocator(3))
+        axprofile.set_xlabel(L"x/R_\odot", fontsize=12)
+        axprofile.set_ylabel(L"z/R_\odot", fontsize=12)
+        f.set_size_inches(3, 3)
+        cb = colorbar(mappable=p, ax=axprofile)
+        cb.ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
+    end
 
     if get(kw, :suptitle, true)
-        f.suptitle("Toroidal streamfunction for m = $m")
+        fieldname = field == :V ? "Toroidal" :
+                    field == :W ? "Poloidal" :
+                    field == :S ? "Entropy" : nothing
+        axprofile.set_title("$fieldname streamfunction")
     end
 
     if !get(kw, :constrained_layout, false)
@@ -692,7 +729,8 @@ function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMa
     λ0 = RossbyWaveSpectrum.rossby_ridge(m)
     rossbyindex = argmin(abs.(real.(λs) .- λ0))
 
-    vm = vecs[:, rossbyindex:-1:rossbyindex-2]
+    nmodes = get(kw, :nmodes, 3)
+    vm = vecs[:, range(rossbyindex, step=-1, length=nmodes)]
 
     for (ind, (v, (ls, c, marker))) in enumerate(zip(eachcol(vm), lscm))
         (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators)
@@ -716,18 +754,108 @@ function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMa
     end
 end
 
+function multiple_eigenfunctions_radial_m(feig::FilteredEigen, m; kw...)
+    @unpack operators = feig
+    multiple_eigenfunctions_radial_m(feig.lams, feig.vs, m; operators, kw...)
+end
+function multiple_eigenfunctions_radial_m(λs::AbstractVector, vecs::AbstractVector, m; kw...)
+    multiple_eigenfunctions_radial_m(λs[m], vecs[m], m; kw...)
+end
+function multiple_eigenfunctions_radial_m(λs::AbstractVector, vecs::AbstractMatrix, m;
+        operators, f = figure(), kw...)
+
+    @unpack rpts = operators;
+    rfrac = rpts./Rsun
+    rsurfind = argmax(rpts)
+
+    ax = f.add_subplot()
+    ax.set_xlabel("Radial profile", fontsize = 12)
+    ax.set_ylabel(L"r/R_\odot", fontsize = 12)
+    # ax.set_xticks(pi * (1/4:1/4:1))
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
+
+    ax.set_title("Equatorial section", fontsize = 12)
+
+    lscm = Iterators.product(("solid", "dashed", "dotted"), ("black", "0.5", "0.3"), ("None", "."))
+
+    λ0 = RossbyWaveSpectrum.rossby_ridge(m)
+    rossbyindex = argmin(abs.(real.(λs) .- λ0))
+
+    nmodes = get(kw, :nmodes, 3)
+    vm = vecs[:, range(rossbyindex, step=-1, length=nmodes)]
+
+    for (ind, (v, (ls, c, marker))) in enumerate(zip(eachcol(vm), lscm))
+        (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators)
+        @unpack V = VWSinv
+        Vr = realview(V)
+        eqind = argmin(abs.(θ .- pi/2))
+        Vr_eq = Vr[:, eqind]
+
+        Vrmax_sign = sign(eignorm(Vr_eq))
+        Vr_eq .*= Vrmax_sign
+        normalize!(Vr_eq)
+
+        ax.plot(Vr_eq, rfrac; ls, color = c,
+            label = "n = "*string(ind-1),
+            marker, markevery = 10)
+    end
+    ax.axvline(0, ls="dotted", color="black")
+
+    legend = ax.legend()
+    legend.get_title().set_fontsize("12")
+    if !get(kw, :constrained_layout, false)
+        f.tight_layout()
+    end
+end
+
 function eigenfunction_rossbyridge_allstreamfn(f::FilteredEigen, m; kw...)
     @unpack operators = f
     eigenfunction_rossbyridge_allstreamfn(f.lams, f.vs, m; operators, kw...)
 end
 function eigenfunction_rossbyridge_allstreamfn(λs::AbstractVector, vs::AbstractVector, m; operators, kw...)
-    fig = plt.figure(constrained_layout = true, figsize = (8, 4))
-    subfigs = fig.subfigures(1, 2, wspace = 0.1, width_ratios = [1, 0.8])
-    eigenfunction_rossbyridge(λs, vs, m; operators, f = subfigs[1], constrained_layout = true)
-    multiple_eigenfunctions_surface_m(λs, vs, m; operators, f = subfigs[2], constrained_layout = true)
+    fig = plt.figure(constrained_layout = true, figsize = (10, 4))
+    subfigs = fig.subfigures(1, 3, wspace = 0.08, width_ratios = [1, 0.8, 0.8])
+    eigenfunction_rossbyridge(λs, vs, m; operators, f = subfigs[1],
+        kw..., constrained_layout = true, save=false)
+    multiple_eigenfunctions_surface_m(λs, vs, m; operators, f = subfigs[2],
+        kw..., constrained_layout = true, save=false)
+    multiple_eigenfunctions_radial_m(λs, vs, m; operators, f = subfigs[3],
+        kw..., constrained_layout = true, save=false)
     if get(kw, :save, false)
         savefig(joinpath(plotdir, "eigenfunction_rossby_all.eps"))
     end
+end
+
+function eigenfunctions_polar(feig::FilteredEigen, m; mode=nothing,
+        cmap=mode == :asym ? ("RdYlBu", "YlOrBr") : ("YlOrBr", "RdYlBu"), kw...)
+
+    f, axlist = get(kw, :faxlist) do
+        subplots(1,2, sharey=true)
+    end
+    ind = if mode==:asym
+        argmin(abs.(feig.lams[m] .- 2.5*RossbyWaveSpectrum.rossby_ridge(m)))
+    elseif mode==:symsectoral
+        argmin(abs.(feig.lams[m] .- RossbyWaveSpectrum.rossby_ridge(m)))
+    elseif mode==:symhighest
+        lastindex(feig.lams[m])
+    else
+        kw[:ind]
+    end
+
+    eigenfunction(feig, m, ind, f=f, field=:V,
+        cmap=cmap[1], polar=true, axprofile = axlist[1])
+    eigenfunction(feig, m, ind, f=f, field=:W,
+        cmap=cmap[2], polar=true, axprofile = axlist[2])
+    f.set_size_inches(8,4)
+    f.tight_layout()
+end
+
+function eigenfunctions_polar(fsym::FilteredEigen, fasym::FilteredEigen, m; kw...)
+    f, axlist = subplots(2,2, sharex=true, sharey=true)
+    eigenfunctions_polar(fasym, m; mode=:asym, faxlist=(f, axlist[1, 1:2]), kw...)
+    eigenfunctions_polar(fsym, m; mode=:symhighest, faxlist=(f, axlist[2, 1:2]), kw...)
+    f.set_size_inches(8,8)
+    f.tight_layout()
 end
 
 function eigenfunction_spectrum(v, m; operators, V_symmetric, kw...)
@@ -848,22 +976,31 @@ function plot_diffrot_radial(; operators, kw...)
     @unpack r_in = operators.radial_params
     r_in_frac = r_in / Rsun
 
-    plot(r_raw[r_raw .>= r_in_frac], ΔΩ_raw_eq[r_raw .>= r_in_frac]*1e9/2pi, label="solar equatorial rotation")
-
+    plot(r_raw[r_raw .>= r_in_frac], ΔΩ_raw_eq[r_raw .>= r_in_frac]*1e9/2pi, label="radial, equator")
     @unpack rpts = operators
-    (; ΔΩ,) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
-        operators, rotation_profile = get(kw, :rotation_profile, :solar_equator), kw...);
 
-    plot(rpts/Rsun, ΔΩ.(rpts)*Ω0*1e9/2pi, label="smoothed model")
+    if get(kw, :plot_smoothed, true)
+        (; ΔΩ,) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+            operators, rotation_profile = get(kw, :rotation_profile, :solar_equator), kw...);
+        plot(rpts/Rsun, ΔΩ.(rpts)*Ω0*1e9/2pi, label="smoothed model")
+    end
+
     xmin, xmax = extrema(rpts)./Rsun
     Δx = xmax - xmin
     pad = Δx*0.1
     xlim(xmin - pad, xmax + pad)
-    axhline(0, ls="dotted", color="black")
-    axvline(operators.radial_params[:r_out]/Rsun, ls="dotted", color="black")
-    xlabel(L"r/R_\odot")
-    ylabel(L"\Delta\Omega/2\pi" * " [nHz]")
-    legend(loc="best")
+    if get(kw, :plot_guides, false)
+        axhline(0, ls="dotted", color="black")
+        axvline(operators.radial_params[:r_out]/Rsun, ls="dotted", color="black")
+    end
+    fontsize = get(kw, :fontsize, 12)
+    xlabel(L"r/R_\odot"; fontsize)
+    ylabel(L"\Delta\Omega/2\pi" * " [nHz]"; fontsize)
+    gca().xaxis.set_major_locator(ticker.MaxNLocator(4))
+    gca().yaxis.set_major_locator(ticker.MaxNLocator(4))
+    legend(loc="best"; fontsize)
+    gca().tick_params(axis="both", which="major", labelsize=fontsize)
+    tight_layout()
 end
 
 function _plot_diffrot_radial_derivatives(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ; ncoeffs = true, labelpre = "", kw...)

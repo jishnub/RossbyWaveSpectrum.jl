@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --time="4:00:00"
+#SBATCH --time="8:00:00"
 #SBATCH --job-name=rosbyspec
 #SBATCH --nodes=2
 #SBATCH -C dalma

@@ -1,0 +1,20 @@
+name = "ApproxFunAssociatedLegendre"
+uuid = "48bd048b-2bcf-409a-92a0-8749fd24560e"
+authors = ["Jishnu Bhattacharya <jishnub@users.noreply.github.com>"]
+version = "0.1.0"
+
+[deps]
+ApproxFunBase = "fbd15aa5-315a-5a7d-a8a4-24992e37be05"
+ApproxFunOrthogonalPolynomials = "b70543e2-c0d9-56b8-a290-0d4d6d4de211"
+BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
+DomainSets = "5b8099bc-c8ec-5219-889f-1d9e522a28bf"
+LegendrePolynomials = "3db4a2ba-fc88-11e8-3e01-49c72059a882"
+WignerSymbols = "9f57e263-0b3d-5e2e-b1be-24f2bb48858b"
+
+[compat]
+ApproxFunBase = "0.6, 0.7"
+ApproxFunOrthogonalPolynomials = "0.5"
+BandedMatrices = "0.17"
+DomainSets = "0.5"
+LegendrePolynomials = "0.4"
+WignerSymbols = "2"

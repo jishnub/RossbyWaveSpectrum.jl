@@ -60,14 +60,6 @@ grid_to_Fun(v, radialspace) = Fun(radialspace, transform!(radialspace, Vector{Fl
 
 datadir(f) = joinpath(DATADIR[], f)
 
-# Legedre expansion constants
-α⁺ℓm(ℓ, m) = (ℓ < abs(m) ? 0.0 : oftype(0.0, √((ℓ - m + 1) * (ℓ + m + 1) / ((2ℓ + 1) * (2ℓ + 3)))))
-α⁻ℓm(ℓ, m) = (ℓ < abs(m) ? 0.0 : oftype(0.0, √((ℓ - m) * (ℓ + m) / ((2ℓ - 1) * (2ℓ + 1)))))
-
-β⁻ℓm(ℓ, m) = (ℓ < abs(m) ? 0.0 : oftype(0.0, √((2ℓ + 1) / (2ℓ - 1) * (ℓ^2 - m^2))))
-γ⁺ℓm(ℓ, m) = ℓ * α⁺ℓm(ℓ, m)
-γ⁻ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ, m) - β⁻ℓm(ℓ, m)
-
 function operatormatrix(f::Fun, nr, spaceconversion::Pair)
     operatormatrix(Multiplication(f), nr, spaceconversion)
 end
@@ -190,17 +182,18 @@ function superadiabaticity(r::Real; r_out = Rsun)
     δconv + (δrad - δconv) * 1 / 2 * (1 - tanh((r - r_tran) / dtrans))
 end
 
-function thermal_diffusivity(ρ)
-    κtop = 3e13
-    κ = @. (1 / √ρ)
-    κ ./ maximum(κ) .* κtop
-end
-
 function sph_points(N)
     @assert N > 0
     M = 2 * N - 1
     return π / N * (0.5:(N-0.5)), 2π / M * (0:(M-1))
 end
+
+# Legedre expansion constants
+α⁻ℓm(ℓ, m) = (ℓ < abs(m) ? 0.0 : oftype(0.0, √((ℓ - m) * (ℓ + m) / ((2ℓ - 1) * (2ℓ + 1)))))
+
+β⁻ℓm(ℓ, m) = (ℓ < abs(m) ? 0.0 : oftype(0.0, √((2ℓ + 1) / (2ℓ - 1) * (ℓ^2 - m^2))))
+γ⁺ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ+1, m)
+γ⁻ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ, m) - β⁻ℓm(ℓ, m)
 
 function costheta_operator(nℓ, m)
     dl = [α⁻ℓm(ℓ, m) for ℓ in m .+ (1:nℓ-1)]
@@ -295,10 +288,12 @@ function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _strati
     trackingrate = :cutoff,
     scalings = DefaultScalings)
     scalings = merge(DefaultScalings, scalings)
-    _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate, Tuple(scalings))
+    radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate, Tuple(scalings))
 end
-function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate,
-        (Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling))
+function radial_operators(operatorparams...)
+    nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate, scalings = operatorparams
+
+    Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling = scalings
 
     r_in = r_in_frac * Rsun;
     r_out = r_out_frac * Rsun;
@@ -495,7 +490,7 @@ function _radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariab
         operator_matrices,
         matCU2,
         matCU4,
-        _stratified,
+        operatorparams,
     )
 
     OperatorWrap(op)
@@ -1877,8 +1872,9 @@ end
 function save_eigenvalues(f, mr; operators, kw...)
     lam, vec = filter_eigenvalues(f, mr; operators, kw...)
     fname = rossbyeigenfilename(; operators, kw...)
+    @unpack operatorparams = operators
     @info "saving to $fname"
-    jldsave(fname; lam, vec, mr, kw, operators)
+    jldsave(fname; lam, vec, mr, kw, operatorparams)
 end
 
 struct FilteredEigen
@@ -1890,8 +1886,9 @@ struct FilteredEigen
 end
 
 function FilteredEigen(fname::String)
-    lam, vec, mr, kw, operators =
-        load(fname, "lam", "vec", "mr", "kw", "operators");
+    lam, vec, mr, kw, operatorparams =
+        load(fname, "lam", "vec", "mr", "kw", "operatorparams");
+    operators = radial_operators(operatorparams...)
     FilteredEigen(lam, vec, mr, kw, operators)
 end
 
@@ -2062,8 +2059,5 @@ function eigenfunction_n_theta!(VWSinv, F, v, m;
     VW = eigenfunction_spectrum_2D!(F, v; operators, kw...)
     invshtransform2!(VWSinv, VW, m; nℓ, Plcosθ, kw...)
 end
-
-# precompile
-precompile(_radial_operators, (Int, Int, Float64, Float64, Bool, Int, Float64, Symbol, NTuple{5,Float64}))
 
 end # module
