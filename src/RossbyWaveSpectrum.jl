@@ -6,6 +6,7 @@ using ApproxFun
 using BandedMatrices
 using BlockArrays
 using BlockBandedMatrices
+using DelimitedFiles: readdlm
 using Dierckx
 using FillArrays
 using Folds
@@ -14,11 +15,11 @@ using LinearAlgebra
 using LinearAlgebra: BLAS
 using LegendrePolynomials
 using OffsetArrays
-using DelimitedFiles: readdlm
+using Reexport
 using SparseArrays
 using StructArrays
 using TimerOutputs
-using UnPack
+@reexport using UnPack
 using ZChop
 
 export datadir
@@ -831,25 +832,25 @@ function interp2d(xin, yin, z, xout = xin, yout = yin; s = 0.0)
     evalgrid(Spline2D(xin[px], yin[py], z[px, py]; s = sum(abs2, z) * s), xout, yout)
 end
 
-function read_angular_velocity_radii(dir = SOLARMODELDIR[])
+function solar_rotation_profile_radii(dir = SOLARMODELDIR[])
     r_ΔΩ_raw = vec(readdlm(joinpath(dir, "rmesh.orig")))::Vector{Float64}
     r_ΔΩ_raw[1:4:end]
 end
 
-function read_angular_velocity_raw(dir = SOLARMODELDIR[])
+function solar_rotation_profile_raw(dir = SOLARMODELDIR[])
     ν_raw = readdlm(joinpath(dir, "rot2d.hmiv72d.ave"))::Matrix{Float64}
     ν_raw = [ν_raw reverse(ν_raw[:, 1:end-1], dims = 2)]
     2pi * 1e-9 * ν_raw
 end
 
 function equatorial_rotation_angular_velocity_surface(r_frac::Number = 1.0,
-        r_ΔΩ_raw = read_angular_velocity_radii(), Ω_raw = read_angular_velocity_raw())
+        r_ΔΩ_raw = solar_rotation_profile_radii(), Ω_raw = solar_rotation_profile_raw())
     Ω_raw_r_eq = equatorial_rotation_angular_velocity_radial_profile(Ω_raw)
     r_frac_ind = findmin(abs, r_ΔΩ_raw .- r_frac)[2]
     Ω_raw_r_eq[r_frac_ind]
 end
 
-function equatorial_rotation_angular_velocity_radial_profile(Ω_raw = read_angular_velocity_raw())
+function equatorial_rotation_angular_velocity_radial_profile(Ω_raw = solar_rotation_profile_raw())
     nθ = size(Ω_raw, 2)
     lats_raw = range(0, pi, length=nθ)
     θind_equator = findmin(abs, lats_raw .- pi/2)[2]
@@ -956,40 +957,40 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
-function read_angular_velocity(operators; smoothing_param = 1e-5)
+function solar_rotation_profile(; operators, smoothing_param = 1e-5)
     @unpack r_out = operators.radial_params;
-    @unpack Ω0 = operators.constants
+    @unpack Ω0 = operators.constants;
 
-    r_ΔΩ_raw = read_angular_velocity_radii(SOLARMODELDIR[])
-    Ω_raw = read_angular_velocity_raw(SOLARMODELDIR[])
+    r_ΔΩ_raw = solar_rotation_profile_radii(SOLARMODELDIR[])
+    Ω_raw = solar_rotation_profile_raw(SOLARMODELDIR[])
     ΔΩ_raw = Ω_raw .- Ω0
 
     nθ = size(ΔΩ_raw, 2)
     lats_raw = LinRange(0, pi, nθ)
+    cos_lats_raw = cos.(lats_raw) # decreasing order, must be flipped in Spline2D
 
-    Spline2D(r_ΔΩ_raw * Rsun, lats_raw, ΔΩ_raw; s = sum(abs2, ΔΩ_raw)*smoothing_param)
+    Spline2D(r_ΔΩ_raw * Rsun, reverse(cos_lats_raw), reverse(ΔΩ_raw, dims=2); s = sum(abs2, ΔΩ_raw)*smoothing_param)
 end
 
+function equatorial_profile_and_derivative(splΔΩ2D, rpts)
+    equator_coord = 0.0 # cos(θ) for θ = pi/2
+    ΔΩ_r = splΔΩ2D.(rpts, equator_coord)
+    ddrΔΩ_r = derivative.((splΔΩ2D,), rpts, equator_coord, nux = 1, nuy = 0)
+    d2dr2ΔΩ_r = derivative.((splΔΩ2D,), rpts, equator_coord, nux = 2, nuy = 0)
+    ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
+end
 function equatorial_radial_rotation_profile(; operators, kw...)
     @unpack rpts = operators
-    @unpack Ω0 = operators.constants
-    splΔΩ2D = read_angular_velocity(operators; kw...)
-    ΔΩ_r = splΔΩ2D.(rpts, pi/2)
-    ddrΔΩ_r = derivative.((splΔΩ2D,), rpts, pi/2, nux = 1, nuy = 0)
-    d2dr2ΔΩ_r = derivative.((splΔΩ2D,), rpts, pi/2, nux = 2, nuy = 0)
-    ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
+    splΔΩ2D = solar_rotation_profile(; operators, kw...)
+    equatorial_profile_and_derivative(splΔΩ2D, rpts)
 end
 
 function equatorial_radial_rotation_profile_squished(; operators, kw...)
     @unpack rpts = operators;
     @unpack r_out = operators.radial_params;
-    @unpack Ω0 = operators.constants;
-    splΔΩ2D = read_angular_velocity(operators; kw...)
+    splΔΩ2D = solar_rotation_profile(; operators, kw...)
     rpts_stretched = rpts ./ r_out .* Rsun
-    ΔΩ_r = splΔΩ2D.(rpts_stretched, pi/2)
-    ddrΔΩ_r = derivative.((splΔΩ2D,), rpts_stretched, pi/2, nux = 1, nuy = 0)
-    d2dr2ΔΩ_r = derivative.((splΔΩ2D,), rpts_stretched, pi/2, nux = 2, nuy = 0)
-    ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
+    equatorial_profile_and_derivative(splΔΩ2D, rpts_stretched)
 end
 
 function radial_differential_rotation_profile(; operators, rotation_profile = :solar_equator, ΔΩ_frac = 0.01, kw...)
@@ -1240,6 +1241,23 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         # end
     end
     return M
+end
+
+function solar_differential_rotation_profile(; operators, rotation_profile = :solar, ΔΩ_frac = 0.01, kw...)
+
+    @unpack rpts = operators
+    @unpack r_out, nr, r_in = operators.radial_params
+    @unpack Ω0 = operators.constants
+
+    if rotation_profile == :solar
+        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = solar_rotation_profile(; operators, kw...)
+    else
+        error("$rotation_profile is not a valid rotation model")
+    end
+    ΔΩ_r ./= Ω0
+    ddrΔΩ_r ./= Ω0
+    d2dr2ΔΩ_r ./= Ω0
+    return ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
 end
 
 function rotationtag(rotation_profile)
