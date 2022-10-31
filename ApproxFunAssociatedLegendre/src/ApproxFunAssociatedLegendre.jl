@@ -9,107 +9,91 @@ import BandedMatrices: BandedMatrix
 using WignerSymbols
 using LegendrePolynomials
 using ApproxFunOrthogonalPolynomials
+using ApproxFunSingularities
+using SpecialFunctions
+using LazyArrays
+using BlockBandedMatrices
 
-export ColatitudeDomain
-export PlmSpace, NormalizedPlmSpace
+export NormalizedPlm
 
-struct ColatitudeDomain{T} <: AbstractInterval{T} end
-ColatitudeDomain() = ColatitudeDomain{Float64}()
-
-Base.in(x::Real, ::ColatitudeDomain) = 0 <= x <= pi
-Base.isempty(::ColatitudeDomain) = false
-
-for f in [:endpoints, :closedendpoints]
-	@eval DomainSets.$f(c::ColatitudeDomain{T}) where {T} = (T(0), T(pi))
-end
-
-abstract type AbstractPlmSpace{T} <: Space{ColatitudeDomain{T},T} end
-struct PlmSpace{T} <: AbstractPlmSpace{T}
+struct NormalizedPlm{T, NJS <: Space{ChebyshevInterval{T},T}} <: Space{ChebyshevInterval{T},T}
 	m :: Int
+	jacobispace :: NJS
 end
-PlmSpace(m::Int) = PlmSpace{Float64}(m)
-Base.show(io::IO, sp::PlmSpace) = print(io, "PlmSpace(", azimuthalorder(sp), ")")
+ApproxFunBase.domain(n::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
+NormalizedPlm(m::Int) = NormalizedPlm(m, JacobiWeight(m/2, m/2, NormalizedJacobi(m,m)))
+Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(", sp.m, ")")
 
-struct NormalizedPlmSpace{T} <: AbstractPlmSpace{T}
-	parent :: PlmSpace{T}
+const JacobiMaybeNormalized = Union{Jacobi, NormalizedPolynomialSpace{<:Jacobi}}
+function assertLegendre(sp::JacobiMaybeNormalized)
+	csp = ApproxFunBase.canonicalspace(sp)
+	@assert csp == Legendre() "multiplication is only defined in Legendre space"
 end
-
-NormalizedPlmSpace(m::Int) = NormalizedPlmSpace(PlmSpace(m))
-
-Base.show(io::IO, sp::NormalizedPlmSpace) = print(io, "NormalizedPlmSpace(", azimuthalorder(sp), ")")
-
-ApproxFunBase.domain(::AbstractPlmSpace{T}) where {T} = ColatitudeDomain{T}()
-
-azimuthalorder(x::PlmSpace) = x.m
-azimuthalorder(x::NormalizedPlmSpace) = x.parent.m
-
-function ApproxFunBase.spacescompatible(a::AbstractPlmSpace, b::AbstractPlmSpace)
-	azimuthalorder(a) == azimuthalorder(b)
+function assertLegendre(sp::NormalizedPlm)
+	@assert sp.m == 0 "multiplication is only defined in Legendre space"
 end
 
-function ApproxFunBase.evaluate(v::Vector, s::NormalizedPlmSpace, x)
-	m = azimuthalorder(s)
-	lr = range(m, length=length(v))
-	itr = LegendrePolynomials.LegendrePolynomialIterator(x, m)
-	sum(((Pl, vl),) -> Pl * vl, zip(itr, v))
+function ApproxFunBase.union_rule(a::NormalizedPlm, b::Union{ConstantSpace, PolynomialSpace})
+	a.m == 0 || return ApproxFunBase.NoSpace()
+	union(Legendre(), b)
 end
 
-Plmnorm(l, m) = exp(LegendrePolynomials.logplm_norm(l, m))
-function ApproxFunBase.evaluate(v::Vector, s::PlmSpace, x)
-	m = azimuthalorder(s)
-	lr = range(m, length=length(v))
-	itr = LegendrePolynomials.LegendrePolynomialIterator(x, m)
-	sum(((l, Pl, vl),) -> Plmnorm(l, m) * Pl * vl, zip(lr, itr, v))
+# Legendre polynomial norm
+plnorm2(ℓ) = (2ℓ+1)/2
+plnorm(ℓ) = sqrt(plnorm2(ℓ))
+
+# Associated Legendre polynomial norm
+plmnorm(l, m) = exp(LegendrePolynomials.logplm_norm(l, m))
+
+function ApproxFunBase.spacescompatible(a::NormalizedPlm, b::NormalizedPlm)
+	a.m == 0 || b.m == 0 || a.m == b.m || return false
+	ApproxFunBase.spacescompatible(a.jacobispace, b.jacobispace)
 end
 
-_equivalentlegendre(sp::PlmSpace) = Legendre()
-_equivalentlegendre(sp::NormalizedPlmSpace) = NormalizedLegendre()
-function equivalentlegendre(sp::AbstractPlmSpace)
-	assert_m_zero(azimuthalorder(sp))
-	_equivalentlegendre(sp)
+function ApproxFunBase.evaluate(v::Vector, s::NormalizedPlm, x)
+	m = s.m
+	evaluate(v, s.jacobispace, x) * (-1)^m
 end
 
-function throw_m_error(m)
-	throw(ArgumentError("only Legendre transforms (m=0) are supported, received m = $m"))
-end
-assert_m_zero(m) = m == 0 || throw_m_error(m)
 for f in [:plan_transform, :plan_transform!]
-	@eval function ApproxFunBase.$f(sp::AbstractPlmSpace, v::AbstractVector)
-		m = azimuthalorder(sp)
-		assert_m_zero(m)
-		spL = equivalentlegendre(sp)
-		ApproxFunBase.$f(spL, v)
+	@eval function ApproxFunBase.$f(sp::NormalizedPlm, v::AbstractVector)
+		m = sp.m
+		ApproxFunBase.$f(sp.jacobispace, v .* (-1)^m)
 	end
 end
 
-function _Fun(f, sp)
-	m = azimuthalorder(sp)
-	assert_m_zero(m)
-	spL = equivalentlegendre(sp)
-	F = Fun(f, spL)
-	c = coefficients(F)
+function _Fun(f, sp::NormalizedPlm)
+	F = Fun(f, sp.jacobispace)
+	m = sp.m
+	c = coefficients(F) .* (-1)^m
 	Fun(sp, c)
 end
-ApproxFunBase.Fun(f, sp::AbstractPlmSpace) = _Fun(f, sp)
-ApproxFunBase.Fun(f::Fun, sp::AbstractPlmSpace) = _Fun(f, sp)
-ApproxFunBase.Fun(f::typeof(identity), sp::AbstractPlmSpace) = _Fun(f, sp)
+ApproxFunBase.Fun(f, sp::NormalizedPlm) = _Fun(f, sp)
+ApproxFunBase.Fun(f::Fun, sp::NormalizedPlm) = _Fun(f, sp)
+ApproxFunBase.Fun(f::typeof(identity), sp::NormalizedPlm) = _Fun(f, sp)
 
-abstract type PlmSpaceOperator{T} <: Operator{T} end
-(::Type{T})() where {T<:PlmSpaceOperator} = T(UnsetSpace())
+function ApproxFunBase.Derivative(sp::NormalizedPlm, k::Int)
+	m = sp.m
+	ApproxFunBase.DerivativeWrapper((-1)^m * Derivative(sp.jacobispace, k), k)
+end
+
+abstract type PlmSpaceOperator{DS<:Space} <: Operator{Float64} end
+(::Type{O})() where {O<:PlmSpaceOperator} = O(UnsetSpace())
 
 domainspace(p::PlmSpaceOperator) = p.ds
 rangespace(p::PlmSpaceOperator) = p.ds
+function ApproxFunBase.promotedomainspace(P::PlmSpaceOperator, sp::NormalizedPlm)
+	ApproxFunBase.setspace(P, sp)
+end
 
-struct sinθ∂θ_Operator{T,DS<:Space{<:Any,T}} <: PlmSpaceOperator{T}
+index_to_ℓ(i, m) = m + i - 1
+
+struct sinθ∂θ_Operator{DS<:Space} <: PlmSpaceOperator{DS}
 	ds :: DS
 end
 
 ApproxFunBase.setspace(P::sinθ∂θ_Operator, sp::Space) =
-	sinθ∂θ_Operator{ApproxFunBase.prectype(sp),typeof(sp)}(sp)
-
-function ApproxFunBase.promotedomainspace(P::PlmSpaceOperator, sp::AbstractPlmSpace)
-	ApproxFunBase.setspace(P, sp)
-end
+	sinθ∂θ_Operator{typeof(sp)}(sp)
 
 BandedMatrices.bandwidths(C::sinθ∂θ_Operator) = (1,1)
 
@@ -119,37 +103,45 @@ C⁺ℓm(ℓ, m, T) = C⁻ℓm(ℓ+1, m, T)
 S⁺ℓm(ℓ, m, T = Float64) = convert(T, ℓ) * C⁺ℓm(ℓ, m, T)
 S⁻ℓm(ℓ, m, T = Float64) = convert(T, ℓ) * C⁻ℓm(ℓ, m, T) - β⁻ℓm(ℓ, m, T)
 
-function Base.getindex(P::sinθ∂θ_Operator{T,<:NormalizedPlmSpace}, i::Int, j::Int) where {T}
-	m = azimuthalorder(domainspace(P))
+function Base.getindex(P::sinθ∂θ_Operator{<:NormalizedPlm}, i::Int, j::Int)
+	m = domainspace(P).m
 	if j == i+1
-		ℓ = m + i - 1
-		S⁻ℓm(ℓ+1, m, T)
+		ℓ = index_to_ℓ(i, m)
+		S⁻ℓm(ℓ+1, m, Float64)
 	elseif j == i-1
-		ℓ = m + i - 1
-		S⁺ℓm(ℓ-1, m, T)
+		ℓ = index_to_ℓ(i, m)
+		S⁺ℓm(ℓ-1, m, Float64)
 	else
-		zero(T)
+		zero(Float64)
 	end
 end
 
-function ApproxFunBase.Multiplication(f::Fun{<:AbstractPlmSpace}, sp::AbstractPlmSpace)
-	@assert azimuthalorder(space(f)) == 0
+function ApproxFunBase.Multiplication(f::Fun, sp::NormalizedPlm)
+	Multiplication(Fun(f, NormalizedLegendre()), sp)
+end
+function ApproxFunBase.Multiplication(f::Fun{<:JacobiMaybeNormalized}, sp::NormalizedPlm)
+	assertLegendre(space(f))
+	g = Fun(f, NormalizedPlm(0))
+	Multiplication(g, sp)
+end
+function ApproxFunBase.Multiplication(f::Fun{<:NormalizedPlm}, sp::NormalizedPlm)
+	assertLegendre(space(f))
 	ConcreteMultiplication(f, sp)
 end
-function BandedMatrices.bandwidths(M::ConcreteMultiplication{<:AbstractPlmSpace, <:AbstractPlmSpace})
+function BandedMatrices.bandwidths(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm})
 	f = M.f
 	nc = max(ncoefficients(f), 1) # treat empty vectors as 0
 	(nc-1, nc-1)
 end
-function ApproxFunBase.rangespace(M::ConcreteMultiplication{<:AbstractPlmSpace, <:AbstractPlmSpace})
+function ApproxFunBase.rangespace(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm})
 	ApproxFunBase.domainspace(M)
 end
-function Base.getindex(M::ConcreteMultiplication{<:NormalizedPlmSpace, <:NormalizedPlmSpace}, i::Int, j::Int)
+function Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i::Int, j::Int)
 	j > i && return getindex(M, j, i) # preserve symmetry
 	sp = domainspace(M)
-	m = azimuthalorder(sp)
-	ℓ = i - 1 + m
-	ℓ′ = j - 1 + m
+	m = sp.m
+	ℓ = index_to_ℓ(i, m)
+	ℓ′ = index_to_ℓ(j, m)
 	bw = bandwidth(M, 1)
 	abs(ℓ - ℓ′) <= bw || return zero(eltype(M))
 	fc = coefficients(M.f)
@@ -167,5 +159,43 @@ function Base.getindex(M::ConcreteMultiplication{<:NormalizedPlmSpace, <:Normali
 	x = (-1)^m * √((2ℓ+1)*(2ℓ′+1)/2) * s
 	eltype(M)(x)
 end
+
+struct HorizontalLaplacian{DS<:Space} <: PlmSpaceOperator{DS}
+	ds :: DS
+end
+ApproxFunBase.setspace(P::HorizontalLaplacian, sp::Space) =
+	HorizontalLaplacian{typeof(sp)}(sp)
+
+BandedMatrices.bandwidths(M::HorizontalLaplacian) = (0,0)
+function Base.getindex(P::HorizontalLaplacian{<:NormalizedPlm}, i::Int, j::Int)
+	m = domainspace(P).m
+	if j == i
+		ℓ = index_to_ℓ(i, m)
+		convert(Float64, -ℓ*(ℓ+1))
+	else
+		zero(Float64)
+	end
+end
+
+function matrix(P::PlusOperator, nr, nθ)
+	mapfoldl(op -> matrix(op, nr, nθ), +, P.ops)
+end
+matrix(T::TimesOperator, nr, nθ) = matrix(KroneckerOperator(T), nr, nθ)
+function matrix(K::KroneckerOperator, nr, nθ)
+	Oθ, Or = K.ops
+	matrix(Oθ[1:nθ, 1:nθ], Or[1:nr, 1:nr])
+end
+
+function matrix(A::BandedMatrix, B::AbstractMatrix)
+	rows = Fill(size(B,1), size(A,1))
+	cols = Fill(size(B,2), size(A,2))
+	BlockBandedMatrix(Kron(A, B), rows, cols, bandwidths(A))
+end
+function matrix(A::BandedMatrix, B::BandedMatrix)
+	rows = Fill(size(B,1), size(A,1))
+	cols = Fill(size(B,2), size(A,2))
+	BandedBlockBandedMatrix(Kron(A, B), rows, cols, bandwidths(A), bandwidths(B))
+end
+matrix(A::AbstractMatrix, B::AbstractMatrix) = kron(A, B)
 
 end # module ApproxFunAssociatedLegendre

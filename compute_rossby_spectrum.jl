@@ -21,7 +21,8 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
     # should be removed to compare with the Sun
     trackingratescaling = 1.0
     # trackingratescaling = (diffrot && (diffrotprof = :radial_solar_equator)) ? 1.01 : 1.0
-    scalings = (; trackingratescaling)
+    Seqglobalscaling = 1e-7
+    scalings = (; trackingratescaling, Seqglobalscaling)
 
     @info "operators"
     r_in_frac = 0.6
@@ -58,11 +59,11 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
 end
 
 function main(taskno = parse(Int, ENV["SLURM_PROCID"]))
-    nr = 60
+    nr = 70
     nℓ = 30;
     mrange = 1:15;
-    diffrot = false;
-    diffrotprof = :radial_solar_equator_squished
+    diffrot = true;
+    diffrotprof = :radial_solar_equator
 
     V_symmetric = (true, false)[taskno + 1]
     @show Libc.gethostname(), taskno, V_symmetric

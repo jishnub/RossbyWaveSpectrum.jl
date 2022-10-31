@@ -401,15 +401,15 @@ end
             local operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
             local operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
 
-            T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
+            T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(
                 operators = operators1, rotation_profile = :solar_equator);
             ΔΩ1, ddrΔΩ1, d2dr2ΔΩ1 = T.ΔΩ, T.ddrΔΩ, T.d2dr2ΔΩ;
 
-            T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
+            T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(
                 operators = operators2, rotation_profile = :solar_equator);
             ΔΩ2, ddrΔΩ2, d2dr2ΔΩ2 = T.ΔΩ, T.ddrΔΩ, T.d2dr2ΔΩ;
 
-            T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(
+            T = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(
                 operators = operators3, rotation_profile = :solar_equator);
             ΔΩ3, ddrΔΩ3, d2dr2ΔΩ3 = T.ΔΩ, T.ddrΔΩ, T.d2dr2ΔΩ;
 

@@ -3,6 +3,7 @@ module RossbyWaveSpectrum
 using MKL
 
 using ApproxFun
+using ApproxFunAssociatedLegendre
 using BandedMatrices
 using BlockArrays
 using BlockBandedMatrices
@@ -56,8 +57,8 @@ function __init__()
     end
 end
 
-# Assume v is evaluated on an grid that is in increasing order (default in this project)
-grid_to_Fun(v, radialspace) = Fun(radialspace, transform!(radialspace, Vector{Float64}(v)))
+grid_to_fun(v::AbstractVector, space) = Fun(space, transform(space, v))
+grid_to_fun(v::AbstractMatrix, space) = LowRankFun(ProductFun(transform(space, v), space))
 
 datadir(f) = joinpath(DATADIR[], f)
 
@@ -306,7 +307,7 @@ function radial_operators(operatorparams...)
 
     r = Fun(radialspace);
     r2 = r^2;
-    r3 = r * r2;
+    r3 = r^3;
     r4 = r2^2;
 
     @unpack splines = solar_structure_parameter_splines(; r_in, r_out, _stratified);
@@ -521,25 +522,29 @@ function matrix_block(M::AbstractMatrix, rowind, colind, nblocks = 3)
     @view M[inds]
 end
 
-matrix_block_maximum(f, M::AbstractMatrix, nblocks = 3) = [maximum(f, matrix_block(M, i, j, nblocks)) for i in 1:nblocks, j in 1:nblocks]
-function matrix_block_maximum(f, M::BlockBandedMatrix, nblocks = 3)
-    maximum(f, (maximum(f, b) for b in blocks(M)))
+matrix_block_apply(fred, f, M::AbstractMatrix, nblocks = 3) = [fred(f, matrix_block(M, i, j, nblocks)) for i in 1:nblocks, j in 1:nblocks]
+
+matrix_block_maximum(f, M::AbstractMatrix, nblocks = 3) = matrix_block_apply(maximum, f, M, nblocks)
+matrix_block_maximum(M::AbstractMatrix, nblocks = 3) = matrix_block_apply(maximum, M, nblocks)
+
+function matrix_block_apply(fred, f, M::BlockBandedMatrix, nblocks = 3)
+    fred(f, (fred(f, b) for b in blocks(M)))
 end
-function matrix_block_maximum(f, M::BlockMatrix, nblocks = 3)
-    [matrix_block_maximum(f, Mb, nblocks) for Mb in blocks(M)]
+function matrix_block_apply(fred, f, M::BlockMatrix, nblocks = 3)
+    [matrix_block_apply(fred, f, Mb, nblocks) for Mb in blocks(M)]
 end
-function matrix_block_maximum(M::StructMatrix{<:Complex}, nblocks = 3)
-    R = matrix_block_maximum(abs, M.re, nblocks)
-    I = matrix_block_maximum(abs, M.im, nblocks)
+function matrix_block_apply(fred, M::StructMatrix{<:Complex}, nblocks = 3)
+    R = matrix_block_apply(fred, abs, M.re, nblocks)
+    I = matrix_block_apply(fred, abs, M.im, nblocks)
     [R I]
 end
-function matrix_block_maximum(M::AbstractMatrix{<:Complex}, nblocks = 3)
-    R = matrix_block_maximum(abs∘real, M, nblocks)
-    I = matrix_block_maximum(abs∘imag, M, nblocks)
+function matrix_block_apply(fred, M::AbstractMatrix{<:Complex}, nblocks = 3)
+    R = matrix_block_apply(fred, abs∘real, M, nblocks)
+    I = matrix_block_apply(fred, abs∘imag, M, nblocks)
     [R I]
 end
-function matrix_block_maximum(M::AbstractMatrix{<:Real}, nblocks = 3)
-    matrix_block_maximum(abs∘real, M, nblocks)
+function matrix_block_apply(fred, M::AbstractMatrix{<:Real}, nblocks = 3)
+    matrix_block_apply(fred, abs∘real, M, nblocks)
 end
 
 function computesparse(M::StructMatrix{<:Complex})
@@ -837,8 +842,12 @@ function solar_rotation_profile_radii(dir = SOLARMODELDIR[])
     r_ΔΩ_raw[1:4:end]
 end
 
+function solar_rotation_profile_raw_hemisphere(dir = SOLARMODELDIR[])
+    readdlm(joinpath(dir, "rot2d.hmiv72d.ave"))::Matrix{Float64}
+end
+
 function solar_rotation_profile_raw(dir = SOLARMODELDIR[])
-    ν_raw = readdlm(joinpath(dir, "rot2d.hmiv72d.ave"))::Matrix{Float64}
+    ν_raw = solar_rotation_profile_raw_hemisphere(dir)
     ν_raw = [ν_raw reverse(ν_raw[:, 1:end-1], dims = 2)]
     2pi * 1e-9 * ν_raw
 end
@@ -957,7 +966,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
-function solar_rotation_profile(; operators, smoothing_param = 1e-5)
+function solar_rotation_profile_spline(; operators, smoothing_param = 1e-5)
     @unpack r_out = operators.radial_params;
     @unpack Ω0 = operators.constants;
 
@@ -972,37 +981,57 @@ function solar_rotation_profile(; operators, smoothing_param = 1e-5)
     Spline2D(r_ΔΩ_raw * Rsun, reverse(cos_lats_raw), reverse(ΔΩ_raw, dims=2); s = sum(abs2, ΔΩ_raw)*smoothing_param)
 end
 
-function equatorial_profile_and_derivative(splΔΩ2D, rpts)
+function solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts, θpts)
+    ΔΩ = splΔΩ2D(rpts, θpts)
+    ∂r_ΔΩ = derivative(splΔΩ2D, rpts, θpts, nux = 1, nuy = 0)
+    ∂θ_ΔΩ = derivative(splΔΩ2D, rpts, θpts, nux = 0, nuy = 1)
+    ∂2r_ΔΩ = derivative(splΔΩ2D, rpts, θpts, nux = 2, nuy = 0)
+    ∂r∂θ_ΔΩ = derivative(splΔΩ2D, rpts, θpts, nux = 1, nuy = 1)
+    ∂2θ_ΔΩ = derivative(splΔΩ2D, rpts, θpts, nux = 0, nuy = 2)
+    ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ
+end
+function solar_rotation_profile_and_derivative_grid(; operators, kw...)
+    @unpack rpts = operators
+    @unpack nℓ = operators.radial_params
+    θpts = points(ChebyshevInterval(), nℓ)
+    splΔΩ2D = solar_rotation_profile_spline(; operators, kw...)
+    solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts, θpts)
+end
+
+function _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts)
     equator_coord = 0.0 # cos(θ) for θ = pi/2
     ΔΩ_r = splΔΩ2D.(rpts, equator_coord)
     ddrΔΩ_r = derivative.((splΔΩ2D,), rpts, equator_coord, nux = 1, nuy = 0)
     d2dr2ΔΩ_r = derivative.((splΔΩ2D,), rpts, equator_coord, nux = 2, nuy = 0)
     ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
 end
-function equatorial_radial_rotation_profile(; operators, kw...)
+function equatorial_rotation_profile_and_derivative_grid(; operators, kw...)
     @unpack rpts = operators
-    splΔΩ2D = solar_rotation_profile(; operators, kw...)
-    equatorial_profile_and_derivative(splΔΩ2D, rpts)
+    splΔΩ2D = solar_rotation_profile_spline(; operators, kw...)
+    _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts)
 end
 
-function equatorial_radial_rotation_profile_squished(; operators, kw...)
+function equatorial_rotation_profile_and_derivative_squished_grid(; operators, kw...)
     @unpack rpts = operators;
     @unpack r_out = operators.radial_params;
-    splΔΩ2D = solar_rotation_profile(; operators, kw...)
+    splΔΩ2D = solar_rotation_profile_spline(; operators, kw...)
     rpts_stretched = rpts ./ r_out .* Rsun
-    equatorial_profile_and_derivative(splΔΩ2D, rpts_stretched)
+    _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts_stretched)
 end
 
-function radial_differential_rotation_profile(; operators, rotation_profile = :solar_equator, ΔΩ_frac = 0.01, kw...)
+function radial_differential_rotation_profile_derivatives_grid(;
+            operators, rotation_profile = :solar_equator, ΔΩ_frac = 0.01, kw...)
 
     @unpack rpts = operators
     @unpack r_out, nr, r_in = operators.radial_params
     @unpack Ω0 = operators.constants
 
     if rotation_profile == :solar_equator
-        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = equatorial_radial_rotation_profile(; operators, kw...)
+        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r =
+            equatorial_rotation_profile_and_derivative_grid(; operators, kw...)
     elseif rotation_profile == :solar_equator_squished
-        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = equatorial_radial_rotation_profile_squished(; operators, kw...)
+        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r =
+            equatorial_rotation_profile_and_derivative_squished_grid(; operators, kw...)
     elseif rotation_profile == :linear # for testing
         f = ΔΩ_frac / (r_in / Rsun - 1)
         ΔΩ_r = @. Ω0 * f * (rpts / Rsun - 1)
@@ -1047,58 +1076,30 @@ function radial_differential_rotation_profile(; operators, rotation_profile = :s
     return ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
 end
 
-function rotationprofile_radialderiv(rpts, ΔΩ_terms, Δr, radialspace)
+function radial_differential_rotation_profile_derivatives_Fun(; operators, kw...)
+    @unpack rpts, radialspace = operators;
+    ΔΩ_terms = radial_differential_rotation_profile_derivatives_grid(; operators, kw...);
     ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = ΔΩ_terms
     nr = length(ΔΩ_r)
 
-    ΔΩ = chop(grid_to_Fun(ΔΩ_r, radialspace), 1e-2);
+    ΔΩ = chop(grid_to_fun(ΔΩ_r, radialspace), 1e-2);
     @checkncoeff ΔΩ nr
 
-    ddrΔΩ = chop(grid_to_Fun(interp1d(rpts, ddrΔΩ_r, s = 1e-2), radialspace), 1e-2);
+    ddrΔΩ = chop(grid_to_fun(interp1d(rpts, ddrΔΩ_r, s = 1e-2), radialspace), 1e-2);
     @checkncoeff ddrΔΩ nr
 
-    d2dr2ΔΩ = chop(grid_to_Fun(interp1d(rpts, d2dr2ΔΩ_r, s = 1e-2), radialspace), 1e-2);
+    d2dr2ΔΩ = chop(grid_to_fun(interp1d(rpts, d2dr2ΔΩ_r, s = 1e-2), radialspace), 1e-2);
     @checkncoeff d2dr2ΔΩ nr
 
-    return ΔΩ, ddrΔΩ, d2dr2ΔΩ
-end
-
-function radial_differential_rotation_profile_derivatives(; operators, kw...)
-
-    @unpack rpts = operators;
-    @unpack nℓ, Δr = operators.radial_params;
-
-    f = radial_differential_rotation_profile(; operators, kw...);
-
-    ΔΩ, ddrΔΩ, d2dr2ΔΩ = replaceemptywitheps.(rotationprofile_radialderiv(rpts, f, Δr, operators.radialspace));
+    ΔΩ, ddrΔΩ, d2dr2ΔΩ = map(replaceemptywitheps, (ΔΩ, ddrΔΩ, d2dr2ΔΩ))
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ)
-end
-
-function radial_differential_rotation_terms_inner!((VWterm, WVterm), (ℓ, ℓ′),
-    (cosθ_ℓℓ′, sinθdθ_ℓℓ′, ∇²_sinθdθ_ℓℓ′),
-    (ddrΔΩM,),
-    (ΔΩ_by_rM, ΔΩ_DDrM, ΔΩ_DDr_min_2byrM, ddrΔΩ_plus_ΔΩddrM))
-
-    ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-    ℓℓp1 = ℓ * (ℓ + 1)
-    two_over_ℓℓp1 = 2/ℓℓp1
-
-    @. VWterm = -two_over_ℓℓp1 *
-            (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byrM - ddrΔΩM) +
-            sinθdθ_ℓℓ′ * ((ΔΩ_DDrM - ℓ′ℓ′p1 * ΔΩ_by_rM) - ℓ′ℓ′p1 / 2 * ddrΔΩM))
-
-    @. WVterm = -1/ℓℓp1 * (
-                (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * ddrΔΩ_plus_ΔΩddrM
-                + ∇²_sinθdθ_ℓℓ′ * 2ΔΩ_by_rM
-            )
-
-    VWterm, WVterm
 end
 
 function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, rotation_profile = :solar_equator,
         ΔΩ_frac = 0.01, # only used to test the constant case
-        ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(; operators, rotation_profile, ΔΩ_frac),
+        ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives_Fun(;
+                            operators, rotation_profile, ΔΩ_frac),
         V_symmetric = true, kw...)
 
     @unpack nr, nℓ = operators.radial_params
@@ -1243,21 +1244,68 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
-function solar_differential_rotation_profile(; operators, rotation_profile = :solar, ΔΩ_frac = 0.01, kw...)
+# This function lets us choose between various different profiles
+function solar_differential_rotation_profile_derivatives_grid(;
+        operators, rotation_profile = :solar, ΔΩ_frac = 0.01, kw...)
 
     @unpack rpts = operators
     @unpack r_out, nr, r_in = operators.radial_params
     @unpack Ω0 = operators.constants
 
     if rotation_profile == :solar
-        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = solar_rotation_profile(; operators, kw...)
+        ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ =
+            solar_rotation_profile_and_derivative(; operators, kw...)
     else
         error("$rotation_profile is not a valid rotation model")
     end
-    ΔΩ_r ./= Ω0
-    ddrΔΩ_r ./= Ω0
-    d2dr2ΔΩ_r ./= Ω0
-    return ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
+    for v in (ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ)
+        v ./= Ω0
+    end
+    return ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ
+end
+
+function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
+    @unpack rpts, radialspace = operators;
+    ΔΩ_terms = solar_differential_rotation_profile_derivatives_grid(; operators, kw...);
+    ΔΩ_rθ, ∂r_ΔΩ_rθ, ∂θ_ΔΩ_rθ, ∂2r_ΔΩ_rθ, ∂r∂θ_ΔΩ_rθ, ∂2θ_ΔΩ_rθ = ΔΩ_terms
+    nr, nℓ = size(ΔΩ_rθ)
+    nc_max = nr * nℓ
+
+    space = radialspace ⊗ Legendre()
+
+    ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space), 1e-2);
+    @checkncoeff ΔΩ nc_max
+
+    ∂r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂r_ΔΩ_rθ, s = 1e-2), space), 1e-2);
+    @checkncoeff ∂r_ΔΩ nc_max
+
+    ∂θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂θ_ΔΩ_rθ, s = 1e-2), space), 1e-2);
+    @checkncoeff ∂θ_ΔΩ nc_max
+
+    ∂2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂2r_ΔΩ_rθ, s = 1e-2), space), 1e-2);
+    @checkncoeff ∂2r_ΔΩ nc_max
+
+    ∂r∂θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂r∂θ_ΔΩ_rθ, s = 1e-2), space), 1e-2);
+    @checkncoeff ∂r∂θ_ΔΩ nc_max
+
+    ∂2θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂2θ_ΔΩ_rθ, s = 1e-2), space), 1e-2);
+    @checkncoeff ∂2θ_ΔΩ nc_max
+
+    ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ = map(replaceemptywitheps,
+        (ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ))
+
+    (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ)
+end
+
+function solar_rotation_vorticity_Fun(; operators, kw...)
+end
+
+function solar_differential_rotation_terms(::StructMatrix{<:Complex}, m;
+        operators, rotation_profile = :solar,
+        ΔΩ_frac = 0.01, # only used to test the constant case
+        ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives(;
+                            operators, rotation_profile, ΔΩ_frac),
+        V_symmetric = true, kw...)
 end
 
 function rotationtag(rotation_profile)
@@ -1274,6 +1322,8 @@ function _differential_rotation_matrix!(M, m; rotation_profile, kw...)
     tag = rotationtag(rotation_profile)
     if startswith(rstr, "radial")
         radial_differential_rotation_terms!(M, m; rotation_profile = tag, kw...)
+    elseif startswith(rstr, "solar")
+        solar_differential_rotation_terms!(M, m; rotation_profile = tag, kw...)
     elseif Symbol(rotation_profile) == :constant
         constant_differential_rotation_terms!(M, m; kw...)
     else
@@ -1403,7 +1453,7 @@ struct RotMatrix{T,F}
     f :: F
 end
 function updaterotatationprofile(d::RotMatrix, operators)
-    ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives(; operators,
+    ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives_Fun(; operators,
             rotation_profile = rotationtag(d.rotation_profile))
     return RotMatrix(d.V_symmetric, d.rotation_profile, ΔΩprofile_deriv, d.f)
 end
