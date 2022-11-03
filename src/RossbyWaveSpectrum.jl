@@ -1078,27 +1078,6 @@ function radial_differential_rotation_profile_derivatives(; operators, kw...)
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ)
 end
 
-function radial_differential_rotation_terms_inner!((VWterm, WVterm), (ℓ, ℓ′),
-    (cosθ_ℓℓ′, sinθdθ_ℓℓ′, ∇²_sinθdθ_ℓℓ′),
-    (ddrΔΩM,),
-    (ΔΩ_by_rM, ΔΩ_DDrM, ΔΩ_DDr_min_2byrM, ddrΔΩ_plus_ΔΩddrM))
-
-    ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-    ℓℓp1 = ℓ * (ℓ + 1)
-    two_over_ℓℓp1 = 2/ℓℓp1
-
-    @. VWterm = -two_over_ℓℓp1 *
-            (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byrM - ddrΔΩM) +
-            sinθdθ_ℓℓ′ * ((ΔΩ_DDrM - ℓ′ℓ′p1 * ΔΩ_by_rM) - ℓ′ℓ′p1 / 2 * ddrΔΩM))
-
-    @. WVterm = -1/ℓℓp1 * (
-                (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * ddrΔΩ_plus_ΔΩddrM
-                + ∇²_sinθdθ_ℓℓ′ * 2ΔΩ_by_rM
-            )
-
-    VWterm, WVterm
-end
-
 function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, rotation_profile = :solar_equator,
         ΔΩ_frac = 0.01, # only used to test the constant case
