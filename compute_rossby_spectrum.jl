@@ -36,17 +36,18 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
         RossbyWaveSpectrum.RotMatrix(V_symmetric, :uniform, nothing, RossbyWaveSpectrum.uniform_rotation_spectrum!)
     end
 
+    modeltag = "0.985"
+
     @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac
-    @show eigvec_spectrum_power_cutoff eigen_rtol V_symmetric diffrot;
-    @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads();
+    @show eigvec_spectrum_power_cutoff eigen_rtol V_symmetric diffrot
+    @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads() modeltag
 
     flush(stdout)
 
     kw = Base.pairs((; bc_atol, Δl_cutoff, n_cutoff, eigvec_spectrum_power_cutoff, eigen_rtol,
-        print_timer, scale_eigenvectors, diffrot, diffrotprof, V_symmetric))
+        print_timer, scale_eigenvectors, diffrot, diffrotprof, V_symmetric, modeltag))
 
-    @time RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange;
-        operators, kw...)
+    @time RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange; operators, kw...)
 
     if !save
         fname = RossbyWaveSpectrum.rossbyeigenfilename(; operators, kw...)

@@ -21,7 +21,7 @@ const StructMatrix{T} = StructArray{T,2}
 export spectrum
 export uniform_rotation_spectrum
 export differential_rotation_spectrum
-export diffrot_rossby_ridg
+export diffrot_rossby_ridge
 export plot_diffrot_radial
 export eigenfunction
 export eigenfunction_spectrum
@@ -68,7 +68,7 @@ end
 function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
         ax.plot(mr, -RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
-            label = ΔΩ_frac == 0 ? L"\frac{2(Ω/2π)}{m+1}" : "Doppler\nshifted",
+            label = ΔΩ_frac == 0 ? L"\frac{-2(Ω/2π)}{m+1}" : "Doppler\nshifted",
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
             zorder = 0,
@@ -178,7 +178,7 @@ function spectrum(lam::AbstractArray, mr;
     kw...)
 
     ax.set_xlabel("m", fontsize = 12)
-    ax.set_ylabel(L"\Re[\nu]" * "[nHz]", fontsize = 12)
+    ax.set_ylabel(L"-\Re[\nu]" * "[nHz]", fontsize = 12)
     ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
     ax.xaxis.set_major_locator(ticker.MaxNLocator(5, integer = true))
 
@@ -212,7 +212,7 @@ function spectrum(lam::AbstractArray, mr;
         lamimcat_inset = mapreduce(imag, vcat, lam[m_zoom]) .* νnHzunit
         mcat_inset = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr[m_zoom], lam[m_zoom])])
 
-        axins = ax.inset_axes([0.3, 0.1, 0.4, 0.4])
+        axins = ax.inset_axes([0.5, 0.1, 0.4, 0.4])
         ymax = (RossbyWaveSpectrum.rossby_ridge(minimum(m_zoom)) + 0.005) * νnHzunit
         ymin = (RossbyWaveSpectrum.rossby_ridge(maximum(m_zoom)) - 0.02) * νnHzunit
         axins.set_ylim(minmax(-ymin, -ymax)...)
@@ -384,7 +384,8 @@ for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge, :plot_high_fr
 end
 
 function diffrot_rossby_ridge(Frsym, mr=8:15, ΔΩ_frac_low = 0.005, ΔΩ_frac_high = 0.04; plot_spectrum = false,
-        plot_lower_cutoff = plot_spectrum, plot_upper_cutoff = plot_spectrum)
+        plot_lower_cutoff = plot_spectrum, plot_upper_cutoff = plot_spectrum, plot_data = true,
+        plot_rotation = false, save = false)
 
     lams = Frsym.lams
     lams = lams[mr]
@@ -399,57 +400,85 @@ function diffrot_rossby_ridge(Frsym, mr=8:15, ΔΩ_frac_low = 0.005, ΔΩ_frac_h
         end
         real.(lams_realfilt)[argmin(abs.(imag.(lams_realfilt)))]
     end
-    lams_realfilt_plot = lams_realfilt.*ν0
+    lams_realfilt_plot = lams_realfilt.*(-ν0)
     plot_spectrum && begin
         f, ax = spectrum(Frsym, zorder=2)
         ax.plot(mr, lams_realfilt_plot, marker="o", ls="dotted",
             mec="black", mfc="None", ms=6, color="grey", zorder=1)
-        plot_lower_cutoff && ax.plot(mr, λRossby_low.*ν0, ".--", color="orange", zorder=0)
-        plot_upper_cutoff && ax.plot(mr, λRossby_high.*ν0, ".--", color="orange", zorder=0)
-        plot_lower_cutoff && plot_lower_cutoff && ax.fill_between(mr,
-                λRossby_low.*ν0, λRossby_high.*ν0, color="navajowhite", zorder=0)
-        ax.set_ylim(bottom = minimum(λRossby_low)*ν0*1.2)
+        plot_lower_cutoff && ax.plot(mr, λRossby_low.*(-ν0), ".--", color="orange", zorder=0)
+        plot_upper_cutoff && ax.plot(mr, λRossby_high.*(-ν0), ".--", color="orange", zorder=0)
+        plot_lower_cutoff && plot_upper_cutoff && ax.fill_between(mr,
+                λRossby_low.*(-ν0), λRossby_high.*(-ν0), color="navajowhite", zorder=0)
+        ax.set_ylim(top = minimum(λRossby_low)*(-ν0)*1.2)
     end
 
-    f, ax = subplots(1,1)
+    f, axlist = subplots(1,plot_rotation+1,squeeze=false)
+    ax_spectrum = axlist[1,plot_rotation+1]
     mr_Hanson = collect(keys(HansonGONGfit))
-    ν0_uniform_at_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr_Hanson).*(-ν0_Sun)
-    ν_H = [HansonGONGfit[m].ν for m in mr_Hanson]
-    ν_H_val = value.(ν_H)
+    if plot_data
+        ν0_uniform_at_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr_Hanson).*(-ν0_Sun)
+        ν_H = [HansonGONGfit[m].ν for m in mr_Hanson]
+        ν_H_val = value.(ν_H)
 
-    δν = ν_H_val .- ν0_uniform_at_tracking_rate
-    ax.errorbar(mr_Hanson, δν,
-        yerr = errorbars_pyplot(ν_H),
-        color= "brown", ls="None", capsize = 3, label="Hanson 2020 [GONG]",
-        zorder = 3, marker = ".", ms = 5, mfc = "k")
+        δν = ν_H_val .- ν0_uniform_at_tracking_rate
+        ax_spectrum.errorbar(mr_Hanson, δν,
+            yerr = errorbars_pyplot(ν_H),
+            color= "brown", ls="None", capsize = 3, label="Hanson 2020 [GONG]",
+            zorder = 3, marker = ".", ms = 5, mfc = "k")
 
-    fit_m_min = 8
-    fit_inds = mr_Hanson .>= fit_m_min
-    mr_fit = mr_Hanson[fit_inds]
-    fit_x = (m -> (m - 2/(m+1))).(mr_fit)
-    yerr = max.(higherr.(ν_H), lowerr.(ν_H))[fit_inds]
-    linear_Ro_doppler_fit = fit(fit_x, δν[fit_inds], 1, weights=1 ./ yerr.^2)
-    ΔΩ_fit = Polynomials.derivative(linear_Ro_doppler_fit)(0)
-    ax.plot(mr_Hanson, linear_Ro_doppler_fit.(mr_Hanson), "--",
-        label=L"ν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_fit, sigdigits=2)) nHz]", zorder=1)
+        fit_m_min = 8
+        fit_inds = mr_Hanson .>= fit_m_min
+        mr_fit = mr_Hanson[fit_inds]
+        fit_x = (m -> (m - 2/(m+1))).(mr_fit)
+        yerr = max.(higherr.(ν_H), lowerr.(ν_H))[fit_inds]
+        linear_Ro_doppler_fit = fit(fit_x, δν[fit_inds], 1, weights=1 ./ yerr.^2)
+        ΔΩ_fit = Polynomials.derivative(linear_Ro_doppler_fit)(0)
+        ax_spectrum.plot(mr_Hanson, linear_Ro_doppler_fit.(mr_Hanson), "--",
+            label=L"ν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_fit, sigdigits=2)) nHz]", zorder=1)
+    end
 
     ν0_uniform_at_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr).*(-ν0)
 
-    δν = -lams_realfilt_plot - ν0_uniform_at_tracking_rate
+    δν = lams_realfilt_plot - ν0_uniform_at_tracking_rate
     fit_x = (m -> (m - 2/(m+1))).(mr)
     linear_Ro_doppler_fit = fit(fit_x, δν, 1)
     ΔΩ_fit = Polynomials.derivative(linear_Ro_doppler_fit)(0)
-    ax.plot(mr, δν,
-        "o", color="grey", ms=4, label="model, radial rotation", zorder=5)
-    ax.plot(mr, linear_Ro_doppler_fit.(mr), "--",
-        label=L"ν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_fit, digits=1)) nHz]", zorder=1)
+    ax_spectrum.plot(mr, δν,
+        "o", color="grey", ms=6, label="sectoral dispersion relation", zorder=5)
+    ax_spectrum.plot(mr, linear_Ro_doppler_fit.(mr), "--",
+        label=L"ν_\mathrm{uniform}"*"\n[Doppler " * L"ΔΩ_0/2π" * " = $(round(ΔΩ_fit, digits=1)) nHz]", zorder=1,
+        color = "black")
 
+    ax_spectrum.set_xlabel("m", fontsize=16)
+    ax_spectrum.set_ylabel(L"\nu + \frac{2(\Omega_0\,/2\pi)}{m+1}" * " [nHz]", fontsize=16)
+    ax_spectrum.xaxis.set_major_locator(ticker.MaxNLocator(4))
+    ax_spectrum.yaxis.set_major_locator(ticker.MaxNLocator(4))
+    ax_spectrum.legend(loc="best", fontsize=12)
+    ax_spectrum.tick_params(axis="both", which="major", labelsize=12)
 
-    ax.axhline(0, ls="dotted", color="black")
-    ax.set_xlabel("m")
-    ax.set_ylabel(L"\nu + \frac{2\Omega_\mathrm{eq}\,/2\pi}{m+1}" * " [nHz]")
-    ax.legend(loc="best")
+    if plot_rotation
+        ax_rotation = axlist[1,1]
+        @unpack operators = Frsym;
+        @unpack rpts = operators;
+        @unpack r_in, r_out = operators.radial_params
+        (; ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(; operators);
+        ax_rotation.plot(rpts/Rsun, ΔΩ.(rpts)*freqnHzunit(Ω0),color="black", zorder=2)
+        ax_rotation.xaxis.set_major_locator(ticker.MaxNLocator(3))
+        ax_rotation.yaxis.set_major_locator(ticker.MaxNLocator(4))
+        ax_rotation.axhline(ΔΩ_fit, ls="dotted", zorder=1, color="grey")
+        ax_rotation.set_xlabel(L"r/R_\odot", fontsize=16)
+        ax_rotation.set_ylabel(L"(Ω(r,π/2) - Ω_0)/2π"*" [nHz]", fontsize=16)
+        r_text = r_in + (r_out - r_in)/10
+        ax_rotation.text(r_text/Rsun, ΔΩ_fit*0.6, L"ΔΩ_0/2π", fontsize=15)
+        ax_rotation.tick_params(axis="both", which="major", labelsize=12)
+    end
+    f.set_size_inches(6,2.5)
     f.tight_layout()
+    if save
+        filename = joinpath(plotdir,"diffrot_rossby_ridge.eps")
+        @info "saving to $filename"
+        f.savefig(filename)
+    end
 end
 
 function piformatter(x, _)
@@ -464,7 +493,7 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
     fconstasym::FilteredEigen, fradsym::FilteredEigen, fradasym::FilteredEigen; kw...)
 
     f, axlist = subplots(2, 3, sharex = "col")
-    @unpack rpts = fconstsym.operators.coordinates;
+    @unpack rpts = fconstsym.operators;
     r_frac = rpts ./ Rsun
     Ω0_const = fconstsym.operators.constants[:Ω0];
     Ω0_radial = fradsym.operators.constants[:Ω0];
@@ -472,7 +501,7 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
     lam_constant_sym, lam_constant_asym = fconstsym.lams, fconstasym.lams
     lam_radial_sym, lam_radial_asym = fradsym.lams, fradasym.lams
 
-    ΔΩ_constant = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+    ΔΩ_constant = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(;
             operators = fconstsym.operators, rotation_profile = :constant).ΔΩ
 
     axlist[1,1].plot(r_frac, ΔΩ_constant.(rpts) .* freqnHzunit(Ω0_const), color="0.2")
@@ -488,7 +517,7 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
     axlist[1,2].set_ylim(-200, 700)
     axlist[1,3].set_ylim(-200, 700)
 
-    ΔΩ_solar_radial = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+    ΔΩ_solar_radial = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(;
             operators = fradsym.operators, rotation_profile = :solar_equator).ΔΩ
 
     axlist[2,1].plot(r_frac, ΔΩ_solar_radial.(rpts) .* freqnHzunit(Ω0_radial), color="0.2")
@@ -980,7 +1009,7 @@ function plot_diffrot_radial(; operators, kw...)
     @unpack rpts = operators
 
     if get(kw, :plot_smoothed, true)
-        (; ΔΩ,) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+        (; ΔΩ,) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(;
             operators, rotation_profile = get(kw, :rotation_profile, :solar_equator), kw...);
         plot(rpts/Rsun, ΔΩ.(rpts)*Ω0*1e9/2pi, label="smoothed model")
     end
@@ -1021,14 +1050,14 @@ function plot_diffrot_radial_derivatives(; operators, kw...)
     @unpack rpts = operators
 
     @unpack Ω0 = operators.constants
-    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(;
         operators, kw...);
 
     f, axlist = subplots(3, 1, sharex = true)
     _plot_diffrot_radial_derivatives(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ, zorder = 2, color="0.5",
         labelpre = "model, ", marker = ".", ls = "solid")
     if get(kw, :rotation_profile, :solar_equator) !== :solar_equator
-        (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+        (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(;
         operators, kw..., rotation_profile = :solar_equator);
         _plot_diffrot_radial_derivatives(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ, labelpre = "solar",
             ncoeffs = false, color="0.6", zorder = 1, ls = "dashed")
