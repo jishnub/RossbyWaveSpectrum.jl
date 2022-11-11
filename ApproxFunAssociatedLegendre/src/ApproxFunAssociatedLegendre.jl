@@ -2,7 +2,8 @@ module ApproxFunAssociatedLegendre
 
 using DomainSets
 using ApproxFunBase
-using ApproxFunBase: SubOperator, UnsetSpace, ConcreteMultiplication
+using ApproxFunBase: SubOperator, UnsetSpace, ConcreteMultiplication, MultiplicationWrapper,
+	ConstantTimesOperator, ConversionWrapper
 import ApproxFunBase: domainspace, rangespace, Multiplication, setspace
 using BandedMatrices
 import BandedMatrices: BandedMatrix
@@ -15,6 +16,9 @@ using LazyArrays
 using BlockBandedMatrices
 
 export NormalizedPlm
+export sinθ∂θ_Operator
+export expand
+export kronmatrix
 
 struct NormalizedPlm{T, NJS <: Space{ChebyshevInterval{T},T}} <: Space{ChebyshevInterval{T},T}
 	m :: Int
@@ -22,7 +26,8 @@ struct NormalizedPlm{T, NJS <: Space{ChebyshevInterval{T},T}} <: Space{Chebyshev
 end
 ApproxFunBase.domain(n::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
 NormalizedPlm(m::Int) = NormalizedPlm(m, JacobiWeight(m/2, m/2, NormalizedJacobi(m,m)))
-Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(", sp.m, ")")
+NormalizedPlm(; m::Int=m) = NormalizedPlm(m)
+Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(m=", sp.m, ")")
 
 const JacobiMaybeNormalized = Union{Jacobi, NormalizedPolynomialSpace{<:Jacobi}}
 function assertLegendre(sp::JacobiMaybeNormalized)
@@ -55,8 +60,8 @@ function ApproxFunBase.evaluate(v::Vector, s::NormalizedPlm, x)
 	evaluate(v, s.jacobispace, x) * (-1)^m
 end
 
-for f in [:plan_transform, :plan_transform!]
-	@eval function ApproxFunBase.$f(sp::NormalizedPlm, v::AbstractVector)
+for f in [:plan_transform, :plan_transform!, :plan_itransform, :plan_itransform!]
+	@eval function ApproxFunBase.$f(sp::NormalizedPlm, v::Vector)
 		m = sp.m
 		ApproxFunBase.$f(sp.jacobispace, v .* (-1)^m)
 	end
@@ -77,8 +82,7 @@ function ApproxFunBase.Derivative(sp::NormalizedPlm, k::Int)
 	ApproxFunBase.DerivativeWrapper((-1)^m * Derivative(sp.jacobispace, k), k)
 end
 
-abstract type PlmSpaceOperator{DS<:Space} <: Operator{Float64} end
-(::Type{O})() where {O<:PlmSpaceOperator} = O(UnsetSpace())
+abstract type PlmSpaceOperator{T, DS<:Space} <: Operator{T} end
 
 domainspace(p::PlmSpaceOperator) = p.ds
 rangespace(p::PlmSpaceOperator) = p.ds
@@ -88,12 +92,17 @@ end
 
 index_to_ℓ(i, m) = m + i - 1
 
-struct sinθ∂θ_Operator{DS<:Space} <: PlmSpaceOperator{DS}
+struct sinθ∂θ_Operator{T,DS<:Space} <: PlmSpaceOperator{T,DS}
 	ds :: DS
 end
+sinθ∂θ_Operator{T}(ds) where {T} = sinθ∂θ_Operator{T, typeof(ds)}(ds)
+sinθ∂θ_Operator(ds) = sinθ∂θ_Operator{Float64}(ds)
 
-ApproxFunBase.setspace(P::sinθ∂θ_Operator, sp::Space) =
-	sinθ∂θ_Operator{typeof(sp)}(sp)
+Base.convert(::Type{Operator{T}}, h::sinθ∂θ_Operator) where {T} =
+	sinθ∂θ_Operator{T}(h.ds)::Operator{T}
+
+ApproxFunBase.setspace(P::sinθ∂θ_Operator{T}, sp::Space) where {T} =
+	sinθ∂θ_Operator{T,typeof(sp)}(sp)
 
 BandedMatrices.bandwidths(C::sinθ∂θ_Operator) = (1,1)
 
@@ -103,16 +112,16 @@ C⁺ℓm(ℓ, m, T) = C⁻ℓm(ℓ+1, m, T)
 S⁺ℓm(ℓ, m, T = Float64) = convert(T, ℓ) * C⁺ℓm(ℓ, m, T)
 S⁻ℓm(ℓ, m, T = Float64) = convert(T, ℓ) * C⁻ℓm(ℓ, m, T) - β⁻ℓm(ℓ, m, T)
 
-function Base.getindex(P::sinθ∂θ_Operator{<:NormalizedPlm}, i::Int, j::Int)
+function Base.getindex(P::sinθ∂θ_Operator{T, <:NormalizedPlm}, i::Int, j::Int) where {T}
 	m = domainspace(P).m
 	if j == i+1
 		ℓ = index_to_ℓ(i, m)
-		S⁻ℓm(ℓ+1, m, Float64)
+		S⁻ℓm(ℓ+1, m, T)
 	elseif j == i-1
 		ℓ = index_to_ℓ(i, m)
-		S⁺ℓm(ℓ-1, m, Float64)
+		S⁺ℓm(ℓ-1, m, T)
 	else
-		zero(Float64)
+		zero(T)
 	end
 end
 
@@ -152,50 +161,129 @@ function Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPl
 		iseven(ℓ + ℓ′′ + ℓ′) || continue
 		WignerSymbols.δ(ℓ, ℓ′′, ℓ′) || continue
 		pre = √(2ℓ′′+1)
-		w1 = wigner3j(T, ℓ, ℓ′′, ℓ′, 0, 0)
-		w2 = wigner3j(T, ℓ, ℓ′′, ℓ′, -m, 0)
+		w1 = wigner3j(ℓ, ℓ′′, ℓ′, 0, 0)
+		w2 = wigner3j(ℓ, ℓ′′, ℓ′, -m, 0)
 		s += fℓ′′ * pre * w1 * w2
 	end
 	x = (-1)^m * √((2ℓ+1)*(2ℓ′+1)/2) * s
 	eltype(M)(x)
 end
 
-struct HorizontalLaplacian{DS<:Space} <: PlmSpaceOperator{DS}
+struct HorizontalLaplacian{T,DS<:Space} <: PlmSpaceOperator{T,DS}
 	ds :: DS
 end
-ApproxFunBase.setspace(P::HorizontalLaplacian, sp::Space) =
-	HorizontalLaplacian{typeof(sp)}(sp)
+HorizontalLaplacian{T}(ds) where {T} = HorizontalLaplacian{T, typeof(ds)}(ds)
+HorizontalLaplacian(ds) = HorizontalLaplacian{Float64}(ds)
+ApproxFunBase.setspace(P::HorizontalLaplacian{T}, sp::Space) where {T} =
+	HorizontalLaplacian{T, typeof(sp)}(sp)
+
+Base.convert(::Type{Operator{T}}, h::HorizontalLaplacian) where {T} =
+	HorizontalLaplacian{T}(h.ds)::Operator{T}
 
 BandedMatrices.bandwidths(M::HorizontalLaplacian) = (0,0)
-function Base.getindex(P::HorizontalLaplacian{<:NormalizedPlm}, i::Int, j::Int)
+function Base.getindex(P::HorizontalLaplacian{T,<:NormalizedPlm}, i::Int, j::Int) where {T}
 	m = domainspace(P).m
 	if j == i
 		ℓ = index_to_ℓ(i, m)
-		convert(Float64, -ℓ*(ℓ+1))
+		convert(T, -ℓ*(ℓ+1))
 	else
-		zero(Float64)
+		zero(T)
 	end
 end
 
-function matrix(P::PlusOperator, nr, nθ)
-	mapfoldl(op -> matrix(op, nr, nθ), +, P.ops)
+###################################################################################
+
+expand(A::PlusOperator, B::PlusOperator) = mapreduce(x -> expand(x,B), +, A.ops)
+function expand(A::PlusOperator, B)
+	Be = expand(B)
+	mapreduce(x -> expand(expand(x), Be), +, A.ops)
 end
-matrix(T::TimesOperator, nr, nθ) = matrix(KroneckerOperator(T), nr, nθ)
-function matrix(K::KroneckerOperator, nr, nθ)
-	Oθ, Or = K.ops
-	matrix(Oθ[1:nθ, 1:nθ], Or[1:nr, 1:nr])
+function expand(A, B::PlusOperator)
+	Ae = expand(A)
+	mapreduce(x -> expand(Ae, expand(x)), +, B.ops)
+end
+expand(A, B) = A * B
+expand(A) = A
+expand(P::PlusOperator) = mapreduce(expand, +, P.ops)
+expand(T::TimesOperator) = reduce(expand, T.ops)
+function expand(C::ConstantTimesOperator)
+	(; λ, op) = C
+	expand(λ, op)
+end
+function expand(λ::Number, K::KroneckerOperator)
+	A, B = K.ops
+	(λ * A) ⊗ B
+end
+function expand(K::KroneckerOperator, λ::Number)
+	A, B = K.ops
+	A ⊗ (B * λ)
+end
+expand(λ::Number, P::PlusOperator) = mapreduce(op -> expand(λ, op), +, P.ops)
+function expand(λ::Number, T::TimesOperator)
+	(; ops) = T
+	foldl(expand, ops[2:end], init=λ*ops[1])
+end
+function expand(n::Number, C::ConstantTimesOperator)
+	(; λ) = C
+	n2 = n * λ
+	expand(n2, C.op)
+end
+expand(λ::Number, O::Operator) = λ * O
+expand(O::Operator, λ::Number) = O * λ
+
+function expand(A::MultiplicationWrapper, B::MultiplicationWrapper)
+	expand(A.op, B.op)
+end
+function expand(M::MultiplicationWrapper, K::Operator)
+	expand(M.op, K)
+end
+function expand(K::Operator, M::MultiplicationWrapper)
+	expand(K, M.op)
 end
 
-function matrix(A::BandedMatrix, B::AbstractMatrix)
+function expand(K::KroneckerOperator, C::ConstantOperator)
+	(; λ) = C
+	expand(K, λ)
+end
+
+function expand(C::ConstantTimesOperator, K::KroneckerOperator)
+	(; λ, op) = C
+	expand(op, expand(λ, K))
+end
+function expand(K::KroneckerOperator, C::ConstantTimesOperator)
+	(; λ, op) = C
+	expand(expand(K, λ), op)
+end
+function expand(C::ConversionWrapper, K::KroneckerOperator)
+	expand(C.op, K)
+end
+function expand(K::KroneckerOperator, C::ConversionWrapper)
+	expand(K, C.op)
+end
+
+expand(K::KroneckerOperator) = K
+
+
+##################################################################################
+
+function kronmatrix(P::PlusOperator, nr, nθ)
+	mapfoldl(op -> kronmatrix(op, nr, nθ), +, P.ops)
+end
+function kronmatrix(K::KroneckerOperator, nr, nθ)
+	Or, Oθ = K.ops
+	kronmatrix(Oθ[1:nθ, 1:nθ], Or[1:nr, 1:nr])
+end
+
+function kronmatrix(A::BandedMatrix, B::AbstractMatrix)
 	rows = Fill(size(B,1), size(A,1))
 	cols = Fill(size(B,2), size(A,2))
 	BlockBandedMatrix(Kron(A, B), rows, cols, bandwidths(A))
 end
-function matrix(A::BandedMatrix, B::BandedMatrix)
+function kronmatrix(A::BandedMatrix, B::BandedMatrix)
 	rows = Fill(size(B,1), size(A,1))
 	cols = Fill(size(B,2), size(A,2))
 	BandedBlockBandedMatrix(Kron(A, B), rows, cols, bandwidths(A), bandwidths(B))
 end
-matrix(A::AbstractMatrix, B::AbstractMatrix) = kron(A, B)
+kronmatrix(A::AbstractMatrix, B::AbstractMatrix) = kron(A, B)
 
 end # module ApproxFunAssociatedLegendre
