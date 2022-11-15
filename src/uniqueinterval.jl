@@ -13,6 +13,7 @@ Base.in(x, m::UniqueInterval) = in(x, m.parentinterval)
 Base.isempty(m::UniqueInterval) = isempty(m.parentinterval)
 
 ApproxFunBase.domainscompatible(a::UniqueInterval, b::UniqueInterval) = a == b
+ApproxFunBase.isambiguous(a::UniqueInterval) = false
 
 Base.:(==)(a::UniqueInterval, b::UniqueInterval) = (@assert a.parentinterval == b.parentinterval; true)
 

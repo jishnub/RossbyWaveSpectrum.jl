@@ -266,12 +266,15 @@ expand(K::KroneckerOperator) = K
 
 ##################################################################################
 
-function kronmatrix(P::PlusOperator, nr, nθ)
-	mapfoldl(op -> kronmatrix(op, nr, nθ), +, P.ops)
+function kronmatrix(P::PlusOperator, nr, nℓ)
+	mapfoldl(op -> kronmatrix(op, nr, nℓ), +, P.ops)
 end
-function kronmatrix(K::KroneckerOperator, nr, nθ)
+function kronmatrix(K::KroneckerOperator, nr, nℓ::Integer)
+	kronmatrix(K::KroneckerOperator, nr, 1:nℓ)
+end
+function kronmatrix(K::KroneckerOperator, nr, ℓindrange::AbstractRange{<:Integer})
 	Or, Oθ = K.ops
-	kronmatrix(Oθ[1:nθ, 1:nθ], Or[1:nr, 1:nr])
+	kronmatrix(Oθ[ℓindrange, ℓindrange], Or[1:nr, 1:nr])
 end
 
 function kronmatrix(A::BandedMatrix, B::AbstractMatrix)

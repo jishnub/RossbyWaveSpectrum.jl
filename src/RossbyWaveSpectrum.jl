@@ -43,10 +43,12 @@ const Rsun = 6.959894677e+10
 
 const Tmul = typeof(Multiplication(Fun()) * Derivative())
 const Tplus = typeof(Multiplication(Fun()) + Derivative())
+const Tplusconcrete = typeof(Multiplication(Fun()) + Derivative() : Chebyshev())
 
 const StructMatrix{T} = StructArray{T,2}
 const BlockMatrixType = BlockMatrix{Float64, Matrix{BlockBandedMatrix{Float64}},
     Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
+const BandedMatrixType = BandedMatrices.BandedMatrix{Float64, Matrix{Float64}, Base.OneTo{Int64}}
 
 function __init__()
     SCRATCH[] = get(ENV, "SCRATCH", homedir())
@@ -86,26 +88,26 @@ function constraintmatrix(operators)
     @unpack r = operators.rad_terms;
     @unpack ddr = operators.diff_operators;
 
-    V_BC_op = V_boundary_op(operators);
+    V_BC_op = V_boundary_op(operators)::Tplusconcrete;
     CV = [Evaluation(r_in) * V_BC_op; Evaluation(r_out) * V_BC_op];
-    nradconstraintsVS = size(CV,1);
-    MVn = Matrix(CV[:, 1:nr]);
+    nradconstraintsVS = size(CV,1)::Int;
+    MVn = Matrix(CV[:, 1:nr])::Matrix{Float64};
     QV = QuotientSpace(operators.radialspace, CV);
     PV = Conversion(QV, operators.radialspace);
-    ZMVn = PV[1:nr, 1:nr-nradconstraintsVS];
+    ZMVn = PV[1:nr, 1:nr-nradconstraintsVS]::BandedMatrixType;
 
     CW = [Dirichlet(operators.radialspace); Dirichlet(operators.radialspace, 1) * Δr/2];
-    nradconstraintsW = size(CW,1);
-    MWn = Matrix(CW[:, 1:nr]);
+    nradconstraintsW = size(CW,1)::Int;
+    MWn = Matrix(CW[:, 1:nr])::Matrix{Float64};
     QW = QuotientSpace(operators.radialspace, CW);
     PW = Conversion(QW, operators.radialspace);
-    ZMWn = PW[1:nr, 1:nr-nradconstraintsW];
+    ZMWn = PW[1:nr, 1:nr-nradconstraintsW]::BandedMatrixType;
 
     CS = Dirichlet(operators.radialspace, 1) * Δr/2;
-    MSn = Matrix(CS[:, 1:nr]);
+    MSn = Matrix(CS[:, 1:nr])::Matrix{Float64};
     QS = QuotientSpace(operators.radialspace, CS);
     PS = Conversion(QS, operators.radialspace);
-    ZMSn = PS[1:nr, 1:nr-nradconstraintsVS];
+    ZMSn = PS[1:nr, 1:nr-nradconstraintsVS]::BandedMatrixType;
 
     rowsB_VS = Fill(nradconstraintsVS, nℓ);
     rowsB_W = Fill(nradconstraintsW, nℓ);
@@ -1199,13 +1201,19 @@ end
 
 # This function lets us choose between various different profiles
 function solar_differential_rotation_profile_derivatives_grid(;
-        operators, rotation_profile = :solar, ΔΩ_frac = 0.01, kw...)
+        operators, rotation_profile = :latrad, ΔΩ_frac = 0.01, kw...)
 
     @unpack rpts = operators
+    @unpack radialspace = operators
+    @unpack nℓ = operators.radial_params
     @unpack r_out, nr, r_in = operators.radial_params
     @unpack Ω0 = operators.constants
+    θpts = points(ChebyshevInterval(), nℓ)
 
-    if rotation_profile == :solar
+    if rotation_profile == :constant
+        ΔΩ = fill(Ω0 * ΔΩ_frac, length(rpts), length(θpts))
+        ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ = (zero(ΔΩ) for i in 1:5)
+    elseif rotation_profile == :latrad
         ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ =
             solar_rotation_profile_and_derivative_grid(; operators, kw...)
     else
@@ -1353,6 +1361,9 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     scaled_curl_u_x_ω_r_tmp = ((im * r2) ⊗ inv(∇²)) * curl_u_x_ω_r;
     scaled_curl_u_x_ω_r = (scaled_curl_u_x_ω_r_tmp : space2d) |> expand;
 
+    VV .+= real(kronmatrix(scaled_curl_u_x_ω_r.V, nr, ℓrange(1, nℓ, V_symmetric)))
+    VW .+= real(kronmatrix(scaled_curl_u_x_ω_r.iW, nr, ℓrange(1, nℓ, !V_symmetric)))
+
     rdiv_ucrossω_h = OpVector((; V = (2ωΩr + ΔΩ * (Ir ⊗ sinθdθop)) * (Ir ⊗ ℓℓp1op),
                         iW = m * (∂θωΩr_by_sinθ * (DDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (Ir ⊗ ℓℓp1op))));
 
@@ -1364,6 +1375,9 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     scaled_curl_curl_u_x_ω_r_tmp = ((Ir ⊗ inv(ℓℓp1op)) *
                                 ((-ddr ⊗ Iℓ) * rdiv_ucrossω_h + ∇²_u_x_ω_r));
     scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d) |> expand ;
+
+    WV .+= real(kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, ℓrange(1, nℓ, V_symmetric)))
+    WW .+= real(kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, ℓrange(1, nℓ, !V_symmetric)))
 
     return M
 end
