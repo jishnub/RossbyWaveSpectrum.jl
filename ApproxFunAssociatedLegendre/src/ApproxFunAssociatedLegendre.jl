@@ -17,6 +17,7 @@ using BlockBandedMatrices
 
 export NormalizedPlm
 export sinθ∂θ_Operator
+export HorizontalLaplacian
 export expand
 export kronmatrix
 
@@ -24,10 +25,28 @@ struct NormalizedPlm{T, NJS <: Space{ChebyshevInterval{T},T}} <: Space{Chebyshev
 	m :: Int
 	jacobispace :: NJS
 end
+azimuthalorder(p::NormalizedPlm) = p.m
+
 ApproxFunBase.domain(n::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
 NormalizedPlm(m::Int) = NormalizedPlm(m, JacobiWeight(m/2, m/2, NormalizedJacobi(m,m)))
 NormalizedPlm(; m::Int=m) = NormalizedPlm(m)
-Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(m=", sp.m, ")")
+Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(m=", azimuthalorder(sp), ")")
+
+# # Assume that only one m is being used
+# function Base.union(A::NormalizedPlm, B::NormalizedPlm)
+# 	@assert azimuthalorder(A) == azimuthalorder(B)
+# 	A
+# end
+
+# function ApproxFunBase.maxspace(A::NormalizedPlm, B::NormalizedPlm)
+# 	@assert azimuthalorder(A) == azimuthalorder(B)
+# 	A
+# end
+
+# function Base.:(==)(A::NormalizedPlm, B::NormalizedPlm)
+# 	@assert azimuthalorder(A) == azimuthalorder(B)
+# 	true
+# end
 
 const JacobiMaybeNormalized = Union{Jacobi, NormalizedPolynomialSpace{<:Jacobi}}
 function assertLegendre(sp::JacobiMaybeNormalized)
@@ -35,11 +54,11 @@ function assertLegendre(sp::JacobiMaybeNormalized)
 	@assert csp == Legendre() "multiplication is only defined in Legendre space"
 end
 function assertLegendre(sp::NormalizedPlm)
-	@assert sp.m == 0 "multiplication is only defined in Legendre space"
+	@assert azimuthalorder(sp) == 0 "multiplication is only defined in Legendre space"
 end
 
 function ApproxFunBase.union_rule(a::NormalizedPlm, b::Union{ConstantSpace, PolynomialSpace})
-	a.m == 0 || return ApproxFunBase.NoSpace()
+	azimuthalorder(a) == 0 || return ApproxFunBase.NoSpace()
 	union(Legendre(), b)
 end
 
@@ -51,25 +70,26 @@ plnorm(ℓ) = sqrt(plnorm2(ℓ))
 plmnorm(l, m) = exp(LegendrePolynomials.logplm_norm(l, m))
 
 function ApproxFunBase.spacescompatible(a::NormalizedPlm, b::NormalizedPlm)
-	a.m == 0 || b.m == 0 || a.m == b.m || return false
+	azimuthalorder(a) == 0 || azimuthalorder(b) == 0 ||
+		azimuthalorder(a) == azimuthalorder(b) || return false
 	ApproxFunBase.spacescompatible(a.jacobispace, b.jacobispace)
 end
 
 function ApproxFunBase.evaluate(v::Vector, s::NormalizedPlm, x)
-	m = s.m
+	m = azimuthalorder(s)
 	evaluate(v, s.jacobispace, x) * (-1)^m
 end
 
 for f in [:plan_transform, :plan_transform!, :plan_itransform, :plan_itransform!]
 	@eval function ApproxFunBase.$f(sp::NormalizedPlm, v::Vector)
-		m = sp.m
+		m = azimuthalorder(sp)
 		ApproxFunBase.$f(sp.jacobispace, v .* (-1)^m)
 	end
 end
 
 function _Fun(f, sp::NormalizedPlm)
 	F = Fun(f, sp.jacobispace)
-	m = sp.m
+	m = azimuthalorder(sp)
 	c = coefficients(F) .* (-1)^m
 	Fun(sp, c)
 end
@@ -78,7 +98,7 @@ ApproxFunBase.Fun(f::Fun, sp::NormalizedPlm) = _Fun(f, sp)
 ApproxFunBase.Fun(f::typeof(identity), sp::NormalizedPlm) = _Fun(f, sp)
 
 function ApproxFunBase.Derivative(sp::NormalizedPlm, k::Int)
-	m = sp.m
+	m = azimuthalorder(sp)
 	ApproxFunBase.DerivativeWrapper((-1)^m * Derivative(sp.jacobispace, k), k)
 end
 
@@ -113,7 +133,7 @@ S⁺ℓm(ℓ, m, T = Float64) = convert(T, ℓ) * C⁺ℓm(ℓ, m, T)
 S⁻ℓm(ℓ, m, T = Float64) = convert(T, ℓ) * C⁻ℓm(ℓ, m, T) - β⁻ℓm(ℓ, m, T)
 
 function Base.getindex(P::sinθ∂θ_Operator{T, <:NormalizedPlm}, i::Int, j::Int) where {T}
-	m = domainspace(P).m
+	m = azimuthalorder(domainspace(P))
 	if j == i+1
 		ℓ = index_to_ℓ(i, m)
 		S⁻ℓm(ℓ+1, m, T)
@@ -148,7 +168,7 @@ end
 function Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i::Int, j::Int)
 	j > i && return getindex(M, j, i) # preserve symmetry
 	sp = domainspace(M)
-	m = sp.m
+	m = azimuthalorder(sp)
 	ℓ = index_to_ℓ(i, m)
 	ℓ′ = index_to_ℓ(j, m)
 	bw = bandwidth(M, 1)
@@ -182,7 +202,7 @@ Base.convert(::Type{Operator{T}}, h::HorizontalLaplacian) where {T} =
 
 BandedMatrices.bandwidths(M::HorizontalLaplacian) = (0,0)
 function Base.getindex(P::HorizontalLaplacian{T,<:NormalizedPlm}, i::Int, j::Int) where {T}
-	m = domainspace(P).m
+	m = azimuthalorder(domainspace(P))
 	if j == i
 		ℓ = index_to_ℓ(i, m)
 		convert(T, -ℓ*(ℓ+1))

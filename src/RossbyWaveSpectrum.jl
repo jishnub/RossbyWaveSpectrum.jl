@@ -9,8 +9,10 @@ using BlockArrays
 using BlockBandedMatrices
 using DelimitedFiles: readdlm
 using Dierckx
+using DomainSets
 using FillArrays
 using Folds
+using IntervalSets
 using JLD2
 using LinearAlgebra
 using LinearAlgebra: BLAS
@@ -42,8 +44,9 @@ const Msun = 1.989e+33
 const Rsun = 6.959894677e+10
 
 const Tmul = typeof(Multiplication(Fun()) * Derivative())
-const Tplus = typeof(Multiplication(Fun()) + Derivative())
-const Tplusconcrete = typeof(Multiplication(Fun()) + Derivative() : Chebyshev())
+const Tplusinf = typeof(Multiplication(Fun()) + Derivative())
+const Tplusinfconcrete = typeof(Multiplication(Fun()) + Derivative() : Chebyshev())
+const TplusInt = typeof(Multiplication(Fun(), Chebyshev()) + Derivative(Chebyshev()))
 
 const StructMatrix{T} = StructArray{T,2}
 const BlockMatrixType = BlockMatrix{Float64, Matrix{BlockBandedMatrix{Float64}},
@@ -88,7 +91,7 @@ function constraintmatrix(operators)
     @unpack r = operators.rad_terms;
     @unpack ddr = operators.diff_operators;
 
-    V_BC_op = V_boundary_op(operators)::Tplusconcrete;
+    V_BC_op = V_boundary_op(operators)::Tplusinfconcrete;
     CV = [Evaluation(r_in) * V_BC_op; Evaluation(r_out) * V_BC_op];
     nradconstraintsVS = size(CV,1)::Int;
     MVn = Matrix(CV[:, 1:nr])::Matrix{Float64};
@@ -97,17 +100,17 @@ function constraintmatrix(operators)
     ZMVn = PV[1:nr, 1:nr-nradconstraintsVS]::BandedMatrixType;
 
     CW = [Dirichlet(operators.radialspace); Dirichlet(operators.radialspace, 1) * Δr/2];
-    nradconstraintsW = size(CW,1)::Int;
-    MWn = Matrix(CW[:, 1:nr])::Matrix{Float64};
+    nradconstraintsW = size(CW,1);
+    MWn = Matrix(CW[:, 1:nr]);
     QW = QuotientSpace(operators.radialspace, CW);
     PW = Conversion(QW, operators.radialspace);
-    ZMWn = PW[1:nr, 1:nr-nradconstraintsW]::BandedMatrixType;
+    ZMWn = PW[1:nr, 1:nr-nradconstraintsW];
 
     CS = Dirichlet(operators.radialspace, 1) * Δr/2;
-    MSn = Matrix(CS[:, 1:nr])::Matrix{Float64};
+    MSn = Matrix(CS[:, 1:nr]);
     QS = QuotientSpace(operators.radialspace, CS);
     PS = Conversion(QS, operators.radialspace);
-    ZMSn = PS[1:nr, 1:nr-nradconstraintsVS]::BandedMatrixType;
+    ZMSn = PS[1:nr, 1:nr-nradconstraintsVS];
 
     rowsB_VS = Fill(nradconstraintsVS, nℓ);
     rowsB_W = Fill(nradconstraintsW, nℓ);
@@ -310,7 +313,7 @@ function radial_operators(operatorparams...)
 
     ηρT = ηρ + ηT
 
-    DDr = (ddr + ηρ)::Tplus
+    DDr = (ddr + ηρ)::Tplusinf
     rDDr = (r * DDr)::Tmul
 
     onebyr = (1 / r)::typeof(r)
@@ -318,8 +321,8 @@ function radial_operators(operatorparams...)
     onebyr2 = onebyr*onebyr
     onebyr3 = onebyr2*onebyr
     onebyr4 = onebyr2*onebyr2
-    DDr_minus_2byr = (DDr - 2onebyr)::Tplus
-    ddr_plus_2byr = (ddr + 2onebyr)::Tplus
+    DDr_minus_2byr = (DDr - 2onebyr)::Tplusinf
+    ddr_plus_2byr = (ddr + 2onebyr)::Tplusinf
 
     # ηρ_by_r = onebyr * ηρ
     ηρ_by_r = chop(Fun(sηρ_by_r, radialspace), 1e-2);
@@ -354,8 +357,8 @@ function radial_operators(operatorparams...)
     ddrηρ_by_r = ddr_ηρ * onebyr
     d2dr2ηρ_by_r = d2dr2_ηρ * onebyr
 
-    ddrDDr = (d2dr2 + (ηρ * ddr)::Tmul + ddr_ηρ)::Tplus
-    d2dr2DDr = (d3dr3 + (ηρ * d2dr2)::Tmul + (ddr_ηρ * ddr)::Tmul + d2dr2_ηρ)::Tplus
+    ddrDDr = (d2dr2 + (ηρ * ddr)::Tmul + ddr_ηρ)::Tplusinf
+    d2dr2DDr = (d3dr3 + (ηρ * d2dr2)::Tmul + (ddr_ηρ * ddr)::Tmul + d2dr2_ηρ)::Tplusinf
 
     g = Fun(sg, radialspace)
 
@@ -407,13 +410,13 @@ function radial_operators(operatorparams...)
 
     # uniform rotation terms
     onebyr2_IplusrηρMCU4 = matCU4(onebyr2 + ηρ * onebyr);
-    ∇r2_plus_ddr_lnρT_ddr = (d2dr2 + (twobyr * ddr)::Tmul + (ηρT * ddr)::Tmul)::Tplus;
+    ∇r2_plus_ddr_lnρT_ddr = (d2dr2 + (twobyr * ddr)::Tmul + (ηρT * ddr)::Tmul)::Tplusinf;
     κ_∇r2_plus_ddr_lnρT_ddrMCU2 = lmul!(κ, matCU2(∇r2_plus_ddr_lnρT_ddr));
     κ_by_r2MCU2 = lmul!(κ, matCU2(onebyr2));
     ddr_S0_by_cp_by_r2MCU2 = matCU2(ddr_S0_by_cp_by_r2);
 
     # terms for viscosity
-    ddr_minus_2byr = (ddr - twobyr)::Tplus;
+    ddr_minus_2byr = (ddr - twobyr)::Tplusinf;
     ηρ_ddr_minus_2byrMCU2 = matCU2((ηρ * ddr_minus_2byr)::Tmul);
     onebyr2_d2dr2MCU4 = matCU4((onebyr2 * d2dr2)::Tmul);
     onebyr3_ddrMCU4 = matCU4((onebyr3 * ddr)::Tmul);
@@ -1094,7 +1097,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     ddrΔΩ_over_gMCU2 = matCU2(ddrΔΩ_over_g);
     ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr)::Tmul;
     ddrΔΩ_over_g_DDrMCU2 = matCU2(ddrΔΩ_over_g_DDr);
-    ddrΔΩ_plus_ΔΩddr = (ddrΔΩ + (ΔΩ * ddr)::Tmul)::Tplus;
+    ddrΔΩ_plus_ΔΩddr = (ddrΔΩ + (ΔΩ * ddr)::Tmul)::Tplusinf;
 
     nCS = 2nℓ+1
     ℓs = range(m, length = nCS)
@@ -1107,7 +1110,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
     ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs);
 
-    DDr_min_2byr = (DDr - 2onebyr)::Tplus;
+    DDr_min_2byr = (DDr - 2onebyr)::Tplusinf;
     ΔΩ_DDr_min_2byr = (ΔΩ * DDr_min_2byr)::Tmul;
     ΔΩ_DDr = (ΔΩ * DDr)::Tmul;
     ΔΩ_by_r = ΔΩ * onebyr;
@@ -1203,16 +1206,14 @@ end
 function solar_differential_rotation_profile_derivatives_grid(;
         operators, rotation_profile = :latrad, ΔΩ_frac = 0.01, kw...)
 
-    @unpack rpts = operators
-    @unpack radialspace = operators
-    @unpack nℓ = operators.radial_params
-    @unpack r_out, nr, r_in = operators.radial_params
+    @unpack nℓ, nr = operators.radial_params
     @unpack Ω0 = operators.constants
     θpts = points(ChebyshevInterval(), nℓ)
+    nθ = length(θpts)
 
     if rotation_profile == :constant
-        ΔΩ = fill(Ω0 * ΔΩ_frac, length(rpts), length(θpts))
-        ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ = (zero(ΔΩ) for i in 1:5)
+        ΔΩ = fill(Ω0 * ΔΩ_frac, nr, nθ)
+        ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ = (zeros(nr, nθ) for i in 1:5)
     elseif rotation_profile == :latrad
         ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ =
             solar_rotation_profile_and_derivative_grid(; operators, kw...)
@@ -1232,8 +1233,6 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
 
     ΔΩ_terms = solar_differential_rotation_profile_derivatives_grid(; operators, kw...);
     ΔΩ_rθ, ∂r_ΔΩ_rθ, ∂θ_ΔΩ_rθ, ∂2r_ΔΩ_rθ, ∂r∂θ_ΔΩ_rθ, ∂2θ_ΔΩ_rθ = ΔΩ_terms
-    nr, nℓ = size(ΔΩ_rθ)
-    nc_max = nr * nℓ
 
     space = radialspace ⊗ Legendre()
 
@@ -1252,6 +1251,8 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ)
 end
 
+const Tvorticity = NamedTuple{(:ωΩr, :∂rωΩr, :∂θωΩr_by_sinθ, :ωΩθ_by_rsinθ, :∂rωΩθ_by_sinθ), Tuple{ApproxFunBase.Fun{ApproxFunBase.TensorSpace{Tuple{ApproxFunOrthogonalPolynomials.Chebyshev{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, Float64}, ApproxFunAssociatedLegendre.NormalizedPlm{Float64, ApproxFunSingularities.JacobiWeight{ApproxFunOrthogonalPolynomials.NormalizedPolynomialSpace{ApproxFunOrthogonalPolynomials.Jacobi{DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64, Float64}}}, DomainSets.VcatDomain{2, Float64, (1, 1), Tuple{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, DomainSets.ChebyshevInterval{Float64}}}, Float64}, Float64, BlockArrays.PseudoBlockVector{Float64, Vector{Float64}, Tuple{BlockArrays.BlockedUnitRange{Vector{Int64}}}}}, ApproxFunBase.Fun{ApproxFunBase.TensorSpace{Tuple{ApproxFunOrthogonalPolynomials.Ultraspherical{Int64, RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, Float64}, ApproxFunAssociatedLegendre.NormalizedPlm{Float64, ApproxFunSingularities.JacobiWeight{ApproxFunOrthogonalPolynomials.NormalizedPolynomialSpace{ApproxFunOrthogonalPolynomials.Jacobi{DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64, Float64}}}, DomainSets.VcatDomain{2, Float64, (1, 1), Tuple{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, DomainSets.ChebyshevInterval{Float64}}}, Float64}, Float64, BlockArrays.PseudoBlockVector{Float64, Vector{Float64}, Tuple{BlockArrays.BlockedUnitRange{Vector{Int64}}}}}, ApproxFunBase.Fun{ApproxFunBase.TensorSpace{Tuple{ApproxFunOrthogonalPolynomials.Chebyshev{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, Float64}, ApproxFunAssociatedLegendre.NormalizedPlm{Float64, ApproxFunSingularities.JacobiWeight{ApproxFunOrthogonalPolynomials.NormalizedPolynomialSpace{ApproxFunOrthogonalPolynomials.Jacobi{DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64, Float64}}}, DomainSets.VcatDomain{2, Float64, (1, 1), Tuple{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, DomainSets.ChebyshevInterval{Float64}}}, Float64}, Float64, Vector{Float64}}, ApproxFunBase.Fun{ApproxFunBase.TensorSpace{Tuple{ApproxFunOrthogonalPolynomials.Ultraspherical{Int64, RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, Float64}, ApproxFunOrthogonalPolynomials.Jacobi{DomainSets.ChebyshevInterval{Float64}, Float64}}, DomainSets.VcatDomain{2, Float64, (1, 1), Tuple{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, DomainSets.ChebyshevInterval{Float64}}}, Float64}, Float64, BlockArrays.PseudoBlockVector{Float64, Vector{Float64}, Tuple{BlockArrays.BlockedUnitRange{Vector{Int64}}}}}, ApproxFunBase.Fun{ApproxFunBase.TensorSpace{Tuple{ApproxFunOrthogonalPolynomials.Ultraspherical{Int64, RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, Float64}, ApproxFunOrthogonalPolynomials.Jacobi{DomainSets.ChebyshevInterval{Float64}, Float64}}, DomainSets.VcatDomain{2, Float64, (1, 1), Tuple{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, DomainSets.ChebyshevInterval{Float64}}}, Float64}, Float64, BlockArrays.PseudoBlockVector{Float64, Vector{Float64}, Tuple{BlockArrays.BlockedUnitRange{Vector{Int64}}}}}}}
+
 function solar_differential_rotation_vorticity_Fun(; operators,
         ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(; operators)
         )
@@ -1264,22 +1265,22 @@ function solar_differential_rotation_vorticity_Fun(; operators,
     @unpack radialspace = operators
     latitudinal_space = NormalizedPlm(0) # velocity and vorticity are expanded in Legendre poly
 
-    cosθ = Fun(Legendre())
-    cosθop = Multiplication(cosθ, latitudinal_space)
-    sinθdθop = sinθ∂θ_Operator(latitudinal_space)
-    Ir = I : radialspace
-    Iℓ = I : latitudinal_space
-    ∇² = ApproxFunAssociatedLegendre.HorizontalLaplacian(latitudinal_space)
+    cosθ = Fun(Legendre());
+    cosθop = Multiplication(cosθ, latitudinal_space);
+    sinθdθop = sinθ∂θ_Operator(latitudinal_space);
+    Ir = I : radialspace;
+    Iℓ = I : latitudinal_space;
+    ∇² = HorizontalLaplacian(latitudinal_space);
 
-    ωΩr = (Ir ⊗ (sinθdθop + 2cosθop)) * ΔΩ
-    ∂rωΩr = (ddr ⊗ Iℓ) * ωΩr
+    ωΩr = (Ir ⊗ (sinθdθop + 2cosθop)) * ΔΩ;
+    ∂rωΩr = (ddr ⊗ Iℓ) * ωΩr;
     cotθdθΔΩ = Fun((Ir ⊗ (-cosθ * Derivative(Legendre()))) * ΔΩ,
-                    radialspace ⊗ latitudinal_space)
-    ∂θωΩr_by_sinθ = (Ir ⊗ (∇²-2)) * ΔΩ + 2cotθdθΔΩ
-    ωΩθ_by_rsinθ = (-(ddr + 2onebyr) ⊗ Iℓ) * ΔΩ
-    ∂rωΩθ_by_sinθ = (-(r * d2dr2 + 3ddr) ⊗ Iℓ) * ΔΩ
+                    radialspace ⊗ latitudinal_space);
+    ∂θωΩr_by_sinθ = (Ir ⊗ (∇²-2)) * ΔΩ + 2cotθdθΔΩ;
+    ωΩθ_by_rsinθ = (-(ddr + 2onebyr) ⊗ Iℓ) * ΔΩ;
+    ∂rωΩθ_by_sinθ = (-(r * d2dr2 + 3ddr) ⊗ Iℓ) * ΔΩ;
 
-    (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂rωΩθ_by_sinθ)
+    (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂rωΩθ_by_sinθ)::Tvorticity
 end
 
 struct OpVector{VT,WT}
@@ -1313,7 +1314,7 @@ function Base.show(io::IO, O::OpVector)
 end
 
 function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
-        operators, rotation_profile = :solar,
+        operators, rotation_profile = :latrad,
         ΔΩ_frac = 0.01, # only used to test the constant case
         ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(;
                             operators, rotation_profile, ΔΩ_frac),
@@ -1334,23 +1335,26 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     SS = matrix_block(M.re, 3, 3);
 
     latitudinal_space = NormalizedPlm(m);
-    sinθdθop = sinθ∂θ_Operator(latitudinal_space);
-    Ir = I : ApproxFunBase.UnsetSpace();
+
+    Ir = ConstantOperator(I);
     Iℓ = I : latitudinal_space;
-    ∇² = ApproxFunAssociatedLegendre.HorizontalLaplacian(latitudinal_space);
-    ℓℓp1op = -∇²;
-    unsetspace2d = ApproxFunBase.UnsetSpace() ⊗ latitudinal_space;
+    unsetspace2d = domainspace(Ir) ⊗ latitudinal_space;
     space2d = radialspace ⊗ latitudinal_space;
+    I2d_unset = I : unsetspace2d;
+
+    sinθdθop = sinθ∂θ_Operator(latitudinal_space);
+    ∇² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇²;
 
     (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ) = ΔΩprofile_deriv;
     (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂rωΩθ_by_sinθ) = ωΩ_deriv;
 
     onebyr2op = Multiplication(onebyr2, radialspace);
     ufr_W = onebyr2op ⊗ ℓℓp1op;
-    ufr = OpVector((; V = 0I : unsetspace2d, iW = -im * ufr_W));
-    ωfr = OpVector((; V = ufr_W, iW = 0I : unsetspace2d));
+    ufr = OpVector((; V = 0 * I2d_unset, iW = -im * ufr_W));
+    ωfr = OpVector((; V = ufr_W, iW = 0 * I2d_unset));
 
-    rsinθufθ = OpVector((; V = im * m * I : unsetspace2d, iW = -im * DDr ⊗ sinθdθop));
+    rsinθufθ = OpVector((; V = im * m * I2d_unset, iW = -im * DDr ⊗ sinθdθop));
     rsinθωfθ = OpVector((; V = ddr ⊗ sinθdθop, iW = m * (onebyr2op ⊗ ℓℓp1op - ddrDDr ⊗ Iℓ)));
 
     rsinθufϕ = OpVector((; V = -Ir ⊗ sinθdθop, iW = (m * DDr) ⊗ Iℓ));
@@ -1386,6 +1390,8 @@ function rotationtag(rotation_profile)
     rstr = String(rotation_profile)
     if startswith(rstr, "radial")
         return Symbol(split(rstr, "radial_")[2])
+    elseif startswith(rstr, "solar")
+        return Symbol(split(rstr, "solar_")[2])
     else
         return Symbol(rotation_profile)
     end

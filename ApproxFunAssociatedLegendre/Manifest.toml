@@ -18,15 +18,15 @@ version = "3.4.0"
 
 [[deps.ApproxFunBase]]
 deps = ["AbstractFFTs", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "Calculus", "DSP", "DomainSets", "DualNumbers", "FFTW", "FillArrays", "InfiniteArrays", "InfiniteLinearAlgebra", "IntervalSets", "LazyArrays", "LinearAlgebra", "LowRankApprox", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "Test"]
-git-tree-sha1 = "c2b1636ecf38b5758a102687361eb16668c5f1c0"
+git-tree-sha1 = "1f37e68cbfb1d1d0385357049fbfcffa6fbb6298"
 uuid = "fbd15aa5-315a-5a7d-a8a4-24992e37be05"
-version = "0.7.32"
+version = "0.7.33"
 
 [[deps.ApproxFunOrthogonalPolynomials]]
-deps = ["AbstractFFTs", "ApproxFunBase", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "DomainSets", "FFTW", "FastGaussQuadrature", "FastTransforms", "FillArrays", "IntervalSets", "LinearAlgebra", "Reexport", "SpecialFunctions", "Statistics"]
-git-tree-sha1 = "28df82355a1317fc124bdb8b1e1e1e7a4c6b85c1"
+deps = ["AbstractFFTs", "ApproxFunBase", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "DomainSets", "FFTW", "FastGaussQuadrature", "FastTransforms", "FillArrays", "IntervalSets", "LinearAlgebra", "Reexport", "SpecialFunctions", "StaticArrays", "Statistics"]
+git-tree-sha1 = "9376a3d3295fd1dbcd138db8f104410ba8b9bea3"
 uuid = "b70543e2-c0d9-56b8-a290-0d4d6d4de211"
-version = "0.5.14"
+version = "0.5.15"
 
 [[deps.ApproxFunSingularities]]
 deps = ["ApproxFunBase", "ApproxFunOrthogonalPolynomials", "DomainSets", "IntervalSets", "LinearAlgebra", "Reexport", "Statistics"]
@@ -166,15 +166,15 @@ version = "0.5.0"
 
 [[deps.FastTransforms]]
 deps = ["AbstractFFTs", "FFTW", "FastGaussQuadrature", "FastTransforms_jll", "FillArrays", "GenericFFT", "Libdl", "LinearAlgebra", "Reexport", "SpecialFunctions", "Test", "ToeplitzMatrices"]
-git-tree-sha1 = "50ab78299c9f661ac682b49e3ec3be8e6f5f62cb"
+git-tree-sha1 = "a199436dae689cfb5b1fdaf0e2777b84f2d280fc"
 uuid = "057dd010-8810-581a-b7be-e3fc3b93f78c"
-version = "0.14.7"
+version = "0.14.8"
 
 [[deps.FastTransforms_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "FFTW_jll", "JLLWrappers", "LLVMOpenMP_jll", "Libdl", "MPFR_jll", "OpenBLAS_jll", "Pkg"]
-git-tree-sha1 = "a2a2778f28475fa5da7167cd240e3f961fb3f6a4"
+git-tree-sha1 = "8cec4285578b83cec4f5aa13a13a4963595846df"
 uuid = "34b6f7d7-08f9-5794-9e10-3819e4c7e49a"
-version = "0.6.1+0"
+version = "0.6.2+0"
 
 [[deps.FileWatching]]
 uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
