@@ -387,8 +387,10 @@ function radial_operators(operatorparams...)
 
     # matrix representations
 
-    matCU2 = x -> operatormatrix(x, nr, radialspace => rangespace(d2dr2:radialspace))
-    matCU4 = x -> operatormatrix(x, nr, radialspace => rangespace(d4dr4:radialspace))
+    spaceconversionCU2 = radialspace => rangespace(d2dr2:radialspace)
+    matCU2 = x -> operatormatrix(x, nr, spaceconversionCU2)
+    spaceconversionCU4 = radialspace => rangespace(d4dr4:radialspace)
+    matCU4 = x -> operatormatrix(x, nr, spaceconversionCU4)
 
     # matrix forms of operators
     onebyrMCU2 = matCU2(onebyr)
