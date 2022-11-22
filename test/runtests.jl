@@ -491,6 +491,37 @@ end
     end
 end
 
+@testset "solar differential rotation" begin
+    @testset "compare with constant" begin
+        nr, nℓ = 30, 10
+        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+        @unpack nvariables = operators;
+
+        Mc = RossbyWaveSpectrum.allocate_operator_matrix(operators);
+        Mr = RossbyWaveSpectrum.allocate_operator_matrix(operators);
+
+        @testset for m in [1, 4, 10]
+            @testset "radial constant and constant" begin
+                RossbyWaveSpectrum.differential_rotation_matrix!(Mc, m;
+                    rotation_profile = :constant, operators);
+                RossbyWaveSpectrum.differential_rotation_matrix!(Mr, m;
+                    rotation_profile = :solar_constant, operators);
+
+                @testset for colind in 1:2, rowind in 1:2
+                    Rc = matrix_block(Mr, rowind, colind, nvariables)
+                    C = matrix_block(Mc, rowind, colind, nvariables)
+                    @testset "real" begin
+                        @test blockwise_isapprox(Rc.re, C.re, atol = 1e-10, rtol = 5e-4)
+                    end
+                    @testset "imag" begin
+                        @test blockwise_isapprox(Rc.im, C.im, atol = 1e-10, rtol = 1e-3)
+                    end
+                end
+            end
+        end
+    end
+end
+
 @testset "constant differential rotation solution" begin
     nr, nℓ = 45, 8
     nparams = nr * nℓ

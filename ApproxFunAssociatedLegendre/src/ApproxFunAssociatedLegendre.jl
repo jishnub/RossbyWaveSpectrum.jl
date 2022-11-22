@@ -32,21 +32,21 @@ NormalizedPlm(m::Int) = NormalizedPlm(m, JacobiWeight(m/2, m/2, NormalizedJacobi
 NormalizedPlm(; m::Int=m) = NormalizedPlm(m)
 Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(m=", azimuthalorder(sp), ")")
 
-# # Assume that only one m is being used
-# function Base.union(A::NormalizedPlm, B::NormalizedPlm)
-# 	@assert azimuthalorder(A) == azimuthalorder(B)
-# 	A
-# end
+# Assume that only one m is being used
+function Base.union(A::NormalizedPlm, B::NormalizedPlm)
+	@assert azimuthalorder(A) == azimuthalorder(B)
+	A
+end
 
-# function ApproxFunBase.maxspace(A::NormalizedPlm, B::NormalizedPlm)
-# 	@assert azimuthalorder(A) == azimuthalorder(B)
-# 	A
-# end
+function ApproxFunBase.maxspace(A::NormalizedPlm, B::NormalizedPlm)
+	@assert azimuthalorder(A) == azimuthalorder(B)
+	A
+end
 
-# function Base.:(==)(A::NormalizedPlm, B::NormalizedPlm)
-# 	@assert azimuthalorder(A) == azimuthalorder(B)
-# 	true
-# end
+function Base.:(==)(A::NormalizedPlm, B::NormalizedPlm)
+	@assert azimuthalorder(A) == azimuthalorder(B)
+	true
+end
 
 const JacobiMaybeNormalized = Union{Jacobi, NormalizedPolynomialSpace{<:Jacobi}}
 function assertLegendre(sp::JacobiMaybeNormalized)
@@ -225,7 +225,7 @@ end
 expand(A, B) = A * B
 expand(A) = A
 expand(P::PlusOperator) = mapreduce(expand, +, P.ops)
-expand(T::TimesOperator) = reduce(expand, T.ops)
+expand(T::TimesOperator) = foldr(expand, T.ops)
 function expand(C::ConstantTimesOperator)
 	(; λ, op) = C
 	expand(λ, op)
@@ -286,15 +286,16 @@ expand(K::KroneckerOperator) = K
 
 ##################################################################################
 
-function kronmatrix(P::PlusOperator, nr, nℓ)
-	mapfoldl(op -> kronmatrix(op, nr, nℓ), +, P.ops)
+function kronmatrix(P::PlusOperator, nr, ℓinds...)
+	mapfoldl(op -> kronmatrix(op, nr, ℓinds...), +, P.ops)
 end
 function kronmatrix(K::KroneckerOperator, nr, nℓ::Integer)
-	kronmatrix(K::KroneckerOperator, nr, 1:nℓ)
+	kronmatrix(K::KroneckerOperator, nr, 1:nℓ, 1:nℓ)
 end
-function kronmatrix(K::KroneckerOperator, nr, ℓindrange::AbstractRange{<:Integer})
+function kronmatrix(K::KroneckerOperator, nr,
+		ℓindrange_row::AbstractVector, ℓindrange_col::AbstractVector)
 	Or, Oθ = K.ops
-	kronmatrix(Oθ[ℓindrange, ℓindrange], Or[1:nr, 1:nr])
+	kronmatrix(Oθ[ℓindrange_row, ℓindrange_col], Or[1:nr, 1:nr])
 end
 
 function kronmatrix(A::BandedMatrix, B::AbstractMatrix)

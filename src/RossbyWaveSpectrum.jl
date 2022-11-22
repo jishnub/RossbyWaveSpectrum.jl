@@ -45,7 +45,6 @@ const Rsun = 6.959894677e+10
 
 const Tmul = typeof(Multiplication(Fun()) * Derivative())
 const Tplusinf = typeof(Multiplication(Fun()) + Derivative())
-const Tplusinfconcrete = typeof(Multiplication(Fun()) + Derivative() : Chebyshev())
 const TplusInt = typeof(Multiplication(Fun(), Chebyshev()) + Derivative(Chebyshev()))
 
 const StructMatrix{T} = StructArray{T,2}
@@ -77,7 +76,7 @@ function operatormatrix(A, nr, spaceconversion::Pair)::Matrix{Float64}
     C[1:nr, 1:nr]
 end
 
-function V_boundary_op(operators)
+function V_boundary_op(operators)::TplusInt
     @unpack r = operators.rad_terms;
     @unpack ddr = operators.diff_operators;
 
@@ -91,7 +90,7 @@ function constraintmatrix(operators)
     @unpack r = operators.rad_terms;
     @unpack ddr = operators.diff_operators;
 
-    V_BC_op = V_boundary_op(operators)::Tplusinfconcrete;
+    V_BC_op = V_boundary_op(operators);
     CV = [Evaluation(r_in) * V_BC_op; Evaluation(r_out) * V_BC_op];
     nradconstraintsVS = size(CV,1)::Int;
     MVn = Matrix(CV[:, 1:nr])::Matrix{Float64};
@@ -275,9 +274,9 @@ function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _strati
     radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate, Tuple(scalings))
 end
 function radial_operators(operatorparams...)
-    nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate, scalings = operatorparams
+    nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate, _scalings = operatorparams
 
-    Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling = scalings
+    Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling = _scalings
 
     r_in = r_in_frac * Rsun;
     r_out = r_out_frac * Rsun;
@@ -637,13 +636,13 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
     A.re .= 0
     A.im .= 0
 
-    VV = matrix_block(A.re, 1, 1)
-    VW = matrix_block(A.re, 1, 2)
-    WV = matrix_block(A.re, 2, 1)
-    WW = matrix_block(A.re, 2, 2)
-    WS = matrix_block(A.re, 2, 3)
-    SW = matrix_block(A.re, 3, 2)
-    SS = matrix_block(A.im, 3, 3)
+    VV = matrix_block(A.re, 1, 1);
+    VW = matrix_block(A.re, 1, 2);
+    WV = matrix_block(A.re, 2, 1);
+    WW = matrix_block(A.re, 2, 2);
+    WS = matrix_block(A.re, 2, 3);
+    SW = matrix_block(A.re, 3, 2);
+    SS = matrix_block(A.im, 3, 3);
 
     nCS = 2nℓ+1
     ℓs = range(m, length = nCS)
@@ -915,7 +914,8 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
         @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4;
 
-        WW[Block(ℓind, ℓind)] .+= (Weqglobalscaling * Rsun^2) .* (diagterm .* ddrDDr_minus_ℓℓp1_by_r2MCU4 .+ 2dopplerterm .* ηρ_by_rMCU4)
+        WW[Block(ℓind, ℓind)] .+= (Weqglobalscaling * Rsun^2) .*
+            (diagterm .* ddrDDr_minus_ℓℓp1_by_r2MCU4 .+ 2dopplerterm .* ηρ_by_rMCU4)
 
         SS[Block(ℓind, ℓind)] .+= Seqglobalscaling .* dopplerterm .* IU2
 
@@ -923,10 +923,10 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
             ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
             ℓ′ind = findfirst(isequal(ℓ′), V_ℓs)
 
-            @. T = -Rsun * ΔΩ_frac / ℓℓp1 *
+            @. T = -(Rsun * Wscaling) * ΔΩ_frac / ℓℓp1 *
                                     ((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * ddrMCU4
                                         +
-                                        ddr_plus_2byrMCU4 * laplacian_sinθdθo[ℓ, ℓ′]) * Wscaling
+                                        ddr_plus_2byrMCU4 * laplacian_sinθdθo[ℓ, ℓ′])
 
             WV[Block(ℓind, ℓ′ind)] .+= Weqglobalscaling .* T
         end
@@ -1216,6 +1216,18 @@ function solar_differential_rotation_profile_derivatives_grid(;
     if rotation_profile == :constant
         ΔΩ = fill(Ω0 * ΔΩ_frac, nr, nθ)
         ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ = (zeros(nr, nθ) for i in 1:5)
+    elseif rotation_profile == :radial_equator
+        ΔΩ_r_, ddrΔΩ_r_, d2dr2ΔΩ_r_ = radial_differential_rotation_profile_derivatives_grid(;
+            operators, rotation_profile = :solar_equator, kw...)
+        for x in (ΔΩ_r_, ddrΔΩ_r_, d2dr2ΔΩ_r_)
+            x .*= Ω0
+        end
+        ΔΩ = repeat(ΔΩ_r_, 1, nℓ)
+        ∂θ_ΔΩ = zero(ΔΩ)
+        ∂r_ΔΩ = repeat(ddrΔΩ_r_, 1, nℓ)
+        ∂2r_ΔΩ = repeat(d2dr2ΔΩ_r_, 1, nℓ)
+        ∂r∂θ_ΔΩ = zero(ΔΩ)
+        ∂2θ_ΔΩ = zero(ΔΩ)
     elseif rotation_profile == :latrad
         ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ =
             solar_rotation_profile_and_derivative_grid(; operators, kw...)
@@ -1259,13 +1271,13 @@ function solar_differential_rotation_vorticity_Fun(; operators,
         ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(; operators)
         )
 
-    @unpack onebyr, r = operators.rad_terms
-    @unpack ddr, d2dr2 = operators.diff_operators
+    @unpack onebyr, r = operators.rad_terms;
+    @unpack ddr, d2dr2 = operators.diff_operators;
 
-    (; ΔΩ) = ΔΩprofile_deriv
+    (; ΔΩ) = ΔΩprofile_deriv;
 
-    @unpack radialspace = operators
-    latitudinal_space = NormalizedPlm(0) # velocity and vorticity are expanded in Legendre poly
+    @unpack radialspace = operators;
+    latitudinal_space = NormalizedPlm(0); # velocity and vorticity are expanded in Legendre poly
 
     cosθ = Fun(Legendre());
     cosθop = Multiplication(cosθ, latitudinal_space);
@@ -1302,6 +1314,7 @@ Base.:(-)(A::OpVector, B::OpVector) = OpVector(A.V - B.V, A.iW - B.iW)
 Base.:(*)(A::OpVector, B::OpVector) = OpVector(A.V * B.V, A.iW * B.iW)
 
 Base.:(:)(A::OpVector, s::Space) = OpVector(A.V : s, A.iW : s)
+ApproxFunBase.:(→)(A::OpVector, s::Space) = OpVector(A.V → s, A.iW → s)
 
 ApproxFunAssociatedLegendre.expand(A::OpVector) = OpVector(expand(A.V), expand(A.iW))
 ApproxFunAssociatedLegendre.kronmatrix(A::OpVector, nr, nθ) =
@@ -1327,6 +1340,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     @unpack onebyr, onebyr2, r2 = operators.rad_terms;
     @unpack ddr, d2dr2, DDr, ddrDDr = operators.diff_operators;
     @unpack radialspace = operators;
+    @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
 
     VV = matrix_block(M.re, 1, 1);
     VW = matrix_block(M.re, 1, 2);
@@ -1365,12 +1379,18 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     curl_u_x_ω_r = (ωΩr * (DDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (Ir ⊗ sinθdθop) - ∂rωΩr) * ufr +
         ((-onebyr2 ⊗ Iℓ) * ∂θωΩr_by_sinθ) * rsinθufθ - im * m * ΔΩ * ωfr;
     scaled_curl_u_x_ω_r_tmp = ((im * r2) ⊗ inv(∇²)) * curl_u_x_ω_r;
-    scaled_curl_u_x_ω_r = (scaled_curl_u_x_ω_r_tmp : space2d) |> expand;
+    space2d_D2 = rangespace(Derivative(radialspace, 2)) ⊗ NormalizedPlm(m)
+    scaled_curl_u_x_ω_r = (scaled_curl_u_x_ω_r_tmp : space2d → space2d_D2) |> expand;
 
-    VV .+= real(kronmatrix(scaled_curl_u_x_ω_r.V, nr, ℓrange(1, nℓ, V_symmetric)))
-    VW .+= real(kronmatrix(scaled_curl_u_x_ω_r.iW, nr, ℓrange(1, nℓ, !V_symmetric)))
+    V_ℓinds = ℓrange(1, nℓ, V_symmetric)
+    W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    rdiv_ucrossω_h = OpVector((; V = (2ωΩr + ΔΩ * (Ir ⊗ sinθdθop)) * (Ir ⊗ ℓℓp1op),
+    VV .+= real(kronmatrix(scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds))
+    VW_ = real(kronmatrix(scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds))
+    VW .+= (Rsun / Wscaling) .* VW_
+
+    rdiv_ucrossω_h = OpVector((; V = (2ωΩr + ΔΩ * (Ir ⊗ sinθdθop)) * (Ir ⊗ ℓℓp1op) -
+                                    ∂θωΩr_by_sinθ * (Ir ⊗ sinθdθop) ,
                         iW = m * (∂θωΩr_by_sinθ * (DDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (Ir ⊗ ℓℓp1op))));
 
     uf_x_ωΩ_r = -ωΩθ_by_rsinθ * rsinθufϕ;
@@ -1380,10 +1400,13 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
     scaled_curl_curl_u_x_ω_r_tmp = ((Ir ⊗ inv(ℓℓp1op)) *
                                 ((-ddr ⊗ Iℓ) * rdiv_ucrossω_h + ∇²_u_x_ω_r));
-    scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d) |> expand ;
+    space2d_D4 = rangespace(Derivative(radialspace, 4)) ⊗ NormalizedPlm(m)
+    scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
 
-    WV .+= real(kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, ℓrange(1, nℓ, V_symmetric)))
-    WW .+= real(kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, ℓrange(1, nℓ, !V_symmetric)))
+    WV_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds))
+    WV .+= (Rsun * Wscaling * Weqglobalscaling) .* WV_
+    WW_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds))
+    WW .+= (Weqglobalscaling * Rsun^2) .* WW_
 
     return M
 end
