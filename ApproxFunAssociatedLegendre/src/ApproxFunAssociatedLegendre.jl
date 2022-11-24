@@ -257,7 +257,8 @@ end
 expand(λ::Number, P::PlusOperator) = mapreduce(op -> expand(λ, op), +, P.ops)
 function expand(λ::Number, T::TimesOperator)
 	(; ops) = T
-	foldl(expand, ops[2:end], init=λ*ops[1])
+	ops[1] *= λ
+	foldr(expand, ops)
 end
 function expand(n::Number, C::ConstantTimesOperator)
 	(; λ) = C

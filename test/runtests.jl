@@ -652,6 +652,8 @@ end
                 V_ℓinds = RossbyWaveSpectrum.ℓrange(1, nℓ, V_symmetric);
                 W_ℓinds = RossbyWaveSpectrum.ℓrange(1, nℓ, !V_symmetric);
 
+                twobyℓℓp1 = 2*inv(ℓℓp1op);
+
                 @testset "VV" begin
                     O = m*ΔΩ*(I ⊗ (2*inv(ℓℓp1op) - I)) : space2d → space2d_D2;
                     A = real(kronmatrix(expand(O), nr, V_ℓinds, V_ℓinds));
@@ -671,9 +673,28 @@ end
                 end
 
                 @testset "WV" begin
+                    T1 = 4cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 2)
+                    O = (-I ⊗ inv(ℓℓp1op)) *(
+                            ΔΩ * (ddr ⊗ T1) + ∂r_ΔΩ * (I ⊗ T1)
+                            + ∂r_ΔΩ * (I ⊗ (∇² * sinθdθop))
+                            + ΔΩ * ((ddr + 2onebyr) ⊗ (∇² * sinθdθop))
+                        ) : space2d → space2d_D4;
+                    A = real(kronmatrix(expand(O), nr, W_ℓinds, V_ℓinds));
+                    A .*= Rsun * Wscaling * Weqglobalscaling;
+                    @test WVre ≈ A
                 end
 
                 @testset "WW" begin
+                    O = m * (
+                        ΔΩ * (ddrDDr ⊗ (twobyℓℓp1 - 1))
+                        + ∂r_ΔΩ * (DDr ⊗ (twobyℓℓp1 - 1))
+                        - ΔΩ * (Multiplication(onebyr2) ⊗ ((twobyℓℓp1 - 1) * ℓℓp1op))
+                        - ΔΩ * (Multiplication(2*onebyr*ηρ) ⊗ I)
+                        + ∂2r_ΔΩ + ∂r_ΔΩ * ((ddr + 2onebyr) ⊗ I)
+                        ) : space2d → space2d_D4;
+                    A = real(kronmatrix(expand(O), nr, W_ℓinds, W_ℓinds));
+                    A .*= Weqglobalscaling * Rsun^2;
+                    @test WWre ≈ A
                 end
             end
         end
