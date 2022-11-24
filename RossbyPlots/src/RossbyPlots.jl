@@ -23,6 +23,7 @@ export uniform_rotation_spectrum
 export differential_rotation_spectrum
 export diffrot_rossby_ridg
 export plot_diffrot_radial
+export plot_diffrot_radial_derivatives
 export eigenfunction
 export eigenfunction_spectrum
 export eigenfunction_rossbyridge
@@ -472,7 +473,7 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
     lam_constant_sym, lam_constant_asym = fconstsym.lams, fconstasym.lams
     lam_radial_sym, lam_radial_asym = fradsym.lams, fradasym.lams
 
-    ΔΩ_constant = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+    ΔΩ_constant = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(;
             operators = fconstsym.operators, rotation_profile = :constant).ΔΩ
 
     axlist[1,1].plot(r_frac, ΔΩ_constant.(rpts) .* freqnHzunit(Ω0_const), color="0.2")
@@ -488,7 +489,7 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
     axlist[1,2].set_ylim(-200, 700)
     axlist[1,3].set_ylim(-200, 700)
 
-    ΔΩ_solar_radial = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+    ΔΩ_solar_radial = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(;
             operators = fradsym.operators, rotation_profile = :solar_equator).ΔΩ
 
     axlist[2,1].plot(r_frac, ΔΩ_solar_radial.(rpts) .* freqnHzunit(Ω0_radial), color="0.2")
@@ -965,22 +966,23 @@ function plot_matrix_block(M, rowind, colind, nℓ, ℓind, ℓ′ind, nvariable
 end
 
 function plot_diffrot_radial(; operators, kw...)
-    r_raw = RossbyWaveSpectrum.read_angular_velocity_radii()
-    Ω_raw = RossbyWaveSpectrum.read_angular_velocity_raw()
+    r_raw = RossbyWaveSpectrum.solar_rotation_profile_radii()
+    Ω_raw = RossbyWaveSpectrum.solar_rotation_profile_raw()
     θinds = axes(Ω_raw,2)
     eqind = first(θinds) + (first(θinds) + last(θinds)) ÷ 2
     Ω_raw_eq = Ω_raw[:, eqind]
     @unpack Ω0 = operators.constants
     ΔΩ_raw_eq = Ω_raw_eq .- Ω0
 
-    @unpack r_in = operators.radial_params
+    @unpack r_in, r_out = operators.radial_params
     r_in_frac = r_in / Rsun
+    r_out_frac = r_out / Rsun
 
     plot(r_raw[r_raw .>= r_in_frac], ΔΩ_raw_eq[r_raw .>= r_in_frac]*1e9/2pi, label="radial, equator")
     @unpack rpts = operators
 
     if get(kw, :plot_smoothed, true)
-        (; ΔΩ,) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+        (; ΔΩ,) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun_Fun(;
             operators, rotation_profile = get(kw, :rotation_profile, :solar_equator), kw...);
         plot(rpts/Rsun, ΔΩ.(rpts)*Ω0*1e9/2pi, label="smoothed model")
     end
@@ -991,7 +993,7 @@ function plot_diffrot_radial(; operators, kw...)
     xlim(xmin - pad, xmax + pad)
     if get(kw, :plot_guides, false)
         axhline(0, ls="dotted", color="black")
-        axvline(operators.radial_params[:r_out]/Rsun, ls="dotted", color="black")
+        axvline(r_out_frac, ls="dotted", color="black")
     end
     fontsize = get(kw, :fontsize, 12)
     xlabel(L"r/R_\odot"; fontsize)
@@ -1021,14 +1023,14 @@ function plot_diffrot_radial_derivatives(; operators, kw...)
     @unpack rpts = operators
 
     @unpack Ω0 = operators.constants
-    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(;
         operators, kw...);
 
     f, axlist = subplots(3, 1, sharex = true)
     _plot_diffrot_radial_derivatives(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ, zorder = 2, color="0.5",
         labelpre = "model, ", marker = ".", ls = "solid")
     if get(kw, :rotation_profile, :solar_equator) !== :solar_equator
-        (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives(;
+        (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(;
         operators, kw..., rotation_profile = :solar_equator);
         _plot_diffrot_radial_derivatives(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ, labelpre = "solar",
             ncoeffs = false, color="0.6", zorder = 1, ls = "dashed")

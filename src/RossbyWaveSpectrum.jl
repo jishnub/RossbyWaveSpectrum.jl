@@ -2,23 +2,24 @@ module RossbyWaveSpectrum
 
 using MKL
 
-using ApproxFun
-using ApproxFunAssociatedLegendre
-using BandedMatrices
-using BlockArrays
+using Reexport
+
+@reexport using ApproxFun
+@reexport using ApproxFunAssociatedLegendre
+@reexport using BandedMatrices
+@reexport using BlockArrays
 using BlockBandedMatrices
 using DelimitedFiles: readdlm
-using Dierckx
+using Dierckx: Dierckx, Spline1D, Spline2D, derivative
 using DomainSets
 using FillArrays
 using Folds
 using IntervalSets
 using JLD2
-using LinearAlgebra
+@reexport using LinearAlgebra
 using LinearAlgebra: BLAS
 using LegendrePolynomials
 using OffsetArrays
-using Reexport
 using SparseArrays
 using StructArrays
 using TimerOutputs
@@ -315,13 +316,13 @@ function radial_operators(operatorparams...)
     DDr = (ddr + ηρ)::Tplusinf
     rDDr = (r * DDr)::Tmul
 
-    onebyr = (1 / r)::typeof(r)
+    onebyr = (\(Multiplication(r), 1, tolerance=1e-8))::typeof(r)
     twobyr = 2onebyr
-    onebyr2 = onebyr*onebyr
-    onebyr3 = onebyr2*onebyr
-    onebyr4 = onebyr2*onebyr2
-    DDr_minus_2byr = (DDr - 2onebyr)::Tplusinf
-    ddr_plus_2byr = (ddr + 2onebyr)::Tplusinf
+    onebyr2 = (\(Multiplication(r2), 1, tolerance=1e-8))::typeof(r)
+    onebyr3 = (\(Multiplication(r3), 1, tolerance=1e-8))::typeof(r)
+    onebyr4 = (\(Multiplication(r4), 1, tolerance=1e-8))::typeof(r)
+    DDr_minus_2byr = (DDr - twobyr)::Tplusinf
+    ddr_plus_2byr = (ddr + twobyr)::Tplusinf
 
     # ηρ_by_r = onebyr * ηρ
     ηρ_by_r = chop(Fun(sηρ_by_r, radialspace), 1e-2);
@@ -435,7 +436,7 @@ function radial_operators(operatorparams...)
     constants = (; κ, ν, Ω0) |> pairs |> Dict
 
     rad_terms = Dict{Symbol, typeof(r)}();
-    @pack! rad_terms = onebyr, ηρ, ηT,
+    @pack! rad_terms = onebyr, twobyr, ηρ, ηT,
         onebyr2, onebyr3, onebyr4,
         ηρT, g, r, r2,
         ηρ_by_r, ηρ_by_r2, ηρ2_by_r2, ddr_ηρbyr, ddr_ηρbyr2, ηρ_by_r3,
@@ -935,7 +936,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
-function solar_rotation_profile_spline(; operators, smoothing_param = 1e-5)
+function solar_rotation_profile_spline(; operators, smoothing_param = 1e-5, kw...)
     @unpack r_out = operators.radial_params;
     @unpack Ω0 = operators.constants;
 
@@ -951,13 +952,14 @@ function solar_rotation_profile_spline(; operators, smoothing_param = 1e-5)
 end
 
 function solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts, θpts)
-    ΔΩ = splΔΩ2D.(rpts, θpts')
-    ∂r_ΔΩ = derivative.((splΔΩ2D,), rpts, θpts', nux = 1, nuy = 0)
-    ∂θ_ΔΩ = derivative.((splΔΩ2D,), rpts, θpts', nux = 0, nuy = 1)
-    ∂2r_ΔΩ = derivative.((splΔΩ2D,), rpts, θpts', nux = 2, nuy = 0)
-    ∂r∂θ_ΔΩ = derivative.((splΔΩ2D,), rpts, θpts', nux = 1, nuy = 1)
-    ∂2θ_ΔΩ = derivative.((splΔΩ2D,), rpts, θpts', nux = 0, nuy = 2)
-    ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ
+    ΔΩ_fullinterp = splΔΩ2D.(rpts, θpts')
+    ∂r_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 1, nuy = 0)
+    ∂θ_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 0, nuy = 1)
+    ∂2r_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 2, nuy = 0)
+    ∂r∂θ_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 1, nuy = 1)
+    ∂2θ_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 0, nuy = 2)
+    ΔΩ_fullinterp, ∂r_ΔΩ_fullinterp, ∂θ_ΔΩ_fullinterp, ∂2r_ΔΩ_fullinterp,
+        ∂r∂θ_ΔΩ_fullinterp, ∂2θ_ΔΩ_fullinterp
 end
 function solar_rotation_profile_and_derivative_grid(; operators, kw...)
     @unpack rpts = operators
@@ -1039,9 +1041,9 @@ function radial_differential_rotation_profile_derivatives_grid(;
     else
         error("$rotation_profile is not a valid rotation model")
     end
-    ΔΩ_r ./= Ω0
-    ddrΔΩ_r ./= Ω0
-    d2dr2ΔΩ_r ./= Ω0
+    ΔΩ_r ./= Ω0;
+    ddrΔΩ_r ./= Ω0;
+    d2dr2ΔΩ_r ./= Ω0;
     return ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
 end
 
@@ -1051,13 +1053,13 @@ function radial_differential_rotation_profile_derivatives_Fun(; operators, kw...
     ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = ΔΩ_terms
     nr = length(ΔΩ_r)
 
-    ΔΩ = chop(grid_to_fun(ΔΩ_r, radialspace), 1e-2);
+    ΔΩ = chop(grid_to_fun(ΔΩ_r, radialspace), 1e-3);
     @checkncoeff ΔΩ nr
 
-    ddrΔΩ = chop(grid_to_fun(interp1d(rpts, ddrΔΩ_r, s = 1e-2), radialspace), 1e-2);
+    ddrΔΩ = chop(grid_to_fun(interp1d(rpts, ddrΔΩ_r, s = 1e-3), radialspace), 1e-3);
     @checkncoeff ddrΔΩ nr
 
-    d2dr2ΔΩ = chop(grid_to_fun(interp1d(rpts, d2dr2ΔΩ_r, s = 1e-2), radialspace), 1e-2);
+    d2dr2ΔΩ = chop(grid_to_fun(interp1d(rpts, d2dr2ΔΩ_r, s = 1e-3), radialspace), 1e-3);
     @checkncoeff d2dr2ΔΩ nr
 
     ΔΩ, ddrΔΩ, d2dr2ΔΩ = map(replaceemptywitheps, (ΔΩ, ddrΔΩ, d2dr2ΔΩ))
@@ -1074,7 +1076,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     @unpack nr, nℓ = operators.radial_params
     @unpack DDr, ddr, ddrDDr = operators.diff_operators;
     @unpack ddrMCU4 = operators.operator_matrices;
-    @unpack onebyr, g, ηρ_by_r, onebyr2 = operators.rad_terms;
+    @unpack onebyr, g, ηρ_by_r, onebyr2, twobyr = operators.rad_terms;
     @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
     @unpack matCU4, matCU2 = operators;
 
@@ -1112,7 +1114,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
     ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs);
 
-    DDr_min_2byr = (DDr - 2onebyr)::Tplusinf;
+    DDr_min_2byr = (DDr - twobyr)::Tplusinf;
     ΔΩ_DDr_min_2byr = (ΔΩ * DDr_min_2byr)::Tmul;
     ΔΩ_DDr = (ΔΩ * DDr)::Tmul;
     ΔΩ_by_r = ΔΩ * onebyr;
@@ -1124,7 +1126,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     ddrΔΩ_plus_ΔΩddrMCU4, twoΔΩ_by_rMCU4, ddrΔΩ_DDrMCU4, ΔΩ_ddrDDrMCU4,
         ΔΩ_by_r2MCU4, ddrΔΩ_ddr_plus_2byrMCU4, ΔΩ_ηρ_by_rMCU4 =
         map(matCU4, (ddrΔΩ_plus_ΔΩddr, 2ΔΩ_by_r, ddrΔΩ * DDr, ΔΩ * ddrDDr,
-            ΔΩ_by_r2, ddrΔΩ * (ddr + 2onebyr), ΔΩ * ηρ_by_r))
+            ΔΩ_by_r2, ddrΔΩ * (ddr + twobyr), ΔΩ * ηρ_by_r))
 
     ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4 = zeros(nr, nr);
     T = zeros(nr, nr);
@@ -1248,36 +1250,39 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     ΔΩ_terms = solar_differential_rotation_profile_derivatives_grid(; operators, kw...);
     ΔΩ_rθ, ∂r_ΔΩ_rθ, ∂θ_ΔΩ_rθ, ∂2r_ΔΩ_rθ, ∂r∂θ_ΔΩ_rθ, ∂2θ_ΔΩ_rθ = ΔΩ_terms
 
-    space = radialspace ⊗ Legendre()
+    space = radialspace ⊗ NormalizedLegendre()
 
-    ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space), 1e-2);
+    s = get(kw, :smoothing_param, 1e-3)
 
-    ∂r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂r_ΔΩ_rθ, s = 1e-2), space), 1e-2);
+    ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space), s);
 
-    ∂θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂θ_ΔΩ_rθ, s = 1e-2), space), 1e-2);
+    ∂r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂r_ΔΩ_rθ, s = s), space), s);
 
-    ∂2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂2r_ΔΩ_rθ, s = 1e-2), space), 1e-2);
+    ∂θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂θ_ΔΩ_rθ, s = s), space), s);
 
-    ∂r∂θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂r∂θ_ΔΩ_rθ, s = 1e-2), space), 1e-2);
+    ∂2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂2r_ΔΩ_rθ, s = s), space), s);
 
-    ∂2θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂2θ_ΔΩ_rθ, s = 1e-2), space), 1e-2);
+    ∂r∂θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂r∂θ_ΔΩ_rθ, s = s), space), s);
+
+    ∂2θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂2θ_ΔΩ_rθ, s = s), space), s);
+
+    ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ =
+        map(replaceemptywitheps, (ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ))
 
     (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ)
 end
-
-const Tvorticity = NamedTuple{(:ωΩr, :∂rωΩr, :∂θωΩr_by_sinθ, :ωΩθ_by_rsinθ, :∂rωΩθ_by_sinθ), Tuple{ApproxFunBase.Fun{ApproxFunBase.TensorSpace{Tuple{ApproxFunOrthogonalPolynomials.Chebyshev{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, Float64}, ApproxFunAssociatedLegendre.NormalizedPlm{Float64, ApproxFunSingularities.JacobiWeight{ApproxFunOrthogonalPolynomials.NormalizedPolynomialSpace{ApproxFunOrthogonalPolynomials.Jacobi{DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64, Float64}}}, DomainSets.VcatDomain{2, Float64, (1, 1), Tuple{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, DomainSets.ChebyshevInterval{Float64}}}, Float64}, Float64, BlockArrays.PseudoBlockVector{Float64, Vector{Float64}, Tuple{BlockArrays.BlockedUnitRange{Vector{Int64}}}}}, ApproxFunBase.Fun{ApproxFunBase.TensorSpace{Tuple{ApproxFunOrthogonalPolynomials.Ultraspherical{Int64, RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, Float64}, ApproxFunAssociatedLegendre.NormalizedPlm{Float64, ApproxFunSingularities.JacobiWeight{ApproxFunOrthogonalPolynomials.NormalizedPolynomialSpace{ApproxFunOrthogonalPolynomials.Jacobi{DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64, Float64}}}, DomainSets.VcatDomain{2, Float64, (1, 1), Tuple{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, DomainSets.ChebyshevInterval{Float64}}}, Float64}, Float64, BlockArrays.PseudoBlockVector{Float64, Vector{Float64}, Tuple{BlockArrays.BlockedUnitRange{Vector{Int64}}}}}, ApproxFunBase.Fun{ApproxFunBase.TensorSpace{Tuple{ApproxFunOrthogonalPolynomials.Chebyshev{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, Float64}, ApproxFunAssociatedLegendre.NormalizedPlm{Float64, ApproxFunSingularities.JacobiWeight{ApproxFunOrthogonalPolynomials.NormalizedPolynomialSpace{ApproxFunOrthogonalPolynomials.Jacobi{DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64}, DomainSets.ChebyshevInterval{Float64}, Float64, Float64}}}, DomainSets.VcatDomain{2, Float64, (1, 1), Tuple{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, DomainSets.ChebyshevInterval{Float64}}}, Float64}, Float64, Vector{Float64}}, ApproxFunBase.Fun{ApproxFunBase.TensorSpace{Tuple{ApproxFunOrthogonalPolynomials.Ultraspherical{Int64, RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, Float64}, ApproxFunOrthogonalPolynomials.Jacobi{DomainSets.ChebyshevInterval{Float64}, Float64}}, DomainSets.VcatDomain{2, Float64, (1, 1), Tuple{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, DomainSets.ChebyshevInterval{Float64}}}, Float64}, Float64, BlockArrays.PseudoBlockVector{Float64, Vector{Float64}, Tuple{BlockArrays.BlockedUnitRange{Vector{Int64}}}}}, ApproxFunBase.Fun{ApproxFunBase.TensorSpace{Tuple{ApproxFunOrthogonalPolynomials.Ultraspherical{Int64, RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, Float64}, ApproxFunOrthogonalPolynomials.Jacobi{DomainSets.ChebyshevInterval{Float64}, Float64}}, DomainSets.VcatDomain{2, Float64, (1, 1), Tuple{RossbyWaveSpectrum.UniqueInterval{Float64, IntervalSets.ClosedInterval{Float64}}, DomainSets.ChebyshevInterval{Float64}}}, Float64}, Float64, BlockArrays.PseudoBlockVector{Float64, Vector{Float64}, Tuple{BlockArrays.BlockedUnitRange{Vector{Int64}}}}}}}
 
 function solar_differential_rotation_vorticity_Fun(; operators,
         ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(; operators)
         )
 
-    @unpack onebyr, r = operators.rad_terms;
+    @unpack onebyr, r, onebyr2, twobyr = operators.rad_terms;
     @unpack ddr, d2dr2 = operators.diff_operators;
 
-    (; ΔΩ) = ΔΩprofile_deriv;
+    (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ) = ΔΩprofile_deriv;
 
     @unpack radialspace = operators;
-    latitudinal_space = NormalizedPlm(0); # velocity and vorticity are expanded in Legendre poly
+    latitudinal_space = NormalizedPlm(0); # velocity and its derivatives are expanded in Legendre poly
 
     cosθ = Fun(Legendre());
     cosθop = Multiplication(cosθ, latitudinal_space);
@@ -1286,15 +1291,24 @@ function solar_differential_rotation_vorticity_Fun(; operators,
     Iℓ = I : latitudinal_space;
     ∇² = HorizontalLaplacian(latitudinal_space);
 
-    ωΩr = (Ir ⊗ (sinθdθop + 2cosθop)) * ΔΩ;
-    ∂rωΩr = (ddr ⊗ Iℓ) * ωΩr;
-    cotθdθΔΩ = Fun((Ir ⊗ (-cosθ * Derivative(Legendre()))) * ΔΩ,
-                    radialspace ⊗ latitudinal_space);
-    ∂θωΩr_by_sinθ = (Ir ⊗ (∇²-2)) * ΔΩ + 2cotθdθΔΩ;
-    ωΩθ_by_rsinθ = (-(ddr + 2onebyr) ⊗ Iℓ) * ΔΩ;
-    ∂rωΩθ_by_sinθ = (-(r * d2dr2 + 3ddr) ⊗ Iℓ) * ΔΩ;
+    sinθ_plus_2cosθ = sinθdθop + 2cosθop
+    ωΩr = (Ir ⊗ sinθ_plus_2cosθ) * ΔΩ;
+    ∂rωΩr = (Ir ⊗ sinθ_plus_2cosθ) * ∂r_ΔΩ;
+    # cotθddθ = cosθ * 1/sinθ * d/dθ = -cosθ * d/d(cosθ) = -x*d/dx
+    cotθdθ = Ir ⊗ (-cosθ * Derivative(Legendre()))
+    cotθdθΔΩ = Fun(cotθdθ * ΔΩ, radialspace ⊗ latitudinal_space);
+    ∇²_min_2 = ∇²-2
+    ∂θωΩr_by_sinθ = (Ir ⊗ ∇²_min_2) * ΔΩ + 2cotθdθΔΩ;
+    cotθdθ∂r_ΔΩ = Fun(cotθdθ * ∂r_ΔΩ, radialspace ⊗ latitudinal_space);
+    ∂r∂θωΩr_by_sinθ = (Ir ⊗ ∇²_min_2) * ∂r_ΔΩ + 2cotθdθ∂r_ΔΩ;
+    ωΩθ_by_rsinθ = -(∂r_ΔΩ + (twobyr ⊗ Iℓ) * ΔΩ);
+    ∂rωΩθ_by_rsinθ = -(∂2r_ΔΩ + (twobyr ⊗ Iℓ) * ∂r_ΔΩ - (2onebyr2 ⊗ Iℓ) * ΔΩ)
 
-    (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂rωΩθ_by_sinθ)::Tvorticity
+    ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ, ∂rωΩθ_by_rsinθ =
+        map(replaceemptywitheps,
+            (ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ, ∂rωΩθ_by_rsinθ))
+
+    (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ, ∂rωΩθ_by_rsinθ)
 end
 
 struct OpVector{VT,WT}
@@ -1336,12 +1350,6 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         ωΩ_deriv = solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv),
         V_symmetric = true, kw...)
 
-    @unpack nr, nℓ = operators.radial_params;
-    @unpack onebyr, onebyr2, r2 = operators.rad_terms;
-    @unpack ddr, d2dr2, DDr, ddrDDr = operators.diff_operators;
-    @unpack radialspace = operators;
-    @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
-
     VV = matrix_block(M.re, 1, 1);
     VW = matrix_block(M.re, 1, 2);
     WV = matrix_block(M.re, 2, 1);
@@ -1349,6 +1357,12 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     SV = matrix_block(M.re, 3, 1);
     SW = matrix_block(M.re, 3, 2);
     SS = matrix_block(M.re, 3, 3);
+
+    @unpack nr, nℓ = operators.radial_params;
+    @unpack onebyr, onebyr2, r2 = operators.rad_terms;
+    @unpack ddr, d2dr2, DDr, ddrDDr = operators.diff_operators;
+    @unpack radialspace = operators;
+    @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
 
     latitudinal_space = NormalizedPlm(m);
 
@@ -1363,9 +1377,10 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     ℓℓp1op = -∇²;
 
     (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ) = ΔΩprofile_deriv;
-    (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂rωΩθ_by_sinθ) = ωΩ_deriv;
+    (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ,
+        ∂rωΩθ_by_rsinθ, ∂rωΩθ_by_rsinθ) = ωΩ_deriv;
 
-    onebyr2op = Multiplication(onebyr2, radialspace);
+    onebyr2op = Multiplication(onebyr2);
     ufr_W = onebyr2op ⊗ ℓℓp1op;
     ufr = OpVector((; V = 0 * I2d_unset, iW = -im * ufr_W));
     ωfr = OpVector((; V = ufr_W, iW = 0 * I2d_unset));
@@ -1378,35 +1393,43 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
     curl_u_x_ω_r = (ωΩr * (DDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (Ir ⊗ sinθdθop) - ∂rωΩr) * ufr +
         ((-onebyr2 ⊗ Iℓ) * ∂θωΩr_by_sinθ) * rsinθufθ - im * m * ΔΩ * ωfr;
-    scaled_curl_u_x_ω_r_tmp = ((im * r2) ⊗ inv(∇²)) * curl_u_x_ω_r;
+    scaled_curl_u_x_ω_r_tmp = ((-im * r2) ⊗ inv(ℓℓp1op)) * curl_u_x_ω_r;
     space2d_D2 = rangespace(Derivative(radialspace, 2)) ⊗ NormalizedPlm(m)
     scaled_curl_u_x_ω_r = (scaled_curl_u_x_ω_r_tmp : space2d → space2d_D2) |> expand;
 
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    VV .+= real(kronmatrix(scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds))
-    VW_ = real(kronmatrix(scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds))
-    VW .+= (Rsun / Wscaling) .* VW_
+    VV_ = real(kronmatrix(scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds));
+    VW_ = real(kronmatrix(scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds));
+    VV .+= VV_;
+    VW .+= (Rsun / Wscaling) .* VW_;
 
-    rdiv_ucrossω_h = OpVector((; V = (2ωΩr + ΔΩ * (Ir ⊗ sinθdθop)) * (Ir ⊗ ℓℓp1op) -
-                                    ∂θωΩr_by_sinθ * (Ir ⊗ sinθdθop) ,
-                        iW = m * (∂θωΩr_by_sinθ * (DDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (Ir ⊗ ℓℓp1op))));
+    # we compute the derivative of rdiv_ucrossω_h analytically
+    # this lets us use the more accurate representations of ddrDDr instead of using ddr * DDr
+    ddr_rdiv_ucrossω_h = OpVector((;
+        V = ((2ωΩr + ΔΩ * (Ir ⊗ sinθdθop)) * (ddr ⊗ ℓℓp1op) - ∂θωΩr_by_sinθ * (ddr ⊗ sinθdθop)
+            + (2∂rωΩr + ∂r_ΔΩ * (Ir ⊗ sinθdθop)) * (Ir ⊗ ℓℓp1op) - ∂r∂θωΩr_by_sinθ * (Ir ⊗ sinθdθop)
+            ),
+        iW = m *
+            (∂θωΩr_by_sinθ * (ddrDDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (ddr ⊗ ℓℓp1op)
+            + ∂r∂θωΩr_by_sinθ * (DDr ⊗ Iℓ) + ∂rωΩθ_by_rsinθ * (Ir ⊗ ℓℓp1op)
+            )
+    ));
 
     uf_x_ωΩ_r = -ωΩθ_by_rsinθ * rsinθufϕ;
     uΩ_x_ωf_r = -ΔΩ * rsinθωfθ;
     u_x_ω_r = uf_x_ωΩ_r + uΩ_x_ωf_r;
     ∇²_u_x_ω_r = (Ir ⊗ ∇²) * u_x_ω_r;
 
-    scaled_curl_curl_u_x_ω_r_tmp = ((Ir ⊗ inv(ℓℓp1op)) *
-                                ((-ddr ⊗ Iℓ) * rdiv_ucrossω_h + ∇²_u_x_ω_r));
+    scaled_curl_curl_u_x_ω_r_tmp = (Ir ⊗ inv(ℓℓp1op)) * (-ddr_rdiv_ucrossω_h + ∇²_u_x_ω_r);
     space2d_D4 = rangespace(Derivative(radialspace, 4)) ⊗ NormalizedPlm(m)
     scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
 
-    WV_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds))
-    WV .+= (Rsun * Wscaling * Weqglobalscaling) .* WV_
-    WW_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds))
-    WW .+= (Weqglobalscaling * Rsun^2) .* WW_
+    WV_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds));
+    WW_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds));
+    WV .+= (Rsun * Wscaling * Weqglobalscaling) .* WV_;
+    WW .+= (Weqglobalscaling * Rsun^2) .* WW_;
 
     return M
 end

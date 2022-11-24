@@ -4,7 +4,7 @@ using DomainSets
 using ApproxFunBase
 using ApproxFunBase: SubOperator, UnsetSpace, ConcreteMultiplication, MultiplicationWrapper,
 	ConstantTimesOperator, ConversionWrapper
-import ApproxFunBase: domainspace, rangespace, Multiplication, setspace
+import ApproxFunBase: domainspace, rangespace, Multiplication, setspace, Conversion
 using BandedMatrices
 import BandedMatrices: BandedMatrix
 using WignerSymbols
@@ -31,6 +31,12 @@ ApproxFunBase.domain(n::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
 NormalizedPlm(m::Int) = NormalizedPlm(m, JacobiWeight(m/2, m/2, NormalizedJacobi(m,m)))
 NormalizedPlm(; m::Int=m) = NormalizedPlm(m)
 Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(m=", azimuthalorder(sp), ")")
+
+function Conversion(J::Jacobi{<:ChebyshevInterval}, sp::NormalizedPlm)
+	C = Conversion(J, sp.jacobispace)
+	S = ApproxFunBase.SpaceOperator(C, J, sp)
+	ApproxFunBase.ConversionWrapper(S)
+end
 
 # Assume that only one m is being used
 function Base.union(A::NormalizedPlm, B::NormalizedPlm)
@@ -211,6 +217,12 @@ function Base.getindex(P::HorizontalLaplacian{T,<:NormalizedPlm}, i::Int, j::Int
 	end
 end
 
+function ApproxFunBase.Multiplication(f::Fun{<:NormalizedPlm}, sp::NormalizedPolynomialSpace{<:Jacobi})
+	sp = space(f)
+	assertLegendre(sp)
+	Multiplication(Fun(f, NormalizedLegendre()), sp)
+end
+
 ###################################################################################
 
 expand(A::PlusOperator, B::PlusOperator) = mapreduce(x -> expand(x,B), +, A.ops)
@@ -222,10 +234,14 @@ function expand(A, B::PlusOperator)
 	Ae = expand(A)
 	mapreduce(x -> expand(Ae, expand(x)), +, B.ops)
 end
-expand(A, B) = A * B
+expand(A, B) = expand(A) * expand(B)
 expand(A) = A
 expand(P::PlusOperator) = mapreduce(expand, +, P.ops)
-expand(T::TimesOperator) = foldr(expand, T.ops)
+expand(T::TimesOperator) = mapfoldr(expand, expand, T.ops)
+expand(C::ConversionWrapper) = expand(C.op)
+expand(C::MultiplicationWrapper) = expand(C.op)
+expand(C::ConstantOperator) = convert(Number, C)
+
 function expand(C::ConstantTimesOperator)
 	(; λ, op) = C
 	expand(λ, op)
@@ -251,20 +267,30 @@ end
 expand(λ::Number, O::Operator) = λ * O
 expand(O::Operator, λ::Number) = O * λ
 
-function expand(A::MultiplicationWrapper, B::MultiplicationWrapper)
-	expand(A.op, B.op)
-end
-function expand(M::MultiplicationWrapper, K::Operator)
-	expand(M.op, K)
-end
-function expand(K::Operator, M::MultiplicationWrapper)
-	expand(K, M.op)
-end
+# function expand(A::MultiplicationWrapper, B::MultiplicationWrapper)
+# 	expand(A.op, B.op)
+# end
+# function expand(M::MultiplicationWrapper, K::Operator)
+# 	expand(M.op, K)
+# end
+# function expand(K::Operator, M::MultiplicationWrapper)
+# 	expand(K, M.op)
+# end
 
-function expand(K::KroneckerOperator, C::ConstantOperator)
-	(; λ) = C
-	expand(K, λ)
-end
+# function expand(C::ConversionWrapper{<:KroneckerOperator}, D::ConversionWrapper{<:KroneckerOperator})
+# 	expand(C.op, D.op)
+# end
+# function expand(C::ConversionWrapper{<:KroneckerOperator}, O::Operator)
+# 	expand(C.op, O)
+# end
+# function expand(O::Operator, C::ConversionWrapper{<:KroneckerOperator})
+# 	expand(O, C.op)
+# end
+
+# function expand(K::KroneckerOperator, C::ConstantOperator)
+# 	(; λ) = C
+# 	expand(K, λ)
+# end
 
 function expand(C::ConstantTimesOperator, K::KroneckerOperator)
 	(; λ, op) = C
@@ -274,20 +300,14 @@ function expand(K::KroneckerOperator, C::ConstantTimesOperator)
 	(; λ, op) = C
 	expand(expand(K, λ), op)
 end
-function expand(C::ConversionWrapper, K::KroneckerOperator)
-	expand(C.op, K)
-end
-function expand(K::KroneckerOperator, C::ConversionWrapper)
-	expand(K, C.op)
-end
-
-expand(K::KroneckerOperator) = K
-
 
 ##################################################################################
 
-function kronmatrix(P::PlusOperator, nr, ℓinds...)
-	mapfoldl(op -> kronmatrix(op, nr, ℓinds...), +, P.ops)
+function kronmatrix(M::MultiplicationWrapper, args...)
+	kronmatrix(M.op, args...)
+end
+function kronmatrix(P::PlusOperator, args...)
+	mapfoldl(op -> kronmatrix(op, args...), +, P.ops)
 end
 function kronmatrix(K::KroneckerOperator, nr, nℓ::Integer)
 	kronmatrix(K::KroneckerOperator, nr, 1:nℓ, 1:nℓ)
