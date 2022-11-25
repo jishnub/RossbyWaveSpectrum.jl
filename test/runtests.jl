@@ -1,9 +1,12 @@
+module TestMod
+
 using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun, operatormatrix, Msun, G, StructMatrix
 using Test
 using LinearAlgebra
 using OffsetArrays
 using Aqua
 using FastTransforms
+using FillArrays
 using Dierckx
 using ApproxFun
 using PerformanceTestTools
@@ -511,7 +514,7 @@ end
         ΔΩ_frac = 0.01
         ΔΩprofile_deriv = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
             operators, rotation_profile = :constant, smoothing_param=1e-3, ΔΩ_frac);
-        (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ) = ΔΩprofile_deriv;
+        (; ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ) = ΔΩprofile_deriv;
 
         ωΩ_deriv = RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
             operators, ΔΩprofile_deriv);
@@ -533,6 +536,9 @@ end
                 VWre = Ms.re[Block(1,2)];
                 WVre = Ms.re[Block(2,1)];
                 WWre = Ms.re[Block(2,2)];
+                SVre = Ms.re[Block(3,1)];
+                SWre = Ms.re[Block(3,2)];
+                SSre = Ms.re[Block(3,3)];
 
                 latitudinal_space = NormalizedPlm(m);
                 cosθop = Multiplication(cosθ, latitudinal_space);
@@ -552,8 +558,10 @@ end
                 @testset "VV" begin
                     O = m*ΔΩ*(I ⊗ (twobyℓℓp1 - I)) : space2d → space2d_D2;
                     A = real(kronmatrix(expand(O), nr, V_ℓinds, V_ℓinds));
-                    if m == 1
-                        @test VVre[Block(1,1)] ≈ A[Block(1,1)] atol=1e-10
+                    if m == 1 && V_symmetric
+                        # in this case, 2/(m*(m+1)) - 1 == 0, so the first block is zero
+                        VVre11 = VVre[Block(1,1)]
+                        @test VVre11 ≈ Zeros(size(VVre11)) atol=1e-10
                     end
                     @test VVre ≈ A
                 end
@@ -587,6 +595,20 @@ end
                     A .*= Weqglobalscaling * Rsun^2;
                     @test WWre ≈ A
                 end
+
+                @testset "SV" begin
+                    @test SVre ≈ Zeros(size(SVre)) atol=1e-10
+                end
+
+                @testset "SW" begin
+                    @test SWre ≈ Zeros(size(SVre)) atol=1e-10
+                end
+
+                @testset "SS" begin
+                    O = -m*ΔΩ_frac*I : space2d → space2d_D2;
+                    A = real(kronmatrix(expand(O), nr, W_ℓinds, W_ℓinds));
+                    @test SSre ≈ A
+                end
             end
         end
 
@@ -600,7 +622,7 @@ end
                     RossbyWaveSpectrum.solar_differential_rotation_terms!(Ms, m;
                         operators, ΔΩprofile_deriv, ωΩ_deriv, V_symmetric);
 
-                    @testset for colind in 1:2, rowind in 1:2
+                    @testset for colind in 1:3, rowind in 1:3
                         Sc = matrix_block(Ms, rowind, colind, nvariables)
                         C = matrix_block(Mc, rowind, colind, nvariables)
                         @testset "real" begin
@@ -617,14 +639,14 @@ end
     @testset "compare with radial" begin
         ΔΩprofile_deriv = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
             operators, rotation_profile = :radial_equator, smoothing_param=1e-5);
-        (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ) = ΔΩprofile_deriv;
+        (; ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ) = ΔΩprofile_deriv;
 
         ωΩ_deriv = RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
             operators, ΔΩprofile_deriv);
         (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ) = ωΩ_deriv;
 
         @testset "compare with analytical" begin
-            cosθop = Multiplication(cosθ)
+            cosθop = Multiplication(cosθ);
             @test ωΩr ≈ ((I ⊗ 2cosθop) * ΔΩ)
             @test ∂rωΩr ≈ ((I ⊗ 2cosθop) * ∂r_ΔΩ)
             @test ∂θωΩr_by_sinθ ≈ -2ΔΩ
@@ -638,6 +660,9 @@ end
                 VWre = Ms.re[Block(1,2)];
                 WVre = Ms.re[Block(2,1)];
                 WWre = Ms.re[Block(2,2)];
+                SVre = Ms.re[Block(3,1)];
+                SWre = Ms.re[Block(3,2)];
+                SSre = Ms.re[Block(3,3)];
 
                 latitudinal_space = NormalizedPlm(m);
                 cosθop = Multiplication(cosθ, latitudinal_space);
@@ -656,6 +681,11 @@ end
 
                 @testset "VV" begin
                     O = m*ΔΩ*(I ⊗ (2*inv(ℓℓp1op) - I)) : space2d → space2d_D2;
+                    if m == 1 && V_symmetric
+                        # in this case, 2/(m*(m+1)) - 1 == 0, so the first block is zero
+                        VVre11 = VVre[Block(1,1)]
+                        @test VVre11 ≈ Zeros(size(VVre11)) atol=1e-10
+                    end
                     A = real(kronmatrix(expand(O), nr, V_ℓinds, V_ℓinds));
                     @test VVre ≈ A
                 end
@@ -696,6 +726,12 @@ end
                     A .*= Weqglobalscaling * Rsun^2;
                     @test WWre ≈ A
                 end
+
+                @testset "SS" begin
+                    O = -m*ΔΩ*I : space2d → space2d_D2;
+                    A = real(kronmatrix(expand(O), nr, W_ℓinds, W_ℓinds));
+                    @test SSre ≈ A
+                end
             end
         end
 
@@ -712,7 +748,7 @@ end
                     RossbyWaveSpectrum.solar_differential_rotation_terms!(Ms, m;
                         operators, ΔΩprofile_deriv, ωΩ_deriv, V_symmetric);
 
-                    @testset for colind in 1:1, rowind in 1:1
+                    @testset for (colind, rowind) in ((1,1), (3,3))
                         Sr = matrix_block(Ms, rowind, colind, nvariables);
                         R = matrix_block(Mr, rowind, colind, nvariables);
                         @testset "real" begin
@@ -915,4 +951,6 @@ include("run_threadedtests.jl")
             rm(filename)
         end
     end
+end
+
 end

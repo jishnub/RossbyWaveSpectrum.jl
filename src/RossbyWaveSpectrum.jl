@@ -954,12 +954,8 @@ end
 function solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts, θpts)
     ΔΩ_fullinterp = splΔΩ2D.(rpts, θpts')
     ∂r_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 1, nuy = 0)
-    ∂θ_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 0, nuy = 1)
     ∂2r_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 2, nuy = 0)
-    ∂r∂θ_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 1, nuy = 1)
-    ∂2θ_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 0, nuy = 2)
-    ΔΩ_fullinterp, ∂r_ΔΩ_fullinterp, ∂θ_ΔΩ_fullinterp, ∂2r_ΔΩ_fullinterp,
-        ∂r∂θ_ΔΩ_fullinterp, ∂2θ_ΔΩ_fullinterp
+    ΔΩ_fullinterp, ∂r_ΔΩ_fullinterp, ∂2r_ΔΩ_fullinterp
 end
 function solar_rotation_profile_and_derivative_grid(; operators, kw...)
     @unpack rpts = operators
@@ -1217,7 +1213,7 @@ function solar_differential_rotation_profile_derivatives_grid(;
 
     if rotation_profile == :constant
         ΔΩ = fill(Ω0 * ΔΩ_frac, nr, nθ)
-        ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ = (zeros(nr, nθ) for i in 1:5)
+        ∂r_ΔΩ, ∂2r_ΔΩ = (zeros(nr, nθ) for i in 1:2)
     elseif rotation_profile == :radial_equator
         ΔΩ_r_, ddrΔΩ_r_, d2dr2ΔΩ_r_ = radial_differential_rotation_profile_derivatives_grid(;
             operators, rotation_profile = :solar_equator, kw...)
@@ -1225,51 +1221,55 @@ function solar_differential_rotation_profile_derivatives_grid(;
             x .*= Ω0
         end
         ΔΩ = repeat(ΔΩ_r_, 1, nℓ)
-        ∂θ_ΔΩ = zero(ΔΩ)
         ∂r_ΔΩ = repeat(ddrΔΩ_r_, 1, nℓ)
         ∂2r_ΔΩ = repeat(d2dr2ΔΩ_r_, 1, nℓ)
-        ∂r∂θ_ΔΩ = zero(ΔΩ)
-        ∂2θ_ΔΩ = zero(ΔΩ)
     elseif rotation_profile == :latrad
-        ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ =
+        ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ =
             solar_rotation_profile_and_derivative_grid(; operators, kw...)
     else
         error("$rotation_profile is not a valid rotation model")
     end
-    for v in (ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ)
+    for v in (ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ)
         v ./= Ω0
     end
-    return ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ
+    return ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ
 end
 
 function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     @unpack rpts, radialspace = operators;
+    @unpack onebyr = operators.rad_terms;
     @unpack nℓ = operators.radial_params
     θpts = points(ChebyshevInterval(), nℓ)
 
     ΔΩ_terms = solar_differential_rotation_profile_derivatives_grid(; operators, kw...);
-    ΔΩ_rθ, ∂r_ΔΩ_rθ, ∂θ_ΔΩ_rθ, ∂2r_ΔΩ_rθ, ∂r∂θ_ΔΩ_rθ, ∂2θ_ΔΩ_rθ = ΔΩ_terms
+    ΔΩ_rθ, ∂r_ΔΩ_rθ, ∂2r_ΔΩ_rθ = ΔΩ_terms;
 
     space = radialspace ⊗ NormalizedLegendre()
 
-    s = get(kw, :smoothing_param, 1e-3)
+    latitudinal_space = NormalizedPlm(0); # velocity and its derivatives are expanded in Legendre poly
+
+    cosθ = Fun(Legendre());
+    cosθop = Multiplication(cosθ, latitudinal_space);
+    sinθdθop = sinθ∂θ_Operator(latitudinal_space);
+    Ir = I : radialspace;
+    Iℓ = I : latitudinal_space;
+    ∇² = HorizontalLaplacian(latitudinal_space);
+    sinθdθop = -(1-cosθ^2)*Derivative(Legendre())
+
+    s = get(kw, :smoothing_param, 1e-5)
 
     ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space), s);
 
     ∂r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂r_ΔΩ_rθ, s = s), space), s);
-
-    ∂θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂θ_ΔΩ_rθ, s = s), space), s);
+    ∂z_ΔΩ = Fun((Ir ⊗ cosθ) * ∂r_ΔΩ - (onebyr ⊗ sinθdθop) * ΔΩ,
+                radialspace ⊗ NormalizedLegendre());
 
     ∂2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂2r_ΔΩ_rθ, s = s), space), s);
 
-    ∂r∂θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂r∂θ_ΔΩ_rθ, s = s), space), s);
+    ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ, ∂z_ΔΩ =
+        map(replaceemptywitheps, (ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ, ∂z_ΔΩ))
 
-    ∂2θ_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂2θ_ΔΩ_rθ, s = s), space), s);
-
-    ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ =
-        map(replaceemptywitheps, (ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ))
-
-    (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ)
+    (; ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ, ∂z_ΔΩ)
 end
 
 function solar_differential_rotation_vorticity_Fun(; operators,
@@ -1279,7 +1279,7 @@ function solar_differential_rotation_vorticity_Fun(; operators,
     @unpack onebyr, r, onebyr2, twobyr = operators.rad_terms;
     @unpack ddr, d2dr2 = operators.diff_operators;
 
-    (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ) = ΔΩprofile_deriv;
+    (; ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ) = ΔΩprofile_deriv;
 
     @unpack radialspace = operators;
     latitudinal_space = NormalizedPlm(0); # velocity and its derivatives are expanded in Legendre poly
@@ -1359,10 +1359,11 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     SS = matrix_block(M.re, 3, 3);
 
     @unpack nr, nℓ = operators.radial_params;
-    @unpack onebyr, onebyr2, r2 = operators.rad_terms;
+    @unpack onebyr, onebyr2, r2, g = operators.rad_terms;
     @unpack ddr, d2dr2, DDr, ddrDDr = operators.diff_operators;
     @unpack radialspace = operators;
-    @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
+    @unpack Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
+    @unpack Ω0 = operators.constants;
 
     latitudinal_space = NormalizedPlm(m);
 
@@ -1376,7 +1377,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     ∇² = HorizontalLaplacian(latitudinal_space);
     ℓℓp1op = -∇²;
 
-    (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ) = ΔΩprofile_deriv;
+    (; ΔΩ, ∂r_ΔΩ, ∂z_ΔΩ) = ΔΩprofile_deriv;
     (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ,
         ∂rωΩθ_by_rsinθ, ∂rωΩθ_by_rsinθ) = ωΩ_deriv;
 
@@ -1428,8 +1429,20 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
     WV_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds));
     WW_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds));
-    WV .+= (Rsun * Wscaling * Weqglobalscaling) .* WV_;
+    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* WV_;
     WW .+= (Weqglobalscaling * Rsun^2) .* WW_;
+
+    # entropy terms
+    # thermal_wind_term_tmp = im*((2/g) ⊗ Iℓ) * ∂z_ΔΩ * rsinθufθ
+    # thermal_wind_term = expand(thermal_wind_term_tmp : space2d → space2d_D2)
+    # SV_ = real(kronmatrix(thermal_wind_term.V, nr, W_ℓinds, V_ℓinds));
+    # SV .+= (Seqglobalscaling * (Ω0^2 * Rsun^2) * Sscaling) .* SV_
+    # SW_ = real(kronmatrix(thermal_wind_term.iW, nr, W_ℓinds, W_ℓinds));
+    # SW .+= (Seqglobalscaling * (Ω0^2 * Rsun^3) * Sscaling/Wscaling) .* SW_
+
+    SS_doppler_term = expand(-m*ΔΩ * I : space2d → space2d_D2)
+    SS_ = real(kronmatrix(SS_doppler_term, nr, W_ℓinds, W_ℓinds));
+    SS .+= Seqglobalscaling * SS_
 
     return M
 end

@@ -244,7 +244,7 @@ expand(C::ConstantOperator) = convert(Number, C)
 
 function expand(C::ConstantTimesOperator)
 	(; λ, op) = C
-	expand(λ, op)
+	expand(λ, expand(op))
 end
 function expand(λ::Number, K::KroneckerOperator)
 	A, B = K.ops
