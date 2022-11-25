@@ -591,14 +591,14 @@ end
         end
 
         @testset "compare with matrix" begin
-            @testset for m in [1, 4, 10]
+            @testset for m in [1, 4, 10], V_symmetric in [true, false]
                 Mc.re .= 0; Mc.im .= 0;
                 Ms.re .= 0; Ms.im .= 0;
                 @testset "radial constant and constant" begin
                     RossbyWaveSpectrum.constant_differential_rotation_terms!(Mc, m;
-                        operators, ΔΩ_frac);
+                        operators, ΔΩ_frac, V_symmetric);
                     RossbyWaveSpectrum.solar_differential_rotation_terms!(Ms, m;
-                        operators, ΔΩprofile_deriv, ωΩ_deriv);
+                        operators, ΔΩprofile_deriv, ωΩ_deriv, V_symmetric);
 
                     @testset for colind in 1:2, rowind in 1:2
                         Sc = matrix_block(Ms, rowind, colind, nvariables)
@@ -615,15 +615,15 @@ end
         end
     end
     @testset "compare with radial" begin
+        ΔΩprofile_deriv = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
+            operators, rotation_profile = :radial_equator, smoothing_param=1e-5);
+        (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ) = ΔΩprofile_deriv;
+
+        ωΩ_deriv = RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
+            operators, ΔΩprofile_deriv);
+        (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ) = ωΩ_deriv;
+
         @testset "compare with analytical" begin
-            ΔΩprofile_deriv = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
-                operators, rotation_profile = :radial_equator, smoothing_param=1e-3);
-            (; ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ) = ΔΩprofile_deriv;
-
-            ωΩ_deriv = RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
-                operators, ΔΩprofile_deriv);
-            (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ) = ωΩ_deriv;
-
             cosθop = Multiplication(cosθ)
             @test ωΩr ≈ ((I ⊗ 2cosθop) * ΔΩ)
             @test ∂rωΩr ≈ ((I ⊗ 2cosθop) * ∂r_ΔΩ)
@@ -699,31 +699,32 @@ end
             end
         end
 
-        # @testset "compare with matrix" begin
-        #     @testset for m in [1, 4, 10]
-        #         Mr.re .= 0
-        #         Mr.im .= 0
-        #         Ms.re .= 0
-        #         Ms.im .= 0
-        #         @testset "radial constant and constant" begin
-        #             RossbyWaveSpectrum.differential_rotation_matrix!(Mr, m;
-        #                 rotation_profile = :radial_solar_equator, operators);
-        #             RossbyWaveSpectrum.differential_rotation_matrix!(Ms, m;
-        #                 rotation_profile = :solar_radial_equator, operators);
+        @testset "compare with matrix" begin
+            ΔΩprofile_deriv_rad = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(;
+                            operators, rotation_profile = :solar_equator, smoothing_param=1e-5);
 
-        #             @testset for colind in 1:1, rowind in 1:1
-        #                 Sr = matrix_block(Ms, rowind, colind, nvariables)
-        #                 R = matrix_block(Mr, rowind, colind, nvariables)
-        #                 @testset "real" begin
-        #                     @test blockwise_isapprox(Sr.re, R.re, atol = 1e-10, rtol = 5e-4)
-        #                 end
-        #                 @testset "imag" begin
-        #                     @test blockwise_isapprox(Sr.im, R.im, atol = 1e-10, rtol = 1e-3)
-        #                 end
-        #             end
-        #         end
-        #     end
-        # end
+            @testset for m in [1, 4, 10], V_symmetric in [true, false]
+                Mr.re .= 0; Mr.im .= 0;
+                Ms.re .= 0; Ms.im .= 0;
+                @testset "radial constant and constant" begin
+                    RossbyWaveSpectrum.radial_differential_rotation_terms!(Mr, m;
+                        operators, ΔΩprofile_deriv = ΔΩprofile_deriv_rad, V_symmetric);
+                    RossbyWaveSpectrum.solar_differential_rotation_terms!(Ms, m;
+                        operators, ΔΩprofile_deriv, ωΩ_deriv, V_symmetric);
+
+                    @testset for colind in 1:1, rowind in 1:1
+                        Sr = matrix_block(Ms, rowind, colind, nvariables);
+                        R = matrix_block(Mr, rowind, colind, nvariables);
+                        @testset "real" begin
+                            @test blockwise_isapprox(Sr.re, R.re, atol = 1e-10, rtol = 2e-2)
+                        end
+                        @testset "imag" begin
+                            @test blockwise_isapprox(Sr.im, R.im, atol = 1e-10, rtol = 1e-3)
+                        end
+                    end
+                end
+            end
+        end
     end
 end
 
