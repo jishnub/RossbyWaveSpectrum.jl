@@ -29,12 +29,13 @@ end
 
     for m in 1:10
         M = Multiplication(cosθ, NormalizedPlm(m))
-        A = AbstractMatrix(M)[1:10, 1:10])
+        A = AbstractMatrix(M[1:10, 1:10])
         B = costheta_operator(10, m)
         @test A ≈ B
-        f = Fun(x->(√(1-x^2))^m * x, NormalizedPlm(m))
+        fn(x,m) = (√(1-x^2))^m * x
+        f = Fun(x -> fn(x,m), NormalizedPlm(m))
         g = M * f
-        @test g(0.2) ≈ (x -> √(1-x^2))^m * x)(0.2)
+        @test g(0.2) ≈ (x -> x * fn(x, m))(0.2)
     end
 end
 
