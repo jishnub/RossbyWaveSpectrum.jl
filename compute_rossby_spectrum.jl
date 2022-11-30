@@ -2,7 +2,8 @@ module ComputeRossbySpectrum
 @time using RossbyWaveSpectrum
 using LinearAlgebra
 
-function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; save = true)
+function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof;
+            save = true, smoothing_param = 1e-5)
     flush(stdout)
     # boundary condition tolerance
     bc_atol = 1e-5
@@ -17,33 +18,30 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
     print_timer = false
     scale_eigenvectors = false
 
-    # bit of a hack to reduce the doppler shift in the radial differential rotation case
-    # should be removed to compare with the Sun
-    trackingratescaling = 1.0
-    # trackingratescaling = (diffrot && (diffrotprof = :radial_solar_equator)) ? 1.01 : 1.0
     Seqglobalscaling = 1e-7
-    scalings = (; trackingratescaling, Seqglobalscaling)
+    scalings = (; Seqglobalscaling)
 
     @info "operators"
     r_in_frac = 0.6
-    r_out_frac = 0.985
+    r_out_frac = 1.0
+
+    @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac smoothing_param
+    @show eigvec_spectrum_power_cutoff eigen_rtol V_symmetric diffrot;
+    @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads();
+
     @time operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 2e12, scalings);
 
     spectrumfn! = if diffrot
         d = RossbyWaveSpectrum.RotMatrix(V_symmetric, diffrotprof, nothing, RossbyWaveSpectrum.differential_rotation_spectrum!)
-        RossbyWaveSpectrum.updaterotatationprofile(d, operators)
+        RossbyWaveSpectrum.updaterotatationprofile(d, operators; smoothing_param)
     else
         RossbyWaveSpectrum.RotMatrix(V_symmetric, :uniform, nothing, RossbyWaveSpectrum.uniform_rotation_spectrum!)
     end
 
-    @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac
-    @show eigvec_spectrum_power_cutoff eigen_rtol V_symmetric diffrot;
-    @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads();
-
     flush(stdout)
 
     kw = Base.pairs((; bc_atol, Δl_cutoff, n_cutoff, eigvec_spectrum_power_cutoff, eigen_rtol,
-        print_timer, scale_eigenvectors, diffrot, diffrotprof, V_symmetric))
+        print_timer, scale_eigenvectors, diffrot, diffrotprof, V_symmetric, smoothing_param))
 
     @time RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange;
         operators, kw...)
@@ -59,16 +57,16 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof; sa
 end
 
 function main(taskno = parse(Int, ENV["SLURM_PROCID"]))
-    nr = 70
+    nr = 60;
     nℓ = 30;
     mrange = 1:15;
     diffrot = true;
-    diffrotprof = :radial_solar_equator
+    diffrotprof = :solar_latrad
 
     V_symmetric = (true, false)[taskno + 1]
     @show Libc.gethostname(), taskno, V_symmetric
 
-    computespectrum(8, 6, 1:1, V_symmetric, diffrot, diffrotprof, save = false)
+    computespectrum(8, 6, 1:1, V_symmetric, diffrot, diffrotprof, save = false, smoothing_param = 1e-1)
     computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, diffrotprof)
 end
 

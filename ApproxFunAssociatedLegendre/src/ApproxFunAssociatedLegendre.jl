@@ -7,7 +7,6 @@ using ApproxFunBase: SubOperator, UnsetSpace, ConcreteMultiplication, Multiplica
 import ApproxFunBase: domainspace, rangespace, Multiplication, setspace, Conversion
 using BandedMatrices
 import BandedMatrices: BandedMatrix
-using WignerSymbols
 using LegendrePolynomials
 using ApproxFunOrthogonalPolynomials
 using ApproxFunSingularities
@@ -171,29 +170,20 @@ end
 function ApproxFunBase.rangespace(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm})
 	ApproxFunBase.domainspace(M)
 end
-function Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i::Int, j::Int)
-	j > i && return getindex(M, j, i) # preserve symmetry
+function _getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i, j)
 	sp = domainspace(M)
-	m = azimuthalorder(sp)
-	ℓ = index_to_ℓ(i, m)
-	ℓ′ = index_to_ℓ(j, m)
-	bw = bandwidth(M, 1)
-	abs(ℓ - ℓ′) <= bw || return zero(eltype(M))
-	fc = coefficients(M.f)
-	T = promote_type(eltype(fc), ApproxFunBase.prectype(sp))
-	s = zero(T)
-
-	for (ℓ′′, fℓ′′) in zip(range(0, length=length(fc)), fc)
-		iseven(ℓ + ℓ′′ + ℓ′) || continue
-		WignerSymbols.δ(ℓ, ℓ′′, ℓ′) || continue
-		pre = √(2ℓ′′+1)
-		w1 = wigner3j(ℓ, ℓ′′, ℓ′, 0, 0)
-		w2 = wigner3j(ℓ, ℓ′′, ℓ′, -m, 0)
-		s += fℓ′′ * pre * w1 * w2
-	end
-	x = (-1)^m * √((2ℓ+1)*(2ℓ′+1)/2) * s
-	eltype(M)(x)
+	f = M.f
+	g = Fun(space(f).jacobispace, coefficients(f))
+	sp = domainspace(M)
+	spj = sp.jacobispace
+	x = Multiplication(g, spj)[i, j]
 end
+Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i::Int, j::Int) =
+	_getindex(M, i, j)
+Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i::UnitRange{Int}, j::UnitRange{Int}) =
+	_getindex(M, i, j)
+Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i::AbstractRange{Int}, j::AbstractRange{Int}) =
+	_getindex(M, first(i):last(i), first(j):last(j))[1:step(i):end, 1:step(j):end]
 
 struct HorizontalLaplacian{T,DS<:Space} <: PlmSpaceOperator{T,DS}
 	ds :: DS
@@ -308,15 +298,19 @@ function kronmatrix(M::MultiplicationWrapper, args...)
 	kronmatrix(M.op, args...)
 end
 function kronmatrix(P::PlusOperator, args...)
-	mapfoldl(op -> kronmatrix(op, args...), +, P.ops)
+	mapfoldl(op -> kronmatrix(op, args...), (x,y) -> x .+= y, P.ops)
 end
 function kronmatrix(K::KroneckerOperator, nr, nℓ::Integer)
 	kronmatrix(K::KroneckerOperator, nr, 1:nℓ, 1:nℓ)
 end
 function kronmatrix(K::KroneckerOperator, nr,
-		ℓindrange_row::AbstractVector, ℓindrange_col::AbstractVector)
+		ℓindrange_row::AbstractRange, ℓindrange_col::AbstractRange)
 	Or, Oθ = K.ops
-	kronmatrix(Oθ[ℓindrange_row, ℓindrange_col], Or[1:nr, 1:nr])
+	ℓindrange_row_ur = first(ℓindrange_row):last(ℓindrange_row)
+	ℓindrange_col_ur = first(ℓindrange_col):last(ℓindrange_col)
+	O1full = Oθ[ℓindrange_row_ur, ℓindrange_col_ur]
+	O1 = O1full[1:step(ℓindrange_row):end, 1:step(ℓindrange_col):end]
+	kronmatrix(Matrix(O1), Matrix(Or[1:nr, 1:nr]))
 end
 
 function kronmatrix(A::BandedMatrix, B::AbstractMatrix)

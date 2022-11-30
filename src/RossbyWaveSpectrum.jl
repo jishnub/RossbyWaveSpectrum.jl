@@ -482,6 +482,10 @@ function radial_operators(operatorparams...)
     OperatorWrap(op)
 end
 
+function listncoeff(d)
+    sort([k=>ncoefficients(v) for (k,v) in Dict(pairs(d))], by=last, rev=true)
+end
+
 function blockinds((m, nr), ℓ, ℓ′ = ℓ)
     @assert ℓ >= m "ℓ must be >= m"
     @assert ℓ′ >= m "ℓ must be >= m"
@@ -562,7 +566,7 @@ function allocate_block_matrix(nvariables, bandwidth, rows, cols = rows)
                 nvariables, nvariables))::BlockMatrixType
 end
 
-function allocate_operator_matrix(operators, bandwidth = 2)
+function allocate_operator_matrix(operators, bandwidth = operators.radial_params[:nℓ])
     @unpack nr, nℓ = operators.radial_params
     @unpack nvariables = operators
     rows = Fill(nr, nℓ) # block sizes
@@ -620,7 +624,7 @@ function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
 end
 
 function uniform_rotation_matrix(m; operators, kw...)
-    A = allocate_operator_matrix(operators)
+    A = allocate_operator_matrix(operators, 2)
     uniform_rotation_matrix!(A, m; operators, kw...)
     return A
 end
@@ -1239,7 +1243,7 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     @unpack rpts, radialspace = operators;
     @unpack onebyr = operators.rad_terms;
     @unpack nℓ = operators.radial_params
-    θpts = points(ChebyshevInterval(), nℓ)
+    θpts = points(ChebyshevInterval(), nℓ);
 
     ΔΩ_terms = solar_differential_rotation_profile_derivatives_grid(; operators, kw...);
     ΔΩ_rθ, ∂r_ΔΩ_rθ, ∂2r_ΔΩ_rθ = ΔΩ_terms;
@@ -1261,8 +1265,8 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space), s);
 
     ∂r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂r_ΔΩ_rθ, s = s), space), s);
-    ∂z_ΔΩ = Fun((Ir ⊗ cosθ) * ∂r_ΔΩ - (onebyr ⊗ sinθdθop) * ΔΩ,
-                radialspace ⊗ NormalizedLegendre());
+    ∂z_ΔΩ = chop(Fun((Ir ⊗ cosθ) * ∂r_ΔΩ - (onebyr ⊗ sinθdθop) * ΔΩ,
+                radialspace ⊗ NormalizedLegendre()));
 
     ∂2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂2r_ΔΩ_rθ, s = s), space), s);
 
@@ -1331,8 +1335,6 @@ Base.:(:)(A::OpVector, s::Space) = OpVector(A.V : s, A.iW : s)
 ApproxFunBase.:(→)(A::OpVector, s::Space) = OpVector(A.V → s, A.iW → s)
 
 ApproxFunAssociatedLegendre.expand(A::OpVector) = OpVector(expand(A.V), expand(A.iW))
-ApproxFunAssociatedLegendre.kronmatrix(A::OpVector, nr, nθ) =
-    OpVector(kronmatrix(A.V, nr, nθ), kronmatrix(A.iW, nr, nθ))
 
 function Base.show(io::IO, O::OpVector)
     print(io, "OpVector(V = ")
@@ -1472,9 +1474,12 @@ function _differential_rotation_matrix!(M, m; rotation_profile, kw...)
     end
     return M
 end
-function differential_rotation_matrix(m; operators, kw...)
-    M = allocate_operator_matrix(operators)
-    differential_rotation_matrix!(M, m; operators, kw...)
+function differential_rotation_matrix(m; operators, rotation_profile, kw...)
+    @unpack nℓ = operators.radial_params;
+    rstr = String(rotation_profile)
+    bandwidth = (startswith(rstr, "radial") || rstr == "constant") ? 2 : nℓ
+    M = allocate_operator_matrix(operators, bandwidth)
+    differential_rotation_matrix!(M, m; operators, rotation_profile, kw...)
     return M
 end
 function differential_rotation_matrix!(M, m; kw...)
@@ -1593,9 +1598,16 @@ struct RotMatrix{T,F}
     ΔΩprofile_deriv :: T
     f :: F
 end
-function updaterotatationprofile(d::RotMatrix, operators)
-    ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives_Fun(; operators,
-            rotation_profile = rotationtag(d.rotation_profile))
+function updaterotatationprofile(d::RotMatrix, operators; kw...)
+    ΔΩprofile_deriv = if String(d.rotation_profile) == "constant"
+        nothing
+    elseif startswith(String(d.rotation_profile), "radial")
+        radial_differential_rotation_profile_derivatives_Fun(; operators,
+            rotation_profile = rotationtag(d.rotation_profile), kw...)
+    elseif startswith(String(d.rotation_profile), "solar")
+        solar_differential_rotation_profile_derivatives_Fun(; operators,
+            rotation_profile = rotationtag(d.rotation_profile), kw...)
+    end
     return RotMatrix(d.V_symmetric, d.rotation_profile, ΔΩprofile_deriv, d.f)
 end
 updaterotatationprofile(d, _) = d
@@ -1622,11 +1634,19 @@ function boundary_condition_filter(v::StructVector{<:Complex}, BC::AbstractMatri
     mul!(BCVcache.im, BC, v.im)
     norm(BCVcache) < atol
 end
-function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
-        AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
-        MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1)), rtol = 1e-1)
 
-    A, B = map(computesparse, AB)
+function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
+        AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}}, args...; kw...)
+
+    eigensystem_satisfy_filter(λ, v, map(computesparse, AB), args...; kw...)
+end
+
+const TStructSparseComplexMat{T} = @NamedTuple{re::SparseMatrixCSC{T, Int64}, im::SparseMatrixCSC{T, Int64}}
+function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
+        AB::Tuple{StructArray{Complex{T},2,TStructSparseComplexMat{T}}, SparseMatrixCSC{T, Int64}},
+        MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1)); rtol = 1e-2) where {T<:Real}
+
+    A, B = AB
     Av, λBv = MVcache
 
     mul!(Av.re, A.re, v.re)
@@ -1638,8 +1658,7 @@ function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
     mul!(λBv.im, B, v.im)
     λBv .*= λ
 
-    isapprox(Av, λBv; rtol) && return true
-    return false
+    isapprox(Av, λBv; rtol)
 end
 
 function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = 1e-4)
@@ -1819,7 +1838,7 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
     end
 
     if Filters.EIGEN in allfilters
-        f = eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
+        f = eigensystem_satisfy_filter(λ, v, M, MVcache; rtol = eigen_rtol)
         f || (@debug "EIGEN" f; return false)
     end
 
@@ -2114,12 +2133,13 @@ function filteredeigen(filename::String; kw...)
     diffrot = fkw[:diffrot]::Bool
     V_symmetric = fkw[:V_symmetric]::Bool
     diffrot_profile = fkw[:diffrotprof]::Symbol
+    smoothing_param = get(fkw, :smoothing_param, 1e-5)::Float64
 
     matrixfn! = if !diffrot
         RotMatrix(V_symmetric, :uniform, nothing, uniform_rotation_matrix!)
     else
         d = RotMatrix(V_symmetric, diffrot_profile, nothing, differential_rotation_matrix!)
-        updaterotatationprofile(d, operators)
+        updaterotatationprofile(d, operators; smoothing_param)
     end
     filter_eigenvalues(feig; matrixfn!, fkw..., kw...)
 end

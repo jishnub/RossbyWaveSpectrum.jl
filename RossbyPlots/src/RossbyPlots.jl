@@ -21,7 +21,7 @@ const StructMatrix{T} = StructArray{T,2}
 export spectrum
 export uniform_rotation_spectrum
 export differential_rotation_spectrum
-export diffrot_rossby_ridg
+export diffrot_rossby_ridge
 export plot_diffrot_radial
 export plot_diffrot_radial_derivatives
 export eigenfunction
@@ -384,8 +384,8 @@ for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge, :plot_high_fr
     end
 end
 
-function diffrot_rossby_ridge(Frsym, mr=8:15, ΔΩ_frac_low = 0.005, ΔΩ_frac_high = 0.04; plot_spectrum = false,
-        plot_lower_cutoff = plot_spectrum, plot_upper_cutoff = plot_spectrum)
+function diffrot_rossby_ridge(Frsym, mr=8:15, ΔΩ_frac_low = 0.005, ΔΩ_frac_high = 0.04;
+        plot_spectrum = false, plot_lower_cutoff = plot_spectrum, plot_upper_cutoff = plot_spectrum)
 
     lams = Frsym.lams
     lams = lams[mr]
@@ -400,16 +400,16 @@ function diffrot_rossby_ridge(Frsym, mr=8:15, ΔΩ_frac_low = 0.005, ΔΩ_frac_h
         end
         real.(lams_realfilt)[argmin(abs.(imag.(lams_realfilt)))]
     end
-    lams_realfilt_plot = lams_realfilt.*ν0
+    lams_realfilt_plot = lams_realfilt.*(-ν0)
     plot_spectrum && begin
         f, ax = spectrum(Frsym, zorder=2)
         ax.plot(mr, lams_realfilt_plot, marker="o", ls="dotted",
             mec="black", mfc="None", ms=6, color="grey", zorder=1)
-        plot_lower_cutoff && ax.plot(mr, λRossby_low.*ν0, ".--", color="orange", zorder=0)
-        plot_upper_cutoff && ax.plot(mr, λRossby_high.*ν0, ".--", color="orange", zorder=0)
+        plot_upper_cutoff && ax.plot(mr, λRossby_low.*(-ν0), ".--", color="orange", zorder=0)
+        plot_lower_cutoff && ax.plot(mr, λRossby_high.*(-ν0), ".--", color="orange", zorder=0)
         plot_lower_cutoff && plot_lower_cutoff && ax.fill_between(mr,
-                λRossby_low.*ν0, λRossby_high.*ν0, color="navajowhite", zorder=0)
-        ax.set_ylim(bottom = minimum(λRossby_low)*ν0*1.2)
+                λRossby_high.*(-ν0), λRossby_low.*(-ν0), color="navajowhite", zorder=0)
+        ax.set_ylim(top = minimum(λRossby_low)*(-ν0)*1.2)
     end
 
     f, ax = subplots(1,1)
@@ -436,7 +436,7 @@ function diffrot_rossby_ridge(Frsym, mr=8:15, ΔΩ_frac_low = 0.005, ΔΩ_frac_h
 
     ν0_uniform_at_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr).*(-ν0)
 
-    δν = -lams_realfilt_plot - ν0_uniform_at_tracking_rate
+    δν = lams_realfilt_plot - ν0_uniform_at_tracking_rate
     fit_x = (m -> (m - 2/(m+1))).(mr)
     linear_Ro_doppler_fit = fit(fit_x, δν, 1)
     ΔΩ_fit = Polynomials.derivative(linear_Ro_doppler_fit)(0)
