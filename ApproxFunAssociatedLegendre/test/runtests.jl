@@ -63,3 +63,11 @@ end
         @test A ≈ B
     end
 end
+
+@testset "Conversion" begin
+    nsp = NormalizedPlm(1)
+    jsp = nsp.jacobispace
+    f = Conversion(jsp, nsp) * Fun(x->√(1-x^2), jsp)
+    g = Fun(x->√(1-x^2), nsp)
+    @test f ≈ g
+end

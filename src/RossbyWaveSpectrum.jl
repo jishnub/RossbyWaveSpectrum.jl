@@ -1306,7 +1306,7 @@ function solar_differential_rotation_vorticity_Fun(; operators,
     cotθdθ∂r_ΔΩ = Fun(cotθdθ * ∂r_ΔΩ, radialspace ⊗ latitudinal_space);
     ∂r∂θωΩr_by_sinθ = (Ir ⊗ ∇²_min_2) * ∂r_ΔΩ + 2cotθdθ∂r_ΔΩ;
     ωΩθ_by_rsinθ = -(∂r_ΔΩ + (twobyr ⊗ Iℓ) * ΔΩ);
-    ∂rωΩθ_by_rsinθ = -(∂2r_ΔΩ + (twobyr ⊗ Iℓ) * ∂r_ΔΩ - (2onebyr2 ⊗ Iℓ) * ΔΩ)
+    ∂rωΩθ_by_rsinθ = -(∂2r_ΔΩ + (twobyr ⊗ Iℓ) * ∂r_ΔΩ - (2onebyr2 ⊗ Iℓ) * ΔΩ);
 
     ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ, ∂rωΩθ_by_rsinθ =
         map(replaceemptywitheps,
@@ -1646,8 +1646,8 @@ function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
         AB::Tuple{StructArray{Complex{T},2,TStructSparseComplexMat{T}}, SparseMatrixCSC{T, Int64}},
         MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1)); rtol = 1e-2) where {T<:Real}
 
-    A, B = AB
-    Av, λBv = MVcache
+    A, B = AB;
+    Av, λBv = MVcache;
 
     mul!(Av.re, A.re, v.re)
     mul!(Av.re, A.im, v.im, -1.0, 1.0)
@@ -2081,16 +2081,16 @@ function filter_eigenvalues(filename::String; kw...)
     filter_eigenvalues(λs, vs, mr; operators, constraints, kw...)
 end
 
-filenamerottag(isdiffrot, diffrot_profile) = isdiffrot ? "dr_$diffrot_profile" : "ur"
+filenamerottag(isdiffrot, rotation_profile) = isdiffrot ? "dr_$rotation_profile" : "ur"
 filenamesymtag(Vsym) = Vsym ? "sym" : "asym"
 rossbyeigenfilename(nr, nℓ, rottag, symtag, modeltag = "") =
     datadir("$(rottag)_nr$(nr)_nl$(nℓ)_$(symtag)$((isempty(modeltag) ? "" : "_") * modeltag).jld2")
 
 function rossbyeigenfilename(; operators, kw...)
     isdiffrot = get(kw, :diffrot, false)
-    diffrotprof = get(kw, :diffrotprof, "")
+    rotation_profile = get(kw, :rotation_profile, "")
     Vsym = kw[:V_symmetric]
-    rottag = filenamerottag(isdiffrot, diffrotprof)
+    rottag = filenamerottag(isdiffrot, rotation_profile)
     symtag = filenamesymtag(Vsym)
     @unpack nr, nℓ = operators.radial_params;
     return rossbyeigenfilename(nr, nℓ, rottag, symtag)
@@ -2130,15 +2130,17 @@ function filteredeigen(filename::String; kw...)
     feig = FilteredEigen(filename)
     operators = feig.operators
     fkw = feig.kw
-    diffrot = fkw[:diffrot]::Bool
-    V_symmetric = fkw[:V_symmetric]::Bool
-    diffrot_profile = fkw[:diffrotprof]::Symbol
-    smoothing_param = get(fkw, :smoothing_param, 1e-5)::Float64
+    diffrot::Bool = fkw[:diffrot]
+    V_symmetric::Bool = fkw[:V_symmetric]
+    rotation_profile::Symbol = get(fkw, :rotation_profile) do
+        fkw[:diffrotprof] # for compat reasons
+    end
+    smoothing_param::Float64 = get(fkw, :smoothing_param, 1e-5)
 
     matrixfn! = if !diffrot
         RotMatrix(V_symmetric, :uniform, nothing, uniform_rotation_matrix!)
     else
-        d = RotMatrix(V_symmetric, diffrot_profile, nothing, differential_rotation_matrix!)
+        d = RotMatrix(V_symmetric, rotation_profile, nothing, differential_rotation_matrix!)
         updaterotatationprofile(d, operators; smoothing_param)
     end
     filter_eigenvalues(feig; matrixfn!, fkw..., kw...)
