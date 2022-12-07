@@ -18,12 +18,15 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
     print_timer = false
     scale_eigenvectors = false
 
-    Seqglobalscaling = 1e-7
-    scalings = (; Seqglobalscaling)
-
     @info "operators"
     r_in_frac = 0.6
     r_out_frac = 0.985
+
+    # Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity_surface(r_out_frac)
+    # trackingratescaling = 1 + (7.1e-9/(Ω0/2pi))
+    trackingratescaling = 1.0
+    Seqglobalscaling = 1e-7
+    scalings = (; Seqglobalscaling, trackingratescaling)
 
     @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac smoothing_param
     @show eigvec_spectrum_power_cutoff eigen_rtol V_symmetric diffrot;
@@ -57,8 +60,8 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
 end
 
 function main(taskno = parse(Int, ENV["SLURM_PROCID"]))
-    nr = 40;
-    nℓ = 20;
+    nr = 60;
+    nℓ = 30;
     mrange = 1:15;
     diffrot = true;
     rotation_profile = :solar_latrad
