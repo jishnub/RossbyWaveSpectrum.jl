@@ -8,10 +8,8 @@ import ApproxFunBase: domainspace, rangespace, Multiplication, setspace, Convers
 	spacescompatible
 using BandedMatrices
 import BandedMatrices: BandedMatrix
-using LegendrePolynomials
 using ApproxFunOrthogonalPolynomials
 using ApproxFunSingularities
-using SpecialFunctions
 using LazyArrays
 using BlockBandedMatrices
 
@@ -33,9 +31,9 @@ const TJ = JacobiWeight{<:NormalizedPolynomialSpace{<:Jacobi{<:ChebyshevInterval
 const JacobiMaybeNormalized = Union{Jacobi{<:ChebyshevInterval},
 	NormalizedPolynomialSpace{<:Jacobi{<:ChebyshevInterval}}}
 
-ApproxFunBase.domain(n::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
+ApproxFunBase.domain(::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
 NormalizedPlm(m::Int) = NormalizedPlm(m, JacobiWeight(m/2, m/2, NormalizedJacobi(m,m)))
-NormalizedPlm(; m::Int=m) = NormalizedPlm(m)
+NormalizedPlm(; m::Int) = NormalizedPlm(m)
 Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(m=", azimuthalorder(sp), ")")
 
 spacescompatible(b::typeof(NormalizedLegendre()), a::NormalizedPlm) =

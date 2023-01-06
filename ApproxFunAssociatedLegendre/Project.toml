@@ -11,8 +11,6 @@ BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
 BlockBandedMatrices = "ffab5731-97b5-5995-9138-79e8c1846df0"
 DomainSets = "5b8099bc-c8ec-5219-889f-1d9e522a28bf"
 LazyArrays = "5078a376-72f3-5289-bfd5-ec5146d43c02"
-LegendrePolynomials = "3db4a2ba-fc88-11e8-3e01-49c72059a882"
-SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 
 [compat]
 ApproxFunBase = "0.7"
@@ -23,8 +21,6 @@ BandedMatrices = "0.17"
 BlockBandedMatrices = "0.11"
 DomainSets = "0.5, 0.6"
 LazyArrays = "0.22"
-LegendrePolynomials = "0.4"
-SpecialFunctions = "2"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"

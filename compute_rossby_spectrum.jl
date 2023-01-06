@@ -57,20 +57,22 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
     return nothing
 end
 
-function main(taskno = parse(Int, ENV["SLURM_PROCID"]))
-    nr = 60;
-    nℓ = 30;
-    mrange = 1:15;
-    diffrot = true;
-    rotation_profile = :solar_latrad
+function main(V_symmetric = true;
+    nr = 40,
+    nℓ = 20,
+    mrange = 1:1,
+    diffrot = true,
+    rotation_profile = :solar_latrad,
+    save = true,
+    )
 
-    V_symmetric = (true, false)[taskno + 1]
-    @show Libc.gethostname(), taskno, V_symmetric
+    @show Libc.gethostname(), V_symmetric
 
     computespectrum(8, 6, 1:1, V_symmetric, diffrot, rotation_profile,
             save = false, smoothing_param = 1e-1,
             print_timer = false)
-    computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile)
+    computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile;
+            save)
 end
 
 end

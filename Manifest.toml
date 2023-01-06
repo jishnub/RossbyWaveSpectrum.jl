@@ -2,7 +2,7 @@
 
 julia_version = "1.9.0-beta2"
 manifest_format = "2.0"
-project_hash = "121d4b669a6c3a1a8715d14b79bb011b2e49d255"
+project_hash = "2c98839bbd4af87af113da5daf1e441f90f237c3"
 
 [[deps.AbstractFFTs]]
 deps = ["ChainRulesCore", "LinearAlgebra"]
@@ -29,16 +29,16 @@ uuid = "28f2ccd6-bb30-5033-b560-165f7b14dc2f"
 version = "0.13.14"
 
 [[deps.ApproxFunAssociatedLegendre]]
-deps = ["ApproxFunBase", "ApproxFunOrthogonalPolynomials", "ApproxFunSingularities", "BandedMatrices", "BlockBandedMatrices", "DomainSets", "LazyArrays", "LegendrePolynomials", "SpecialFunctions"]
+deps = ["ApproxFunBase", "ApproxFunOrthogonalPolynomials", "ApproxFunSingularities", "BandedMatrices", "BlockBandedMatrices", "DomainSets", "LazyArrays"]
 path = "ApproxFunAssociatedLegendre"
 uuid = "48bd048b-2bcf-409a-92a0-8749fd24560e"
 version = "0.1.0"
 
 [[deps.ApproxFunBase]]
 deps = ["AbstractFFTs", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "Calculus", "Combinatorics", "DSP", "DomainSets", "DualNumbers", "FFTW", "FillArrays", "InfiniteArrays", "InfiniteLinearAlgebra", "IntervalSets", "LazyArrays", "LinearAlgebra", "LowRankApprox", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "Test"]
-path = "/home/jishnu/Dropbox/JuliaPackages/ApproxFunBase/"
+git-tree-sha1 = "3e68be1726486965ade89fcb3270e82f959cfcc5"
 uuid = "fbd15aa5-315a-5a7d-a8a4-24992e37be05"
-version = "0.7.56"
+version = "0.7.57"
 
 [[deps.ApproxFunFourier]]
 deps = ["AbstractFFTs", "ApproxFunBase", "BandedMatrices", "DomainSets", "FFTW", "FastTransforms", "InfiniteArrays", "IntervalSets", "LinearAlgebra", "Reexport", "StaticArrays"]
@@ -311,6 +311,12 @@ deps = ["Artifacts", "Libdl"]
 uuid = "781609d7-10c4-51f6-84f2-b8444358ff6d"
 version = "6.2.1+2"
 
+[[deps.GPUArraysCore]]
+deps = ["Adapt"]
+git-tree-sha1 = "6872f5ec8fd1a38880f027a26739d42dcda6691f"
+uuid = "46192b85-c4d5-4398-a991-12ede77f4527"
+version = "0.1.2"
+
 [[deps.GenericFFT]]
 deps = ["AbstractFFTs", "FFTW", "LinearAlgebra", "Reexport", "Test"]
 git-tree-sha1 = "aa82ad4d96019b883a17953707155fab87df5410"
@@ -459,9 +465,7 @@ version = "0.5.2"
 
 [[deps.MKL]]
 deps = ["Artifacts", "Libdl", "LinearAlgebra", "MKL_jll"]
-git-tree-sha1 = "72b030e28a6373f27bcd8e1f3f7fce2089997989"
-repo-rev = "master"
-repo-url = "https://github.com/JuliaLinearAlgebra/MKL.jl"
+git-tree-sha1 = "99d923f343425a26eb4f1596d2a6a1118635d73a"
 uuid = "33e6dc65-8f57-5167-99aa-e5a354878fb2"
 version = "0.6.0"
 
@@ -694,10 +698,10 @@ uuid = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 version = "0.33.21"
 
 [[deps.StructArrays]]
-deps = ["Adapt", "DataAPI", "StaticArraysCore", "Tables"]
-git-tree-sha1 = "13237798b407150a6d2e2bce5d793d7d9576e99e"
+deps = ["Adapt", "DataAPI", "GPUArraysCore", "StaticArraysCore", "Tables"]
+git-tree-sha1 = "b03a3b745aa49b566f128977a7dd1be8711c5e71"
 uuid = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
-version = "0.6.13"
+version = "0.6.14"
 
 [[deps.SuiteSparse_jll]]
 deps = ["Artifacts", "Libdl", "Pkg", "libblastrampoline_jll"]

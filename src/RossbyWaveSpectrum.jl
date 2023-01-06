@@ -1275,7 +1275,7 @@ function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:Abstrac
     nblasthreads = BLAS.get_num_threads()
     TMapReturnEltype = Tuple{eltype(λs), eltype(vs)}
     try
-        BLAS.set_num_threads(max(1, round(Int, nblasthreads/nt)))
+        BLAS.set_num_threads(max(1, div(nblasthreads, nt)))
         z = zip(λs, vs, mr)
         if length(z) > 0
             Folds.map(z) do (λm, vm, m)
@@ -1331,7 +1331,7 @@ function eigvec_spectrum_filter_map_nthreads!(c, nt, spectrumfn!, mr, operators,
     TMapReturnEltype = Tuple{Vector{ComplexF64},
                     StructArray{ComplexF64, 2, @NamedTuple{re::Matrix{Float64},im::Matrix{Float64}}, Int64}}
     try
-        BLAS.set_num_threads(max(1, round(Int, nblasthreads/nt)))
+        BLAS.set_num_threads(max(1, div(nblasthreads, nt)))
         if length(mr) > 0
             Folds.map(mr) do m
                 Ctid = take!(c)

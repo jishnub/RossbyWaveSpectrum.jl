@@ -243,7 +243,7 @@ function rossby_ridge_eignorm(λ, v, (A, B), m, nparams; ΔΩ_frac = 0)
     vi = v[:, matchind];
     λi = λ[matchind]
     normsden = [norm(λi * @view(vi[i*nparams .+ (1:nparams)])) for i in 0:2]
-    normsnum = [norm((A[i*nparams .+ (1:nparams), :] - λi * B[i*nparams .+ (1:nparams), :]) * vi) for i in 0:2]
+    normsnum = [norm((A[i*nparams .+ (1:nparams), :]*vi - λi*B[i*nparams .+ (1:nparams), :]*vi)) for i in 0:2]
     [(d/norm(λi) > 1e-10 ? n/d : 0) for (n, d) in zip(normsnum, normsden)]
 end
 
