@@ -17,6 +17,8 @@ using BlockBandedMatrices
 
 export NormalizedPlm
 export sinθdθ_Operator
+export cosθ_Operator
+export sinθdθ_plus_2cosθ_Operator
 export HorizontalLaplacian
 export expand
 export kronmatrix
@@ -126,7 +128,7 @@ function ApproxFunBase.Derivative(sp::NormalizedPlm, k::Int)
 	ApproxFunBase.DerivativeWrapper((-1)^m * Derivative(sp.jacobispace, k), k)
 end
 
-abstract type PlmSpaceOperator{T, DS<:Space} <: Operator{T} end
+abstract type PlmSpaceOperator{T, DS<:NormalizedPlm} <: Operator{T} end
 
 domainspace(p::PlmSpaceOperator) = p.ds
 rangespace(p::PlmSpaceOperator) = p.ds
@@ -136,19 +138,23 @@ end
 
 index_to_ℓ(i, m) = m + i - 1
 
-struct sinθdθ_Operator{T,DS<:Space} <: PlmSpaceOperator{T,DS}
-	ds :: DS
+for P in [:sinθdθ_Operator, :cosθ_Operator, :sinθdθ_plus_2cosθ_Operator]
+	@eval begin
+		struct $P{T,DS} <: PlmSpaceOperator{T,DS}
+			ds :: DS
+		end
+		$P{T}(ds) where {T} = $P{T, typeof(ds)}(ds)
+		$P(ds) = $P{Float64}(ds)
+
+		Base.convert(::Type{Operator{T}}, h::$P) where {T} =
+			$P{T}(h.ds)::Operator{T}
+
+		ApproxFunBase.setspace(::$P{T}, sp::Space) where {T} =
+			$P{T}(sp)
+	end
 end
-sinθdθ_Operator{T}(ds) where {T} = sinθdθ_Operator{T, typeof(ds)}(ds)
-sinθdθ_Operator(ds) = sinθdθ_Operator{Float64}(ds)
 
-Base.convert(::Type{Operator{T}}, h::sinθdθ_Operator) where {T} =
-	sinθdθ_Operator{T}(h.ds)::Operator{T}
-
-ApproxFunBase.setspace(P::sinθdθ_Operator{T}, sp::Space) where {T} =
-	sinθdθ_Operator{T,typeof(sp)}(sp)
-
-BandedMatrices.bandwidths(C::sinθdθ_Operator) = (1,1)
+BandedMatrices.bandwidths(::Union{sinθdθ_Operator, cosθ_Operator, sinθdθ_plus_2cosθ_Operator}) = (1,1)
 
 C⁻ℓm(ℓ, m, T = Float64) = (ℓ < abs(m) ? T(0) : convert(T, √(T(ℓ - m) * T(ℓ + m) / (T(2ℓ - 1) * T(2ℓ + 1)))))
 C⁺ℓm(ℓ, m, T) = C⁻ℓm(ℓ+1, m, T)
@@ -156,17 +162,33 @@ C⁺ℓm(ℓ, m, T) = C⁻ℓm(ℓ+1, m, T)
 S⁺ℓm(ℓ, m, T = Float64) = convert(T, ℓ) * C⁺ℓm(ℓ, m, T)
 S⁻ℓm(ℓ, m, T = Float64) = convert(T, ℓ) * C⁻ℓm(ℓ, m, T) - β⁻ℓm(ℓ, m, T)
 
-function Base.getindex(P::sinθdθ_Operator{T, <:NormalizedPlm}, i::Int, j::Int) where {T}
-	m = azimuthalorder(domainspace(P))
+function tridiag_getindex(::Type{T}, m, i, j, topdiagfn, botdiagfn) where {T}
 	if j == i+1
 		ℓ = index_to_ℓ(i, m)
-		S⁻ℓm(ℓ+1, m, T)
+		topdiagfn(ℓ+1, m, T)
 	elseif j == i-1
 		ℓ = index_to_ℓ(i, m)
-		S⁺ℓm(ℓ-1, m, T)
+		botdiagfn(ℓ-1, m, T)
 	else
 		zero(T)
 	end
+end
+
+function Base.getindex(P::sinθdθ_Operator{T}, i::Int, j::Int) where {T}
+	m = azimuthalorder(domainspace(P))
+	tridiag_getindex(T, m, i, j, S⁻ℓm, S⁺ℓm)
+end
+
+function Base.getindex(P::cosθ_Operator{T}, i::Int, j::Int) where {T}
+	m = azimuthalorder(domainspace(P))
+	tridiag_getindex(T, m, i, j, C⁻ℓm, C⁺ℓm)
+end
+
+function Base.getindex(P::sinθdθ_plus_2cosθ_Operator{T}, i::Int, j::Int) where {T}
+	m = azimuthalorder(domainspace(P))
+	C = tridiag_getindex(T, m, i, j, C⁻ℓm, C⁺ℓm)
+	S = tridiag_getindex(T, m, i, j, S⁻ℓm, S⁺ℓm)
+	S + 2C
 end
 
 function ApproxFunBase.Multiplication(f::Fun, sp::NormalizedPlm)
@@ -206,29 +228,35 @@ Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i::Ab
 
 struct HorizontalLaplacian{T,DS<:Space} <: PlmSpaceOperator{T,DS}
 	ds :: DS
+	diagshift::Int
 end
-HorizontalLaplacian{T}(ds) where {T} = HorizontalLaplacian{T, typeof(ds)}(ds)
-HorizontalLaplacian(ds) = HorizontalLaplacian{Float64}(ds)
+HorizontalLaplacian{T}(ds, diagshift = 0) where {T} = HorizontalLaplacian{T, typeof(ds)}(ds, diagshift)
+HorizontalLaplacian(args...) = HorizontalLaplacian{Float64}(args...)
 ApproxFunBase.setspace(P::HorizontalLaplacian{T}, sp::Space) where {T} =
-	HorizontalLaplacian{T, typeof(sp)}(sp)
+	HorizontalLaplacian{T, typeof(sp)}(sp, P.diagshift)
 
 Base.convert(::Type{Operator{T}}, h::HorizontalLaplacian) where {T} =
-	HorizontalLaplacian{T}(h.ds)::Operator{T}
+	HorizontalLaplacian{T}(h.ds, h.diagshift)::Operator{T}
 
-BandedMatrices.bandwidths(M::HorizontalLaplacian) = (0,0)
+BandedMatrices.bandwidths(::HorizontalLaplacian) = (0,0)
+
+Base.:(+)(H::HorizontalLaplacian{T}, ds::Int) where {T} = HorizontalLaplacian{T}(H.ds, H.diagshift + ds)
+Base.:(+)(ds::Int, H::HorizontalLaplacian) = H + ds
+Base.:(-)(H::HorizontalLaplacian{T}, ds::Int) where {T} = HorizontalLaplacian{T}(H.ds, H.diagshift - ds)
+
 function Base.getindex(P::HorizontalLaplacian{T,<:NormalizedPlm}, i::Int, j::Int) where {T}
 	m = azimuthalorder(domainspace(P))
+	ds = P.diagshift
 	if j == i
 		ℓ = index_to_ℓ(i, m)
-		convert(T, -ℓ*(ℓ+1))
+		convert(T, -ℓ*(ℓ+1) + ds)
 	else
 		zero(T)
 	end
 end
 
 function ApproxFunBase.Multiplication(f::Fun{<:NormalizedPlm}, sp::NormalizedPolynomialSpace{<:Jacobi})
-	sp = space(f)
-	assertLegendre(sp)
+	assertLegendre(space(f))
 	Multiplication(Fun(f, NormalizedLegendre()), sp)
 end
 
