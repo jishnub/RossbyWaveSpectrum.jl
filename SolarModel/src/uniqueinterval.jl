@@ -1,5 +1,6 @@
 using IntervalSets: AbstractInterval
 import IntervalSets: endpoints, closedendpoints
+using ApproxFun: Space
 
 struct UniqueInterval{T, I<:AbstractInterval{T}} <: AbstractInterval{T}
 	parentinterval :: I
@@ -14,6 +15,8 @@ Base.isempty(m::UniqueInterval) = isempty(m.parentinterval)
 
 ApproxFunBase.domainscompatible(a::UniqueInterval, b::UniqueInterval) = a == b
 ApproxFunBase.isambiguous(a::UniqueInterval) = false
+
+Space(a::UniqueInterval) = Chebyshev(a)
 
 Base.:(==)(a::UniqueInterval, b::UniqueInterval) = (@assert a.parentinterval == b.parentinterval; true)
 

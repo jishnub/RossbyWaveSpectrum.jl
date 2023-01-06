@@ -16,7 +16,7 @@ SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 
 [compat]
 ApproxFunBase = "0.7"
-ApproxFunOrthogonalPolynomials = "0.5"
+ApproxFunOrthogonalPolynomials = "0.5, 0.6"
 ApproxFunSingularities = "0.3"
 Aqua = "0.5"
 BandedMatrices = "0.17"

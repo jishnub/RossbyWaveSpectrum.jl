@@ -1,6 +1,6 @@
 module TestMod
 
-using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun, operatormatrix, Msun, G, StructMatrix
+using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun, Msun, G, StructMatrix
 using Test
 using LinearAlgebra
 using OffsetArrays
@@ -18,7 +18,7 @@ using ApproxFunAssociatedLegendre
 using RossbyWaveSpectrum.Filters: NODES, SPATIAL, EIGVEC, EIGVAL, EIGEN, BC
 
 @testset "project quality" begin
-    Aqua.test_all(RossbyWaveSpectrum, ambiguities = false)
+    Aqua.test_all(RossbyWaveSpectrum, ambiguities = false, undefined_exports=false)
 end
 
 @testset "operators" begin
@@ -82,7 +82,7 @@ end
             end
         end
         @testset "V" begin
-            CV = RossbyWaveSpectrum.V_boundary_op(operators);
+            CV = RossbyWaveSpectrum.SolarModel.V_boundary_op(operators);
             for c in eachcol(ZV)
                 p = Fun(operators.radialspace, c)
                 Cp = CV * p
@@ -129,9 +129,9 @@ end
 end
 
 @testset "invtransform" begin
-    for sp in Any[Chebyshev(), Legendre()]
+    for sp in (Chebyshev(), Legendre())
         n = 100
-        for v in Any[rand(n, 20), rand(ComplexF64, n, 20)]
+        for v in (rand(n, 20), rand(ComplexF64, n, 20))
             v2 = copy(v)
             out = similar(v)
             RossbyWaveSpectrum.invtransform1!(sp, out, v)
@@ -270,7 +270,7 @@ end
         end
         vfn = zeros(eltype(vuf), size(vuf, 1));
         @testset "boundary condition" begin
-            Vop = RossbyWaveSpectrum.V_boundary_op(operators);
+            Vop = RossbyWaveSpectrum.SolarModel.V_boundary_op(operators);
             @testset for n in axes(vuf, 2)
                 vfn .= @view vuf[:, n];
                 @testset "V" begin
@@ -542,7 +542,7 @@ end
 
                 latitudinal_space = NormalizedPlm(m);
                 cosθop = Multiplication(cosθ, latitudinal_space);
-                sinθdθop = sinθ∂θ_Operator(latitudinal_space);
+                sinθdθop = sinθdθ_Operator(latitudinal_space);
                 ∇² = HorizontalLaplacian(latitudinal_space);
                 ℓℓp1op = -∇²;
 
@@ -666,7 +666,7 @@ end
 
                 latitudinal_space = NormalizedPlm(m);
                 cosθop = Multiplication(cosθ, latitudinal_space);
-                sinθdθop = sinθ∂θ_Operator(latitudinal_space);
+                sinθdθop = sinθdθ_Operator(latitudinal_space);
                 ∇² = HorizontalLaplacian(latitudinal_space);
                 ℓℓp1op = -∇²;
 
@@ -787,7 +787,7 @@ end
             end
             vfn = zeros(eltype(vrf), size(vrf, 1))
             @testset "boundary condition" begin
-                Vop = RossbyWaveSpectrum.V_boundary_op(operators);
+                Vop = RossbyWaveSpectrum.SolarModel.V_boundary_op(operators);
                 @testset for n in axes(vrf, 2)
                     vfn .= @view vrf[:, n]
                     @testset "V" begin
@@ -863,7 +863,7 @@ end
             end
             vfn = zeros(eltype(vrf), size(vrf, 1))
             @testset "boundary condition" begin
-                Vop = RossbyWaveSpectrum.V_boundary_op(operators);
+                Vop = RossbyWaveSpectrum.SolarModel.V_boundary_op(operators);
                 @testset for n in axes(vrf, 2)
                     vfn .= @view vrf[:, n]
                     @testset "V" begin
@@ -934,14 +934,16 @@ include("run_threadedtests.jl")
 @testset "compute_rossby_spectrum.jl" begin
     include(joinpath(dirname(dirname(pathof(RossbyWaveSpectrum))), "compute_rossby_spectrum.jl"))
     for V_symmetric in (true, false), diffrot in (false,)
-        ComputeRossbySpectrum.computespectrum(8, 6, 1:1, V_symmetric, diffrot, :radial_solar_equator, save = false)
+        ComputeRossbySpectrum.computespectrum(8, 6, 1:1, V_symmetric, diffrot, :radial_solar_equator,
+            save = false, print_timer = false)
     end
     @testset "filteredeigen" begin
         nr, nℓ = 8,6
         V_symmetric = true
         diffrotprof = :radial_solar_equator
         @testset for diffrot in (false,)
-            ComputeRossbySpectrum.computespectrum(nr, nℓ, 1:1, V_symmetric, diffrot, diffrotprof)
+            ComputeRossbySpectrum.computespectrum(nr, nℓ, 1:1, V_symmetric, diffrot, diffrotprof,
+                print_timer = false)
             filename = RossbyWaveSpectrum.rossbyeigenfilename(nr, nℓ,
                 RossbyWaveSpectrum.filenamerottag(diffrot, diffrotprof),
                 RossbyWaveSpectrum.filenamesymtag(V_symmetric))

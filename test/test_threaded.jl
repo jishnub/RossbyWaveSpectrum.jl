@@ -23,7 +23,7 @@ using Folds
     end
 
     λs, vs = RossbyWaveSpectrum.filter_eigenvalues(RossbyWaveSpectrum.uniform_rotation_spectrum!,
-            mr; operators, constraints);
+            mr; operators, constraints, print_timer = false);
 
     @testset "all m" begin
         @testset for ind in eachindex(mr)

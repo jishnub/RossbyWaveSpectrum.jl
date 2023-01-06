@@ -52,13 +52,13 @@ end
     f = Fun(NormalizedLegendre())
     g = sinθdθ * f
     h = Fun(g, NormalizedPlm(0))
-    sinθdθ2 = sinθ∂θ_Operator(NormalizedPlm(0))
+    sinθdθ2 = sinθdθ_Operator(NormalizedPlm(0))
     f2 = Fun(NormalizedPlm(0))
     g2 = sinθdθ2 * f2
     @test g2 ≈ h
 
     for m in 0:10
-        A = AbstractMatrix(sinθ∂θ_Operator(NormalizedPlm(m))[1:10, 1:10])
+        A = AbstractMatrix(sinθdθ_Operator(NormalizedPlm(m))[1:10, 1:10])
         B = sintheta_dtheta_operator(10, m)
         @test A ≈ B
     end

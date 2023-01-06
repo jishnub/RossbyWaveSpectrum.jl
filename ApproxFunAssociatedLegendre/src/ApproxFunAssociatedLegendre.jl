@@ -16,7 +16,7 @@ using LazyArrays
 using BlockBandedMatrices
 
 export NormalizedPlm
-export sinθ∂θ_Operator
+export sinθdθ_Operator
 export HorizontalLaplacian
 export expand
 export kronmatrix
@@ -136,19 +136,19 @@ end
 
 index_to_ℓ(i, m) = m + i - 1
 
-struct sinθ∂θ_Operator{T,DS<:Space} <: PlmSpaceOperator{T,DS}
+struct sinθdθ_Operator{T,DS<:Space} <: PlmSpaceOperator{T,DS}
 	ds :: DS
 end
-sinθ∂θ_Operator{T}(ds) where {T} = sinθ∂θ_Operator{T, typeof(ds)}(ds)
-sinθ∂θ_Operator(ds) = sinθ∂θ_Operator{Float64}(ds)
+sinθdθ_Operator{T}(ds) where {T} = sinθdθ_Operator{T, typeof(ds)}(ds)
+sinθdθ_Operator(ds) = sinθdθ_Operator{Float64}(ds)
 
-Base.convert(::Type{Operator{T}}, h::sinθ∂θ_Operator) where {T} =
-	sinθ∂θ_Operator{T}(h.ds)::Operator{T}
+Base.convert(::Type{Operator{T}}, h::sinθdθ_Operator) where {T} =
+	sinθdθ_Operator{T}(h.ds)::Operator{T}
 
-ApproxFunBase.setspace(P::sinθ∂θ_Operator{T}, sp::Space) where {T} =
-	sinθ∂θ_Operator{T,typeof(sp)}(sp)
+ApproxFunBase.setspace(P::sinθdθ_Operator{T}, sp::Space) where {T} =
+	sinθdθ_Operator{T,typeof(sp)}(sp)
 
-BandedMatrices.bandwidths(C::sinθ∂θ_Operator) = (1,1)
+BandedMatrices.bandwidths(C::sinθdθ_Operator) = (1,1)
 
 C⁻ℓm(ℓ, m, T = Float64) = (ℓ < abs(m) ? T(0) : convert(T, √(T(ℓ - m) * T(ℓ + m) / (T(2ℓ - 1) * T(2ℓ + 1)))))
 C⁺ℓm(ℓ, m, T) = C⁻ℓm(ℓ+1, m, T)
@@ -156,7 +156,7 @@ C⁺ℓm(ℓ, m, T) = C⁻ℓm(ℓ+1, m, T)
 S⁺ℓm(ℓ, m, T = Float64) = convert(T, ℓ) * C⁺ℓm(ℓ, m, T)
 S⁻ℓm(ℓ, m, T = Float64) = convert(T, ℓ) * C⁻ℓm(ℓ, m, T) - β⁻ℓm(ℓ, m, T)
 
-function Base.getindex(P::sinθ∂θ_Operator{T, <:NormalizedPlm}, i::Int, j::Int) where {T}
+function Base.getindex(P::sinθdθ_Operator{T, <:NormalizedPlm}, i::Int, j::Int) where {T}
 	m = azimuthalorder(domainspace(P))
 	if j == i+1
 		ℓ = index_to_ℓ(i, m)

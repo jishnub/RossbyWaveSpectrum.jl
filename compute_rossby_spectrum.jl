@@ -1,9 +1,10 @@
 module ComputeRossbySpectrum
 @time using RossbyWaveSpectrum
 using LinearAlgebra
+using TimerOutputs
 
 function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile;
-            save = true, smoothing_param = 1e-5)
+            save = true, smoothing_param = 1e-5, print_timer = true)
     flush(stdout)
     # boundary condition tolerance
     bc_atol = 1e-5
@@ -15,7 +16,6 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
 
     eigen_rtol = 0.01;
 
-    print_timer = false
     scale_eigenvectors = false
 
     @info "operators"
@@ -28,18 +28,22 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
     Seqglobalscaling = 1e-7
     scalings = (; Seqglobalscaling, trackingratescaling)
 
-    @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac smoothing_param
-    @show eigvec_spectrum_power_cutoff eigen_rtol V_symmetric diffrot;
+    @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac smoothing_param;
+    @show eigvec_spectrum_power_cutoff eigen_rtol V_symmetric diffrot rotation_profile;
     @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads();
 
-    @time operators = RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 2e12, scalings);
+    timer = TimerOutput()
 
-    spectrumfn! = if diffrot
-        d = RossbyWaveSpectrum.RotMatrix(V_symmetric, rotation_profile, nothing, RossbyWaveSpectrum.differential_rotation_spectrum!)
-        RossbyWaveSpectrum.updaterotatationprofile(d, operators; smoothing_param)
-    else
-        RossbyWaveSpectrum.RotMatrix(V_symmetric, :uniform, nothing, RossbyWaveSpectrum.uniform_rotation_spectrum!)
+    operators = @timeit timer "operators" begin
+        RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 2e12, scalings);
     end
+
+    spectrumfn! = @timeit timer "spectrumfn" begin
+        RossbyWaveSpectrum.RotMatrix(Val(:spectrum), V_symmetric, diffrot, rotation_profile;
+            operators, smoothing_param)
+    end
+
+    println(timer)
 
     flush(stdout)
 
@@ -47,13 +51,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
         print_timer, scale_eigenvectors, diffrot, rotation_profile, V_symmetric, smoothing_param))
 
     @time RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange;
-        operators, kw...)
-
-    if !save
-        fname = RossbyWaveSpectrum.rossbyeigenfilename(; operators, kw...)
-        @warn "removing $fname"
-        rm(fname)
-    end
+        operators, print_timer, save, kw...)
 
     flush(stdout)
     return nothing
@@ -69,7 +67,9 @@ function main(taskno = parse(Int, ENV["SLURM_PROCID"]))
     V_symmetric = (true, false)[taskno + 1]
     @show Libc.gethostname(), taskno, V_symmetric
 
-    computespectrum(8, 6, 1:1, V_symmetric, diffrot, rotation_profile, save = false, smoothing_param = 1e-1)
+    computespectrum(8, 6, 1:1, V_symmetric, diffrot, rotation_profile,
+            save = false, smoothing_param = 1e-1,
+            print_timer = false)
     computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile)
 end
 
