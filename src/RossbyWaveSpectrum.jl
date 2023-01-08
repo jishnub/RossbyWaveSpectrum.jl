@@ -610,7 +610,8 @@ function solar_differential_rotation_vorticity_Fun(; operators,
     (; ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ) = ΔΩprofile_deriv;
 
     @unpack radialspace = operators;
-    latitudinal_space = NormalizedPlm(0); # velocity and its derivatives are expanded in Legendre poly
+    # velocity and its derivatives are expanded in Legendre poly
+    latitudinal_space = NormalizedPlm(0, NormalizedLegendre());
 
     cosθ = Fun(Legendre());
     Ir = I : radialspace;
