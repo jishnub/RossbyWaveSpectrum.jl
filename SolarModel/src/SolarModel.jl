@@ -739,7 +739,7 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
 
     ∂r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂r_ΔΩ_rθ, s = s), space), s);
     ∂z_ΔΩ = chop(Fun((Ir ⊗ cosθ) * ∂r_ΔΩ - (onebyr ⊗ sinθdθop) * ΔΩ,
-                radialspace ⊗ NormalizedLegendre()));
+                radialspace ⊗ NormalizedLegendre()))::typeof(ΔΩ);
 
     ∂2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂2r_ΔΩ_rθ, s = s), space), s);
 

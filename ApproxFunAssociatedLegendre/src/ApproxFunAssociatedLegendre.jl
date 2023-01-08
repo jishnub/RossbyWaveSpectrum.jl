@@ -5,7 +5,7 @@ using ApproxFunBase
 using ApproxFunBase: SubOperator, UnsetSpace, ConcreteMultiplication, MultiplicationWrapper,
 	ConstantTimesOperator, ConversionWrapper
 import ApproxFunBase: domainspace, rangespace, Multiplication, setspace, Conversion,
-	spacescompatible
+	spacescompatible, maxspace_rule
 using BandedMatrices
 import BandedMatrices: BandedMatrix
 using ApproxFunOrthogonalPolynomials
@@ -21,15 +21,18 @@ export HorizontalLaplacian
 export expand
 export kronmatrix
 
+const WeightedNormalizedJacobi = JacobiWeight{<:NormalizedPolynomialSpace{<:Jacobi{<:ChebyshevInterval}}}
+const JacobiMaybeNormalized = Union{Jacobi{<:ChebyshevInterval},
+	NormalizedPolynomialSpace{<:Jacobi{<:ChebyshevInterval}}}
+const WeightedJacobiMaybeNormalized = Union{WeightedNormalizedJacobi,
+	JacobiWeight{<:Jacobi{<:ChebyshevInterval}}}
+
 struct NormalizedPlm{T, NJS <: Space{ChebyshevInterval{T},T}} <: Space{ChebyshevInterval{T},T}
 	m :: Int
 	jacobispace :: NJS
 end
 azimuthalorder(p::NormalizedPlm) = p.m
 
-const TJ = JacobiWeight{<:NormalizedPolynomialSpace{<:Jacobi{<:ChebyshevInterval}}}
-const JacobiMaybeNormalized = Union{Jacobi{<:ChebyshevInterval},
-	NormalizedPolynomialSpace{<:Jacobi{<:ChebyshevInterval}}}
 
 ApproxFunBase.domain(::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
 NormalizedPlm(m::Int) = NormalizedPlm(m, JacobiWeight(m/2, m/2, NormalizedJacobi(m,m)))
@@ -43,16 +46,14 @@ function spacescompatible(a::NormalizedPlm, b::typeof(NormalizedLegendre()))
 end
 
 Conversion(J::JacobiMaybeNormalized, sp::NormalizedPlm) = Conversion(JacobiWeight(0,0,J), sp)
-function Conversion(J::TJ, sp::NormalizedPlm)
-	m = azimuthalorder(sp)
-	C = (-1)^m * Conversion(J, sp.jacobispace)
+function Conversion(J::WeightedJacobiMaybeNormalized, sp::NormalizedPlm)
+	C = Conversion(J, sp.jacobispace)
 	S = ApproxFunBase.SpaceOperator(C, J, sp)
 	ApproxFunBase.ConversionWrapper(S)
 end
 Conversion(sp::NormalizedPlm, J::JacobiMaybeNormalized) = Conversion(sp, JacobiWeight(0,0,J))
-function Conversion(sp::NormalizedPlm, J::TJ)
-	m = azimuthalorder(sp)
-	C = (-1)^m * Conversion(sp.jacobispace, J)
+function Conversion(sp::NormalizedPlm, J::WeightedJacobiMaybeNormalized)
+	C = Conversion(sp.jacobispace, J)
 	S = ApproxFunBase.SpaceOperator(C, sp, J)
 	ApproxFunBase.ConversionWrapper(S)
 end
@@ -63,7 +64,15 @@ function Base.union(A::NormalizedPlm, B::NormalizedPlm)
 	A
 end
 
-function ApproxFunBase.maxspace(A::NormalizedPlm, B::NormalizedPlm)
+ApproxFunBase.canonicalspace(A::NormalizedPlm) = A.jacobispace
+
+function maxspace_rule(A::Union{JacobiMaybeNormalized, WeightedNormalizedJacobi}, B::NormalizedPlm)
+	maxspace(A, B.jacobispace)
+end
+function maxspace_rule(A::NormalizedPlm, B::Union{JacobiMaybeNormalized,WeightedNormalizedJacobi})
+	maxspace(A.jacobispace, B)
+end
+function maxspace_rule(A::NormalizedPlm, B::NormalizedPlm)
 	@assert azimuthalorder(A) == azimuthalorder(B)
 	A
 end
@@ -100,21 +109,18 @@ function ApproxFunBase.spacescompatible(a::NormalizedPlm, b::NormalizedPlm)
 end
 
 function ApproxFunBase.evaluate(v::Vector, s::NormalizedPlm, x)
-	m = azimuthalorder(s)
-	evaluate(v, s.jacobispace, x) * (-1)^m
+	evaluate(v, s.jacobispace, x)
 end
 
 for f in [:plan_transform, :plan_transform!, :plan_itransform, :plan_itransform!]
 	@eval function ApproxFunBase.$f(sp::NormalizedPlm, v::Vector)
-		m = azimuthalorder(sp)
-		ApproxFunBase.$f(sp.jacobispace, v .* (-1)^m)
+		ApproxFunBase.$f(sp.jacobispace, v)
 	end
 end
 
 function _Fun(f, sp::NormalizedPlm)
 	F = Fun(f, sp.jacobispace)
-	m = azimuthalorder(sp)
-	c = coefficients(F) .* (-1)^m
+	c = coefficients(F)
 	Fun(sp, c)
 end
 ApproxFunBase.Fun(f, sp::NormalizedPlm) = _Fun(f, sp)
@@ -122,8 +128,7 @@ ApproxFunBase.Fun(f::Fun, sp::NormalizedPlm) = _Fun(f, sp)
 ApproxFunBase.Fun(f::typeof(identity), sp::NormalizedPlm) = _Fun(f, sp)
 
 function ApproxFunBase.Derivative(sp::NormalizedPlm, k::Int)
-	m = azimuthalorder(sp)
-	ApproxFunBase.DerivativeWrapper((-1)^m * Derivative(sp.jacobispace, k), k)
+	ApproxFunBase.DerivativeWrapper(Derivative(sp.jacobispace, k), k)
 end
 
 abstract type PlmSpaceOperator{T, DS<:NormalizedPlm} <: Operator{T} end

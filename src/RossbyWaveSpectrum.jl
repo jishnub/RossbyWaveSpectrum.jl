@@ -622,7 +622,7 @@ function solar_differential_rotation_vorticity_Fun(; operators,
     ∂rωΩr = (Ir ⊗ sinθ_plus_2cosθ) * ∂r_ΔΩ;
     # cotθddθ = cosθ * 1/sinθ * d/dθ = -cosθ * d/d(cosθ) = -x*d/dx
     cotθdθ = KroneckerOperator(Ir, -cosθ * Derivative(Legendre()),
-        radialspace * Legendre(), radialspace * Jacobi(1,1))
+        radialspace * Legendre(), radialspace * Jacobi(1,1));
     cotθdθΔΩ = Fun(cotθdθ * ΔΩ, radialspace ⊗ latitudinal_space);
     ∇²_min_2 = ∇²-2;
     ∂θωΩr_by_sinθ = (Ir ⊗ ∇²_min_2) * ΔΩ + 2cotθdθΔΩ;
