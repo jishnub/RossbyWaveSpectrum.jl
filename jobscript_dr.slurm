@@ -18,5 +18,6 @@ project="$SCRATCH/RossbyWaveSpectrum.jl"
 export MKL_DYNAMIC="FALSE"
 export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 srun $julia --project=$project --startup-file=no -t 14 -e \
-'include("$(ENV["SCRATCH"])/RossbyWaveSpectrum.jl/compute_rossby_spectrum.jl");\
-ComputeRossbySpectrum.main(parse(Bool, ENV["SLURM_PROCID"]); nr=40, nℓ=20, mrange=1:14)'
+'include("$(ENV["SCRATCH"])/RossbyWaveSpectrum.jl/compute_rossby_spectrum.jl");
+ComputeRossbySpectrum.main(!parse(Bool, ENV["SLURM_PROCID"]);
+nr=40, nℓ=20, mrange=1:14, rotation_profile=:solar_latrad)'

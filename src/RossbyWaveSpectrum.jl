@@ -607,7 +607,7 @@ function solar_differential_rotation_vorticity_Fun(; operators,
     @unpack onebyr, r, onebyr2, twobyr = operators.rad_terms;
     @unpack ddr, d2dr2 = operators.diff_operators;
 
-    (; ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ) = ΔΩprofile_deriv;
+    (; ΔΩ, dr_ΔΩ, d2r_ΔΩ) = ΔΩprofile_deriv;
 
     @unpack radialspace = operators;
     # velocity and its derivatives are expanded in Legendre poly
@@ -620,17 +620,17 @@ function solar_differential_rotation_vorticity_Fun(; operators,
 
     sinθ_plus_2cosθ = sinθdθ_plus_2cosθ_Operator(latitudinal_space);
     ωΩr = (Ir ⊗ sinθ_plus_2cosθ) * ΔΩ;
-    ∂rωΩr = (Ir ⊗ sinθ_plus_2cosθ) * ∂r_ΔΩ;
+    ∂rωΩr = (Ir ⊗ sinθ_plus_2cosθ) * dr_ΔΩ;
     # cotθddθ = cosθ * 1/sinθ * d/dθ = -cosθ * d/d(cosθ) = -x*d/dx
     cotθdθ = KroneckerOperator(Ir, -cosθ * Derivative(Legendre()),
         radialspace * Legendre(), radialspace * Jacobi(1,1));
     cotθdθΔΩ = Fun(cotθdθ * ΔΩ, radialspace ⊗ latitudinal_space);
     ∇²_min_2 = ∇²-2;
     ∂θωΩr_by_sinθ = (Ir ⊗ ∇²_min_2) * ΔΩ + 2cotθdθΔΩ;
-    cotθdθ∂r_ΔΩ = Fun(cotθdθ * ∂r_ΔΩ, radialspace ⊗ latitudinal_space);
-    ∂r∂θωΩr_by_sinθ = (Ir ⊗ ∇²_min_2) * ∂r_ΔΩ + 2cotθdθ∂r_ΔΩ;
-    ωΩθ_by_rsinθ = -(∂r_ΔΩ + (twobyr ⊗ Iℓ) * ΔΩ);
-    ∂rωΩθ_by_rsinθ = -(∂2r_ΔΩ + (twobyr ⊗ Iℓ) * ∂r_ΔΩ - (2onebyr2 ⊗ Iℓ) * ΔΩ);
+    cotθdθdr_ΔΩ = Fun(cotθdθ * dr_ΔΩ, radialspace ⊗ latitudinal_space);
+    ∂r∂θωΩr_by_sinθ = (Ir ⊗ ∇²_min_2) * dr_ΔΩ + 2cotθdθdr_ΔΩ;
+    ωΩθ_by_rsinθ = -(dr_ΔΩ + (twobyr ⊗ Iℓ) * ΔΩ);
+    ∂rωΩθ_by_rsinθ = -(d2r_ΔΩ + (twobyr ⊗ Iℓ) * dr_ΔΩ - (2onebyr2 ⊗ Iℓ) * ΔΩ);
 
     ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ, ∂rωΩθ_by_rsinθ =
         map(replaceemptywitheps,
@@ -674,7 +674,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     ∇² = HorizontalLaplacian(latitudinal_space);
     ℓℓp1op = -∇²;
 
-    (; ΔΩ, ∂r_ΔΩ, ∂z_ΔΩ) = ΔΩprofile_deriv;
+    (; ΔΩ, dr_ΔΩ, dz_ΔΩ) = ΔΩprofile_deriv;
     (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ,
         ∂rωΩθ_by_rsinθ, ∂rωΩθ_by_rsinθ) = ωΩ_deriv;
 
@@ -707,7 +707,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     # this lets us use the more accurate representations of ddrDDr instead of using ddr * DDr
     ddr_rdiv_ucrossω_h = OpVector((;
         V = ((2ωΩr + ΔΩ * (Ir ⊗ sinθdθop)) * (ddr ⊗ ℓℓp1op) - ∂θωΩr_by_sinθ * (ddr ⊗ sinθdθop)
-            + (2∂rωΩr + ∂r_ΔΩ * (Ir ⊗ sinθdθop)) * (Ir ⊗ ℓℓp1op) - ∂r∂θωΩr_by_sinθ * (Ir ⊗ sinθdθop)
+            + (2∂rωΩr + dr_ΔΩ * (Ir ⊗ sinθdθop)) * (Ir ⊗ ℓℓp1op) - ∂r∂θωΩr_by_sinθ * (Ir ⊗ sinθdθop)
             ),
         iW = m *
             (∂θωΩr_by_sinθ * (ddrDDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (ddr ⊗ ℓℓp1op)
@@ -730,7 +730,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     WW .+= (Weqglobalscaling * Rsun^2) .* WW_;
 
     # entropy terms
-    # thermal_wind_term_tmp = im*((2/g) ⊗ Iℓ) * ∂z_ΔΩ * rsinθufθ
+    # thermal_wind_term_tmp = im*((2/g) ⊗ Iℓ) * dz_ΔΩ * rsinθufθ
     # thermal_wind_term = expand(thermal_wind_term_tmp : space2d → space2d_D2)
     # SV_ = real(kronmatrix(thermal_wind_term.V, nr, W_ℓinds, V_ℓinds));
     # SV .+= (Seqglobalscaling * (Ω0^2 * Rsun^2) * Sscaling) .* SV_
@@ -914,6 +914,8 @@ function updaterotatationprofile(d::RotMatrix, operators; timer = TimerOutput(),
         ωΩ_deriv = @timeit timer "vorticity" begin
             solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
         end
+    else
+        error("unknown rotation profile, must be one of :constant, :radial_* or solar_*")
     end
     return RotMatrix(d.V_symmetric, d.rotation_profile, ΔΩprofile_deriv, ωΩ_deriv, d.f)
 end
@@ -1471,9 +1473,7 @@ function filteredeigen(filename::String; kw...)
     fkw = feig.kw
     diffrot::Bool = fkw[:diffrot]
     V_symmetric::Bool = fkw[:V_symmetric]
-    rotation_profile::Symbol = get(fkw, :rotation_profile) do
-        fkw[:diffrotprof] # for compat reasons
-    end
+    rotation_profile::Symbol = fkw[:rotation_profile]
     smoothing_param::Float64 = get(fkw, :smoothing_param, 1e-5)
 
     matrixfn! = RotMatrix(Val(:matrix), V_symmetric, diffrot, rotation_profile;

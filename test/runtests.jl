@@ -514,7 +514,7 @@ end
         ΔΩ_frac = 0.01
         ΔΩprofile_deriv = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
             operators, rotation_profile = :constant, smoothing_param=1e-3, ΔΩ_frac);
-        (; ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ) = ΔΩprofile_deriv;
+        (; ΔΩ, dr_ΔΩ, d2r_ΔΩ) = ΔΩprofile_deriv;
 
         ωΩ_deriv = RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
             operators, ΔΩprofile_deriv);
@@ -639,7 +639,7 @@ end
     @testset "compare with radial" begin
         ΔΩprofile_deriv = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
             operators, rotation_profile = :radial_equator, smoothing_param=1e-5);
-        (; ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ) = ΔΩprofile_deriv;
+        (; ΔΩ, dr_ΔΩ, d2r_ΔΩ) = ΔΩprofile_deriv;
 
         ωΩ_deriv = RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
             operators, ΔΩprofile_deriv);
@@ -648,7 +648,7 @@ end
         @testset "compare with analytical" begin
             cosθop = Multiplication(cosθ);
             @test ωΩr ≈ ((I ⊗ 2cosθop) * ΔΩ)
-            @test ∂rωΩr ≈ ((I ⊗ 2cosθop) * ∂r_ΔΩ)
+            @test ∂rωΩr ≈ ((I ⊗ 2cosθop) * dr_ΔΩ)
             @test ∂θωΩr_by_sinθ ≈ -2ΔΩ
 
             @testset for m in [1, 4, 10], V_symmetric in [true, false]
@@ -692,10 +692,10 @@ end
 
                 @testset "VW" begin
                     O = (-I ⊗ (2*inv(ℓℓp1op))) * ( ΔΩ * ((DDr - 2*onebyr) ⊗ (cosθop * ℓℓp1op))
-                        - ∂r_ΔΩ * (I ⊗ (cosθop * ℓℓp1op))
+                        - dr_ΔΩ * (I ⊗ (cosθop * ℓℓp1op))
                         + ΔΩ * (DDr ⊗ sinθdθop)
                         - ΔΩ * (Multiplication(onebyr) ⊗ (sinθdθop * ℓℓp1op))
-                        - ∂r_ΔΩ * (I ⊗ (sinθdθop * ℓℓp1op/2))
+                        - dr_ΔΩ * (I ⊗ (sinθdθop * ℓℓp1op/2))
                         )  : space2d → space2d_D2;
                     A = real(kronmatrix(expand(O), nr, V_ℓinds, W_ℓinds));
                     A .*= Rsun / Wscaling
@@ -705,8 +705,8 @@ end
                 @testset "WV" begin
                     T1 = 4cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 2)
                     O = (-I ⊗ inv(ℓℓp1op)) *(
-                            ΔΩ * (ddr ⊗ T1) + ∂r_ΔΩ * (I ⊗ T1)
-                            + ∂r_ΔΩ * (I ⊗ (∇² * sinθdθop))
+                            ΔΩ * (ddr ⊗ T1) + dr_ΔΩ * (I ⊗ T1)
+                            + dr_ΔΩ * (I ⊗ (∇² * sinθdθop))
                             + ΔΩ * ((ddr + 2onebyr) ⊗ (∇² * sinθdθop))
                         ) : space2d → space2d_D4;
                     A = real(kronmatrix(expand(O), nr, W_ℓinds, V_ℓinds));
@@ -717,10 +717,10 @@ end
                 @testset "WW" begin
                     O = m * (
                         ΔΩ * (ddrDDr ⊗ (twobyℓℓp1 - 1))
-                        + ∂r_ΔΩ * (DDr ⊗ (twobyℓℓp1 - 1))
+                        + dr_ΔΩ * (DDr ⊗ (twobyℓℓp1 - 1))
                         - ΔΩ * (Multiplication(onebyr2) ⊗ ((twobyℓℓp1 - 1) * ℓℓp1op))
                         - ΔΩ * (Multiplication(2*onebyr*ηρ) ⊗ I)
-                        + ∂2r_ΔΩ + ∂r_ΔΩ * ((ddr + 2onebyr) ⊗ I)
+                        + d2r_ΔΩ + dr_ΔΩ * ((ddr + 2onebyr) ⊗ I)
                         ) : space2d → space2d_D4;
                     A = real(kronmatrix(expand(O), nr, W_ℓinds, W_ℓinds));
                     A .*= Weqglobalscaling * Rsun^2;

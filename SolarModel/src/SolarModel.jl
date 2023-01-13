@@ -48,6 +48,7 @@ export solar_structure_parameter_splines
 export read_solar_model
 export Tmul, Tplusinf, TplusInt
 export replaceemptywitheps
+export equatorial_rotation_angular_velocity_surface
 
 const Tmul = typeof(Multiplication(Fun()) * Derivative())
 const Tplusinf = typeof(Multiplication(Fun()) + Derivative())
@@ -576,9 +577,9 @@ end
 
 function solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts, θpts)
     ΔΩ_fullinterp = splΔΩ2D.(rpts, θpts')
-    ∂r_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 1, nuy = 0)
-    ∂2r_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 2, nuy = 0)
-    ΔΩ_fullinterp, ∂r_ΔΩ_fullinterp, ∂2r_ΔΩ_fullinterp
+    dr_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 1, nuy = 0)
+    d2r_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 2, nuy = 0)
+    ΔΩ_fullinterp, dr_ΔΩ_fullinterp, d2r_ΔΩ_fullinterp
 end
 function solar_rotation_profile_and_derivative_grid(; operators, kw...)
     @unpack rpts = operators
@@ -696,7 +697,7 @@ function solar_differential_rotation_profile_derivatives_grid(;
 
     if rotation_profile == :constant
         ΔΩ = fill(Ω0 * ΔΩ_frac, nr, nθ)
-        ∂r_ΔΩ, ∂2r_ΔΩ = (zeros(nr, nθ) for i in 1:2)
+        dr_ΔΩ, d2r_ΔΩ = (zeros(nr, nθ) for i in 1:2)
     elseif rotation_profile == :radial_equator
         ΔΩ_r_, ddrΔΩ_r_, d2dr2ΔΩ_r_ = radial_differential_rotation_profile_derivatives_grid(;
             operators, rotation_profile = :solar_equator, kw...)
@@ -704,18 +705,18 @@ function solar_differential_rotation_profile_derivatives_grid(;
             x .*= Ω0
         end
         ΔΩ = repeat(ΔΩ_r_, 1, nℓ)
-        ∂r_ΔΩ = repeat(ddrΔΩ_r_, 1, nℓ)
-        ∂2r_ΔΩ = repeat(d2dr2ΔΩ_r_, 1, nℓ)
+        dr_ΔΩ = repeat(ddrΔΩ_r_, 1, nℓ)
+        d2r_ΔΩ = repeat(d2dr2ΔΩ_r_, 1, nℓ)
     elseif rotation_profile == :latrad
-        ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ =
+        ΔΩ, dr_ΔΩ, d2r_ΔΩ =
             solar_rotation_profile_and_derivative_grid(; operators, kw...)
     else
         error("$rotation_profile is not a valid rotation model")
     end
-    for v in (ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ)
+    for v in (ΔΩ, dr_ΔΩ, d2r_ΔΩ)
         v ./= Ω0
     end
-    return ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ
+    return ΔΩ, dr_ΔΩ, d2r_ΔΩ
 end
 
 function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
@@ -725,7 +726,7 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     θpts = points(ChebyshevInterval(), nℓ);
 
     ΔΩ_terms = solar_differential_rotation_profile_derivatives_grid(; operators, kw...);
-    ΔΩ_rθ, ∂r_ΔΩ_rθ, ∂2r_ΔΩ_rθ = ΔΩ_terms;
+    ΔΩ_rθ, dr_ΔΩ_rθ, d2r_ΔΩ_rθ = ΔΩ_terms;
 
     space = radialspace ⊗ NormalizedLegendre()
 
@@ -737,16 +738,16 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
 
     ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space), s);
 
-    ∂r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂r_ΔΩ_rθ, s = s), space), s);
-    ∂z_ΔΩ = chop(Fun((Ir ⊗ cosθ) * ∂r_ΔΩ - (onebyr ⊗ sinθdθop) * ΔΩ,
-                radialspace ⊗ NormalizedLegendre()))::typeof(ΔΩ);
+    dr_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, dr_ΔΩ_rθ, s = s), space), s);
+    dz_ΔΩ_ = (Ir ⊗ cosθ) * dr_ΔΩ - (onebyr ⊗ sinθdθop) * ΔΩ;
+    dz_ΔΩ = chop(Fun(dz_ΔΩ_, space))::typeof(ΔΩ);
 
-    ∂2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, ∂2r_ΔΩ_rθ, s = s), space), s);
+    d2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, d2r_ΔΩ_rθ, s = s), space), s);
 
-    ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ, ∂z_ΔΩ =
-        map(replaceemptywitheps, (ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ, ∂z_ΔΩ))
+    ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ =
+        map(replaceemptywitheps, (ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ))
 
-    (; ΔΩ, ∂r_ΔΩ, ∂2r_ΔΩ, ∂z_ΔΩ)
+    (; ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ)
 end
 
 end # module SolarModel

@@ -11,7 +11,6 @@ import ApproxFun: ncoefficients, itransform
 using LaTeXStrings
 using LinearAlgebra
 using OrderedCollections
-using Polynomials
 using Printf
 using StructArrays
 using UnPack
@@ -384,12 +383,16 @@ for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge, :plot_high_fr
     end
 end
 
-function diffrot_rossby_ridge(Frsym, mr=8:15, ΔΩ_frac_low = 0.005, ΔΩ_frac_high = 0.04;
-        plot_spectrum = false, plot_lower_cutoff = plot_spectrum, plot_upper_cutoff = plot_spectrum)
+function diffrot_rossby_ridge(Fsym,
+        mr=min(8, maximum(axes(Fsym.lams,1))):maximum(axes(Fsym.lams,1));
+        ΔΩ_frac_low = -0.01, ΔΩ_frac_high = 0.05,
+        plot_spectrum = false, plot_lower_cutoff = plot_spectrum,
+        plot_upper_cutoff = plot_spectrum, kw...)
 
-    lams = Frsym.lams
+    @assert Fsym.kw[:V_symmetric] "only symmetric solutions supported"
+    lams = Fsym.lams
     lams = lams[mr]
-    @unpack Ω0 = Frsym.operators.constants
+    @unpack Ω0 = Fsym.operators.constants
     ν0 = freqnHzunit(Ω0)
     ν0_Sun = 453.1
     λRossby_high = RossbyWaveSpectrum.rossby_ridge.(mr, ΔΩ_frac = ΔΩ_frac_low)
@@ -402,7 +405,7 @@ function diffrot_rossby_ridge(Frsym, mr=8:15, ΔΩ_frac_low = 0.005, ΔΩ_frac_h
     end
     lams_realfilt_plot = lams_realfilt.*(-ν0)
     plot_spectrum && begin
-        f, ax = spectrum(Frsym, zorder=2)
+        f, ax = spectrum(Fsym, zorder=2)
         ax.plot(mr, lams_realfilt_plot, marker="o", ls="dotted",
             mec="black", mfc="None", ms=6, color="grey", zorder=1)
         plot_upper_cutoff && ax.plot(mr, λRossby_low.*(-ν0), ".--", color="orange", zorder=0)
@@ -414,11 +417,11 @@ function diffrot_rossby_ridge(Frsym, mr=8:15, ΔΩ_frac_low = 0.005, ΔΩ_frac_h
 
     f, ax = subplots(1,1)
     mr_Hanson = collect(keys(HansonGONGfit))
-    ν0_uniform_at_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr_Hanson).*(-ν0_Sun)
+    ν0_uniform_solar_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr_Hanson).*(-ν0_Sun)
     ν_H = [HansonGONGfit[m].ν for m in mr_Hanson]
     ν_H_val = value.(ν_H)
 
-    δν = ν_H_val .- ν0_uniform_at_tracking_rate
+    δν = ν_H_val .- ν0_uniform_solar_tracking_rate
     ax.errorbar(mr_Hanson, δν,
         yerr = errorbars_pyplot(ν_H),
         color= "brown", ls="None", capsize = 3, label="Hanson 2020 [GONG]",
@@ -429,28 +432,41 @@ function diffrot_rossby_ridge(Frsym, mr=8:15, ΔΩ_frac_low = 0.005, ΔΩ_frac_h
     mr_fit = mr_Hanson[fit_inds]
     fit_x = (m -> (m - 2/(m+1))).(mr_fit)
     yerr = max.(higherr.(ν_H), lowerr.(ν_H))[fit_inds]
-    linear_Ro_doppler_fit = fit(fit_x, δν[fit_inds], 1, weights=1 ./ yerr.^2)
-    ΔΩ_fit = Polynomials.derivative(linear_Ro_doppler_fit)(0)
-    ax.plot(mr_Hanson, linear_Ro_doppler_fit.(mr_Hanson), "--",
-        label=L"ν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_fit, sigdigits=2)) nHz]", zorder=1)
+    fit_y = δν[fit_inds]
+    ΔΩ_fit_data = sum(fit_y.*fit_x./yerr.^2)/sum(fit_x.^2 ./yerr.^2)
+    ax.plot(mr_fit, ΔΩ_fit_data.*fit_x, "--",
+        label=L"δν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_fit_data, sigdigits=2)) nHz]",
+        zorder=1, color="blue")
 
-    ν0_uniform_at_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr).*(-ν0)
+    ν0_uniform_model_tracking_rate = RossbyWaveSpectrum.rossby_ridge.(mr).*(-ν0)
 
-    δν = lams_realfilt_plot - ν0_uniform_at_tracking_rate
+    δν = lams_realfilt_plot - ν0_uniform_model_tracking_rate
     fit_x = (m -> (m - 2/(m+1))).(mr)
-    linear_Ro_doppler_fit = fit(fit_x, δν, 1)
-    ΔΩ_fit = Polynomials.derivative(linear_Ro_doppler_fit)(0)
+    fit_y = δν
+    ΔΩ_fit_model = sum(fit_y.*fit_x)/sum(fit_x.^2)
     ax.plot(mr, δν,
         "o", color="grey", ms=4, label="model, radial rotation", zorder=5)
-    ax.plot(mr, linear_Ro_doppler_fit.(mr), "--",
-        label=L"ν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_fit, digits=1)) nHz]", zorder=1)
-
+    ax.plot(mr, ΔΩ_fit_model .* fit_x, "--",
+        label=L"δν_\mathrm{Ro}"*" [Doppler ΔΩ/2π = $(round(ΔΩ_fit_model, digits=1)) nHz]",
+        zorder=1, color="orange")
+    low_m = 1:minimum(mr)
+    fit_x = (m -> (m - 2/(m+1))).(low_m)
+    ax.plot(low_m, ΔΩ_fit_model .* fit_x, ls="dotted",
+        zorder=1, color="orange")
 
     ax.axhline(0, ls="dotted", color="black")
-    ax.set_xlabel("m")
-    ax.set_ylabel(L"\nu + \frac{2\Omega_\mathrm{eq}\,/2\pi}{m+1}" * " [nHz]")
+    ax.set_xlabel("m", fontsize=12)
+    ax.set_ylabel(L"δ\nu" * " [nHz]", fontsize=12)
     ax.legend(loc="best")
+    f.set_size_inches(6,4)
     f.tight_layout()
+
+    if get(kw, :save, false)
+        rotation_profile = Fsym.kw[:rotation_profile]
+        filename = joinpath(plotdir, "freqdiff_diffrot_$rotation_profile.png")
+        @info "saving to $filename"
+        savefig(filename)
+    end
 end
 
 function piformatter(x, _)

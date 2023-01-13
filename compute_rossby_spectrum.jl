@@ -18,12 +18,11 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
 
     scale_eigenvectors = false
 
-    @info "operators"
     r_in_frac = 0.6
     r_out_frac = 0.985
 
     # Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity_surface(r_out_frac)
-    # trackingratescaling = 1 + (7.1e-9/(Ω0/2pi))
+    # trackingratescaling = 1 + (4e-9/(Ω0/2pi))
     trackingratescaling = 1.0
     Seqglobalscaling = 1e-7
     scalings = (; Seqglobalscaling, trackingratescaling)
