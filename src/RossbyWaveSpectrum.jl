@@ -54,17 +54,16 @@ end
 γ⁺ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ+1, m)
 γ⁻ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ, m) - β⁻ℓm(ℓ, m)
 
-function costheta_operator(nℓ, m)
-    dl = [α⁻ℓm(ℓ, m) for ℓ in m .+ (1:nℓ-1)]
-    d = zeros(nℓ)
-    SymTridiagonal(d, dl)'
+function costheta_operator_matrix(nℓ, m)
+    space = NormalizedPlm(m)
+    C = cosθ_Operator(space)
+    C[1:nℓ, 1:nℓ]
 end
 
-function sintheta_dtheta_operator(nℓ, m)
-    dl = [γ⁻ℓm(ℓ, m) for ℓ in m .+ (1:nℓ-1)]
-    d = zeros(nℓ)
-    du = [γ⁺ℓm(ℓ, m) for ℓ in m .+ (0:nℓ-2)]
-    Tridiagonal(dl, d, du)'
+function sintheta_dtheta_operator_matrix(nℓ, m)
+    space = NormalizedPlm(m)
+    S = sinθdθ_Operator(space)
+    S[1:nℓ, 1:nℓ]
 end
 
 function blockinds((m, nr), ℓ, ℓ′ = ℓ)
@@ -185,8 +184,8 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
 
     nCS = 2nℓ+1
     ℓs = range(m, length = nCS)
-    cosθ = OffsetArray(costheta_operator(nCS, m), ℓs, ℓs);
-    sinθdθ = OffsetArray(sintheta_dtheta_operator(nCS, m), ℓs, ℓs);
+    cosθ = OffsetArray(costheta_operator_matrix(nCS, m), ℓs, ℓs);
+    sinθdθ = OffsetArray(sintheta_dtheta_operator_matrix(nCS, m), ℓs, ℓs);
 
     T = zeros(nr, nr)
 
@@ -359,8 +358,8 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     nCS = 2nℓ+1
     ℓs = range(m, length = nCS)
 
-    cosθo = OffsetArray(costheta_operator(nCS, m), ℓs, ℓs)
-    sinθdθo = OffsetArray(sintheta_dtheta_operator(nCS, m), ℓs, ℓs)
+    cosθo = OffsetArray(costheta_operator_matrix(nCS, m), ℓs, ℓs)
+    sinθdθo = OffsetArray(sintheta_dtheta_operator_matrix(nCS, m), ℓs, ℓs)
     laplacian_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * parent(sinθdθo), ℓs, ℓs)
 
     DDr_minus_2byrMCU2 = @. DDrMCU2 - 2 * onebyrMCU2
@@ -470,9 +469,9 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
     nCS = 2nℓ+1
     ℓs = range(m, length = nCS)
-    cosθ = costheta_operator(nCS, m);
-    sinθdθ = sintheta_dtheta_operator(nCS, m);
-    cosθsinθdθ = (costheta_operator(nCS + 1, m) * sintheta_dtheta_operator(nCS + 1, m))[1:end-1, 1:end-1];
+    cosθ = costheta_operator_matrix(nCS, m);
+    sinθdθ = sintheta_dtheta_operator_matrix(nCS, m);
+    cosθsinθdθ = (costheta_operator_matrix(nCS + 1, m) * sintheta_dtheta_operator_matrix(nCS + 1, m))[1:end-1, 1:end-1];
 
     cosθo = OffsetArray(cosθ, ℓs, ℓs);
     sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs);

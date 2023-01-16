@@ -263,7 +263,7 @@ function radial_operators(operatorparams...)
 
     @unpack splines = solar_structure_parameter_splines(; r_in, r_out, _stratified);
 
-    @unpack sg, sηρ, ddrsηρ, d2dr2sηρ,
+    @unpack sg, sρ, sηρ, ddrsηρ, d2dr2sηρ,
         sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ, sηT = splines;
 
     ddr = ApproxFun.Derivative();
@@ -274,10 +274,13 @@ function radial_operators(operatorparams...)
     r2d2dr2 = (r2 * d2dr2)::Tmul;
 
     # density stratification
+    ρ = replaceemptywitheps(ApproxFun.chop(Fun(sρ, radialspace), 1e-3));
+    @checkncoeff ρ nr
+
     ηρ = replaceemptywitheps(ApproxFun.chop(Fun(sηρ, radialspace), 1e-3));
     @checkncoeff ηρ nr
 
-    ηT = replaceemptywitheps(ApproxFun.chop(Fun(sηT, radialspace), 1e-2));
+    ηT = replaceemptywitheps(ApproxFun.chop(Fun(sηT, radialspace), 1e-3));
     @checkncoeff ηT nr
 
     ηρT = ηρ + ηT
@@ -407,7 +410,7 @@ function radial_operators(operatorparams...)
     rad_terms = Dict{Symbol, typeof(r)}();
     @pack! rad_terms = onebyr, twobyr, ηρ, ηT,
         onebyr2, onebyr3, onebyr4,
-        ηρT, g, r, r2,
+        ηρT, ρ, g, r, r2,
         ηρ_by_r, ηρ_by_r2, ηρ2_by_r2, ddr_ηρbyr, ddr_ηρbyr2, ηρ_by_r3,
         ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddr_S0_by_cp_by_r2,
         ddrηρ_by_r, d2dr2ηρ_by_r
