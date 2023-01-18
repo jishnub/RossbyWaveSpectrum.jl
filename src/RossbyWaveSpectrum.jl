@@ -123,10 +123,21 @@ function mass_matrix(m; operators, kw...)
     return B
 end
 function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
-    @unpack nr, nℓ = operators.radial_params
-    @unpack nvariables = operators
-    @unpack ddrDDrMCU4, onebyr2MCU4, IU2 = operators.operator_matrices;
-    @unpack Weqglobalscaling = operators.scalings
+    @unpack nr, nℓ = operators.radial_params;
+    @unpack Weqglobalscaling = operators.scalings;
+
+    @unpack onebyr2 = operators.rad_terms;
+    @unpack ddrDDr = operators.diff_operators;
+    @unpack radialspace = operators;
+
+    latitudinal_space = NormalizedPlm(m);
+
+    Ir = ConstantOperator(I);
+    Iℓ = I : latitudinal_space;
+    space2d = radialspace ⊗ latitudinal_space;
+
+    ∇² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇²;
 
     B .= 0
 
@@ -134,24 +145,20 @@ function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
     WW = matrix_block(B, 2, 2)
     SS = matrix_block(B, 3, 3)
 
-    # V terms
-    V_ℓs = ℓrange(m, nℓ, V_symmetric)
+    V_ℓinds = ℓrange(1, nℓ, V_symmetric)
+    W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    # W, S terms
-    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
+    space2d_D2 = rangespace(Derivative(radialspace, 2)) ⊗ NormalizedPlm(m)
+    I2d_D2 = ((Ir ⊗ Iℓ) : space2d → space2d_D2) |> expand
 
-    @views for ℓind in eachindex(V_ℓs)
-        VV[Block(ℓind, ℓind)] .= IU2
-        SS[Block(ℓind, ℓind)] .= IU2
-    end
+    VV_ = real(kronmatrix(I2d_D2, nr, V_ℓinds, V_ℓinds));
+    VV .= VV_
+    SS .= VV_
 
-    T = similar(ddrDDrMCU4);
-    @views for (ℓind, ℓ) in enumerate(W_ℓs)
-        ℓℓp1 = ℓ * (ℓ+1)
-
-        @. T = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
-        WW[Block(ℓind, ℓind)] .= (Weqglobalscaling * Rsun^2) .* T
-    end
+    space2d_D4 = rangespace(Derivative(radialspace, 4)) ⊗ NormalizedPlm(m)
+    WWop = ((ddrDDr ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op) : space2d → space2d_D4) |> expand
+    WW_ = real(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds));
+    WW .= (Weqglobalscaling * Rsun^2) .* WW_
 
     return B
 end
@@ -167,9 +174,11 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
     @unpack nr, nℓ = operators.radial_params
     @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
 
-    @unpack ddrMCU4, DDrMCU2, DDr_minus_2byrMCU2, ddrDDrMCU4, κ_∇r2_plus_ddr_lnρT_ddrMCU2,
-        onebyrMCU2, onebyrMCU4, onebyr2MCU4, ηρ_by_rMCU4, ddr_S0_by_cp_by_r2MCU2,
-        κ_by_r2MCU2, gMCU4, ddr_minus_2byrMCU4, IU2 = operators.operator_matrices;
+    @unpack onebyr, onebyr2, r, r2, g, ηρ, ddr_S0_by_cp_by_r2 = operators.rad_terms;
+    @unpack ddr, d2dr2, DDr, ddrDDr, ∇r2_plus_ddr_lnρT_ddr = operators.diff_operators;
+    @unpack radialspace = operators;
+    @unpack constants = operators;
+    @unpack κ = constants;
 
     A.re .= 0
     A.im .= 0
@@ -184,59 +193,65 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
 
     nCS = 2nℓ+1
     ℓs = range(m, length = nCS)
-    cosθ = OffsetArray(costheta_operator_matrix(nCS, m), ℓs, ℓs);
-    sinθdθ = OffsetArray(sintheta_dtheta_operator_matrix(nCS, m), ℓs, ℓs);
 
-    T = zeros(nr, nr)
+    latitudinal_space = NormalizedPlm(m);
 
-    # V terms
-    V_ℓs = ℓrange(m, nℓ, V_symmetric)
-    # W, S terms
-    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
+    Ir = ConstantOperator(I);
+    Iℓ = I : latitudinal_space;
+    unsetspace2d = domainspace(Ir) ⊗ latitudinal_space;
+    space2d = radialspace ⊗ latitudinal_space;
+    I2d_unset = I : unsetspace2d;
 
-    @views for (ℓind, ℓ) in enumerate(V_ℓs)
-        ℓℓp1 = ℓ * (ℓ + 1)
+    sinθdθop = sinθdθ_Operator(latitudinal_space);
+    cosθop = cosθ_Operator(latitudinal_space);
+    ∇² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇²;
+    inv_ℓℓp1 = inv(ℓℓp1op)
+    two_by_ℓℓp1 = 2inv_ℓℓp1
+    twom_by_ℓℓp1 = m * two_by_ℓℓp1
 
-        twom_by_ℓℓp1 = 2m/ℓℓp1
+    scaled_curl_u_x_ω_r_tmp = OpVector(V = Ir ⊗ twom_by_ℓℓp1,
+        iW = (Ir ⊗ two_by_ℓℓp1) * (
+            (DDr - 2*onebyr) ⊗ (cosθop * ∇²)
+            - DDr ⊗ sinθdθop - onebyr ⊗ (sinθdθop * ∇²))
+        )
 
-        VV[Block(ℓind, ℓind)] .= twom_by_ℓℓp1 .* IU2
+    space2d_D2 = rangespace(Derivative(radialspace, 2)) ⊗ NormalizedPlm(m)
+    scaled_curl_u_x_ω_r = (scaled_curl_u_x_ω_r_tmp : space2d → space2d_D2) |> expand;
 
-        for ℓ′ in intersect(W_ℓs, ℓ-1:2:ℓ+1)
-            ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
+    V_ℓinds = ℓrange(1, nℓ, V_symmetric)
+    W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-            @. T = (-2/ℓℓp1) * (ℓ′ℓ′p1 * DDr_minus_2byrMCU2 * cosθ[ℓ, ℓ′] +
-                    (DDrMCU2 - ℓ′ℓ′p1 * onebyrMCU2) * sinθdθ[ℓ, ℓ′]) * Rsun / Wscaling
-            VW[Block(ℓind, ℓ′ind)] .= T
-        end
-    end
+    VV_ = real(kronmatrix(scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds));
+    VW_ = real(kronmatrix(scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds));
+    VV .+= VV_;
+    VW .+= (Rsun / Wscaling) .* VW_;
 
-    @views for (ℓind, ℓ) in enumerate(W_ℓs)
-        ℓℓp1 = ℓ * (ℓ + 1)
-        twom_by_ℓℓp1 = 2m/ℓℓp1
+    scaled_curl_curl_u_x_ω_r_tmp = OpVector(
+        V = (Ir ⊗ two_by_ℓℓp1) * (
+            (ddr - 2*onebyr) ⊗ (cosθop * ∇²)
+            - ddr ⊗ sinθdθop - onebyr ⊗ (sinθdθop * ∇²)),
+        iW = (Ir ⊗ twom_by_ℓℓp1) * (ddrDDr ⊗ Iℓ - ((1 + ηρ*r)*onebyr2) ⊗ ℓℓp1op),
+        )
+    space2d_D4 = rangespace(Derivative(radialspace, 4)) ⊗ NormalizedPlm(m)
+    scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
 
-        @. T = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
+    WV_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds));
+    WW_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds));
+    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* WV_;
+    WW .+= (Weqglobalscaling * Rsun^2) .* WW_;
 
-        WW[Block(ℓind, ℓind)] .= (Weqglobalscaling * twom_by_ℓℓp1 * Rsun^2) .*
-                                (T .- ℓℓp1 .* ηρ_by_rMCU4)
+    WSop = (-g/(Ω0^2 * Rsun) ⊗ Iℓ) : space2d → space2d_D4
+    WS_ = real(kronmatrix(WSop, nr, W_ℓinds, W_ℓinds));
+    WS .+= WS_ .* (Wscaling/Sscaling) * Weqglobalscaling
 
-        @. T = - gMCU4 / (Ω0^2 * Rsun)  * Wscaling/Sscaling
-        WS[Block(ℓind, ℓind)] .= Weqglobalscaling .* T
-        @. T = ℓℓp1 * ddr_S0_by_cp_by_r2MCU2 * (Rsun^3 * Sscaling/Wscaling)
-        SW[Block(ℓind, ℓind)] .= Seqglobalscaling .* T
-        @. T = -(κ_∇r2_plus_ddr_lnρT_ddrMCU2 - ℓℓp1 * κ_by_r2MCU2) * Rsun^2
-        SS[Block(ℓind, ℓind)] .= Seqglobalscaling .* T
+    SWop = (ddr_S0_by_cp_by_r2 ⊗ ℓℓp1op) : space2d → space2d_D2
+    SW_ = real(kronmatrix(SWop, nr, W_ℓinds, W_ℓinds));
+    SW .+= SW_ .* (Rsun^3 * Seqglobalscaling * Sscaling/Wscaling)
 
-        for ℓ′ in intersect(V_ℓs, ℓ-1:2:ℓ+1)
-            ℓ′ind = findfirst(isequal(ℓ′), V_ℓs)
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-
-            @. T = (-2/ℓℓp1) * (ℓ′ℓ′p1 * ddr_minus_2byrMCU4 * cosθ[ℓ, ℓ′] +
-                    (ddrMCU4 - ℓ′ℓ′p1 * onebyrMCU4) * sinθdθ[ℓ, ℓ′]) * Rsun * Wscaling
-
-            WV[Block(ℓind, ℓ′ind)] .= Weqglobalscaling .* T
-        end
-    end
+    SSop = ((-κ * (∇r2_plus_ddr_lnρT_ddr ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)) : space2d → space2d_D2) |> expand
+    SS_ = real(kronmatrix(SSop, nr, W_ℓinds, W_ℓinds));
+    SS .+= SS_ .* (Rsun^2 * Seqglobalscaling)
 
     viscosity_terms!(A, m; operators, V_symmetric, kw...)
 
@@ -576,6 +591,7 @@ struct OpVector{VT,WT}
 end
 OpVector(t::Tuple) = OpVector(t...)
 OpVector(t::NamedTuple{(:V, :iW)}) = OpVector(t.V, t.iW)
+OpVector(; V, iW) = OpVector(V, iW)
 Base.:(*)(O::Operator, B::OpVector) = OpVector(O * B.V, O * B.iW)
 Base.:(*)(O::Union{Function, Number}, B::OpVector) = OpVector(O * B.V, O * B.iW)
 Base.:(*)(A::OpVector, O::Operator) = OpVector(A.B * O, A.iW * O)
@@ -679,14 +695,14 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
     onebyr2op = Multiplication(onebyr2);
     ufr_W = onebyr2op ⊗ ℓℓp1op;
-    ufr = OpVector((; V = 0 * I2d_unset, iW = -im * ufr_W));
-    ωfr = OpVector((; V = ufr_W, iW = 0 * I2d_unset));
+    ufr = OpVector(V = 0 * I2d_unset, iW = -im * ufr_W);
+    ωfr = OpVector(V = ufr_W, iW = 0 * I2d_unset);
 
-    rsinθufθ = OpVector((; V = im * m * I2d_unset, iW = -im * DDr ⊗ sinθdθop));
-    rsinθωfθ = OpVector((; V = ddr ⊗ sinθdθop, iW = m * (onebyr2op ⊗ ℓℓp1op - ddrDDr ⊗ Iℓ)));
+    rsinθufθ = OpVector(V = im * m * I2d_unset, iW = -im * DDr ⊗ sinθdθop);
+    rsinθωfθ = OpVector(V = ddr ⊗ sinθdθop, iW = m * (onebyr2op ⊗ ℓℓp1op - ddrDDr ⊗ Iℓ));
 
-    rsinθufϕ = OpVector((; V = -Ir ⊗ sinθdθop, iW = (m * DDr) ⊗ Iℓ));
-    rsinθωfϕ = OpVector((; V = im * m * ddr ⊗ Iℓ, iW = -im * (ddrDDr ⊗ Iℓ - onebyr2op ⊗ ℓℓp1op)));
+    rsinθufϕ = OpVector(V = -Ir ⊗ sinθdθop, iW = (m * DDr) ⊗ Iℓ);
+    rsinθωfϕ = OpVector(V = im * m * ddr ⊗ Iℓ, iW = -im * (ddrDDr ⊗ Iℓ - onebyr2op ⊗ ℓℓp1op));
 
     curl_u_x_ω_r = (ωΩr * (DDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (Ir ⊗ sinθdθop) - ∂rωΩr) * ufr +
         ((-onebyr2 ⊗ Iℓ) * ∂θωΩr_by_sinθ) * rsinθufθ - im * m * ΔΩ * ωfr;
@@ -704,7 +720,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
     # we compute the derivative of rdiv_ucrossω_h analytically
     # this lets us use the more accurate representations of ddrDDr instead of using ddr * DDr
-    ddr_rdiv_ucrossω_h = OpVector((;
+    ddr_rdiv_ucrossω_h = OpVector(
         V = ((2ωΩr + ΔΩ * (Ir ⊗ sinθdθop)) * (ddr ⊗ ℓℓp1op) - ∂θωΩr_by_sinθ * (ddr ⊗ sinθdθop)
             + (2∂rωΩr + dr_ΔΩ * (Ir ⊗ sinθdθop)) * (Ir ⊗ ℓℓp1op) - ∂r∂θωΩr_by_sinθ * (Ir ⊗ sinθdθop)
             ),
@@ -712,7 +728,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
             (∂θωΩr_by_sinθ * (ddrDDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (ddr ⊗ ℓℓp1op)
             + ∂r∂θωΩr_by_sinθ * (DDr ⊗ Iℓ) + ∂rωΩθ_by_rsinθ * (Ir ⊗ ℓℓp1op)
             )
-    ));
+    );
 
     uf_x_ωΩ_r = -ωΩθ_by_rsinθ * rsinθufϕ;
     uΩ_x_ωf_r = -ΔΩ * rsinθωfθ;

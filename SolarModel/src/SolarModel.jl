@@ -298,7 +298,7 @@ function radial_operators(operatorparams...)
     ddr_plus_2byr = (ddr + twobyr)::Tplusinf
 
     # ηρ_by_r = onebyr * ηρ
-    ηρ_by_r = chop(Fun(sηρ_by_r, radialspace), 1e-2);
+    ηρ_by_r = ηρ * onebyr;
     @checkncoeff ηρ_by_r nr
 
     ηρ_by_r2 = ηρ * onebyr2
@@ -356,7 +356,7 @@ function radial_operators(operatorparams...)
     ddr_S0_by_cp = chop(Fun(x -> γ / cp * superadiabaticity(x) * ηρ(x), radialspace), 1e-3);
     @checkncoeff ddr_S0_by_cp nr
 
-    ddr_S0_by_cp_by_r2 = chop(onebyr2 * ddr_S0_by_cp, 1e-4)
+    ddr_S0_by_cp_by_r2 = onebyr2 * ddr_S0_by_cp
 
     # matrix representations
 
@@ -417,7 +417,7 @@ function radial_operators(operatorparams...)
         ddrηρ_by_r, d2dr2ηρ_by_r
 
     diff_operators = (; DDr, DDr_minus_2byr, rDDr, rddr, ddrDDr, d2dr2DDr,
-        ddr, d2dr2, d3dr3, d4dr4, r2d2dr2, ddr_plus_2byr)
+        ddr, d2dr2, d3dr3, d4dr4, r2d2dr2, ddr_plus_2byr, ∇r2_plus_ddr_lnρT_ddr)
 
     operator_matrices = Dict{Symbol, typeof(IU2)}();
     @pack! operator_matrices = DDrMCU2,
