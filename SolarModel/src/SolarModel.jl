@@ -49,6 +49,7 @@ export read_solar_model
 export Tmul, Tplusinf, TplusInt
 export replaceemptywitheps
 export equatorial_rotation_angular_velocity_surface
+export listncoefficients
 
 const Tmul = typeof(Multiplication(Fun()) * Derivative())
 const Tplusinf = typeof(Multiplication(Fun()) + Derivative())
@@ -454,7 +455,7 @@ function radial_operators(operatorparams...)
     OperatorWrap(op)
 end
 
-function listncoeff(d)
+function listncoefficients(d)
     sort([k=>ncoefficients(v) for (k,v) in Dict(pairs(d))], by=last, rev=true)
 end
 

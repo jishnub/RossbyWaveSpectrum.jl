@@ -1099,7 +1099,7 @@ module Filters
 end
 using .Filters
 
-function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any}, filterflags)
+function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any}, filterflags = DefaultFilter)
 
     @unpack BC = constraints
     @unpack nℓ = operators.radial_params;

@@ -110,7 +110,7 @@ uncertainty(m::Measurement) = (lowerr, higherr)
 lowerr(m::Measurement) = m.lowerr
 higherr(m::Measurement) = m.higherr
 
-const ProxaufFit = [
+const ProxaufFit = OrderedDict(
     # m => (nu, γ)
     3 => (; ν = Measurement(-230, 5, 4), γ = Measurement(40, 13, 11)),
     4 => (; ν = Measurement(-195, 3), γ = Measurement(16, 7, 5)),
@@ -125,7 +125,7 @@ const ProxaufFit = [
     13 => (; ν = Measurement(-45, 6), γ = Measurement(76, 22, 20)),
     14 => (; ν = Measurement(-47, 5), γ = Measurement(40, 13, 11)),
     15 => (; ν = Measurement(-39, 5, 4), γ = Measurement(41, 12, 11)),
-]
+)
 
 const HansonHFFit = OrderedDict(
     8 => (; ν = Measurement(-278.9, 17.7, 16.0), γ = Measurement(81.6, 76.6, 54.7)),
@@ -151,6 +151,22 @@ const HansonGONGfit = OrderedDict(
     13 => (; ν = Measurement(-54.9, 4.8), γ = Measurement(46.7, 12.6, 9.9)),
     14 => (; ν = Measurement(-51.6, 4.9), γ = Measurement(38.1, 13.8, 10.1)),
     15 => (; ν = Measurement(-43.0, 4.5), γ = Measurement(44.5, 11.8, 9.3)),
+)
+
+const Liang2019MDIHMI = OrderedDict(
+    3 => (; ν = Measurement(-253, 2), γ = Measurement(7, 4, 3)),
+    4 => (; ν = Measurement(-198, 5), γ = Measurement(34, 15, 13)),
+    5 => (; ν = Measurement(-156, 2), γ = Measurement(8, 5, 4)),
+    6 => (; ν = Measurement(-135, 4, 5), γ = Measurement(20, 12, 11)),
+    7 => (; ν = Measurement(-110, 4), γ = Measurement(40, 12, 10)),
+    8 => (; ν = Measurement(-91, 3), γ = Measurement(19, 7, 6)),
+    9 => (; ν = Measurement(-82, 5), γ = Measurement(33, 13, 12)),
+    10 => (; ν = Measurement(-60, 5, 6), γ = Measurement(54, 18, 16)),
+    11 => (; ν = Measurement(-48, 7), γ = Measurement(84, 27, 24)),
+    12 => (; ν = Measurement(-36, 8), γ = Measurement(75, 31, 28)),
+    13 => (; ν = Measurement(-26, 7), γ = Measurement(82, 29, 25)),
+    14 => (; ν = Measurement(-35, 5), γ = Measurement(27, 13, 12)),
+    15 => (; ν = Measurement(-22, 2, 3), γ = Measurement(11, 7, 5)),
 )
 
 function errorbars_pyplot(mmnt::AbstractVector{Measurement})
@@ -192,13 +208,16 @@ function spectrum(lam::AbstractArray, mr;
     vmin, vmax = extrema(lamimcat)
     vmin = min(0, vmin)
     mcat = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr, lam)])
-    s = ax.scatter(mcat, -lamcat; c = lamimcat, ScatterParams...,
-        vmax = vmax, vmin = vmin, zorder=get(kw, :zorder, 1))
-    divider = axes_grid1.make_axes_locatable(ax)
-    cax = divider.append_axes("right", size = "3%", pad = 0.05)
-    cb = colorbar(mappable = s, cax = cax)
-    cb.ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
-    cb.ax.set_title(L"\Im[\nu]" * "[nHz]")
+    s = ax.scatter(mcat, -lamcat; c = get(kw, :fillmarker, true) ? lamimcat : "white", ScatterParams...,
+        vmax = vmax, vmin = vmin, zorder=get(kw, :zorder, 1), s=get(kw, :s, 30))
+
+    if get(kw, :fillmarker, true)
+        divider = axes_grid1.make_axes_locatable(ax)
+        cax = divider.append_axes("right", size = "3%", pad = 0.05)
+        cb = colorbar(mappable = s, cax = cax)
+        cb.ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
+        cb.ax.set_title(L"\Im[\nu]" * "[nHz]")
+    end
 
     if rossbyridges
         plot_rossby_ridges(mr; νnHzunit, ax, kw...)
@@ -293,11 +312,11 @@ function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), k
             mec="black", ms=5, label="this work", zorder = 4)
 
     # observations
-    m_P = first.(ProxaufFit)
-    γ_P = last.(last.(ProxaufFit))
-    γ_P_val = value.(γ_P)
-    ax.errorbar(m_P, γ_P_val,
-        yerr = errorbars_pyplot(γ_P),
+    m_Proxauf = collect(keys(ProxaufFit))
+    γ_Proxauf = [ProxaufFit[m].γ for m in m_Proxauf]
+    γ_Proxauf_val = value.(γ_Proxauf)
+    ax.errorbar(m_Proxauf, γ_Proxauf_val,
+        yerr = errorbars_pyplot(γ_Proxauf),
         color= "grey", ls="None", capsize = 3, label="P20", zorder = 1, marker = ".", ms = 5, mfc = "k")
     ax.set_ylabel("linewidth [nHz]", fontsize = 12)
     ax.set_xlabel("m", fontsize = 12)
@@ -390,18 +409,35 @@ function diffrot_rossby_ridge(Fsym,
         plot_upper_cutoff = plot_spectrum, kw...)
 
     @assert Fsym.kw[:V_symmetric] "only symmetric solutions supported"
-    lams = Fsym.lams
-    lams = lams[mr]
-    @unpack Ω0 = Fsym.operators.constants
+    (; lams, vs) = Fsym;
+    lams = lams[mr];
+    vs = vs[mr];
+    @unpack operators = Fsym;
+    @unpack rpts = operators;
+    @unpack Ω0 = operators.constants;
     ν0 = freqnHzunit(Ω0)
     ν0_Sun = 453.1
     λRossby_high = RossbyWaveSpectrum.rossby_ridge.(mr, ΔΩ_frac = ΔΩ_frac_low)
     λRossby_low = RossbyWaveSpectrum.rossby_ridge.(mr, ΔΩ_frac = ΔΩ_frac_high)
-    lams_realfilt = map(zip(mr, lams, λRossby_low, λRossby_high)) do (m, lam, λRl, λRh)
-        lams_realfilt = filter(lam) do λ
-            λRl < real(λ) < λRh
+    lams_realfilt = map(zip(mr, lams, vs)) do (m, lam_m, vs_m)
+        # select the mode that looks like l == m
+        lam_m, _ = argmin(zip(lam_m, eachcol(vs_m))) do (lam, v)
+            Vr,Wr = RossbyPlots.compute_eigenfunction_spectra(v, m; operators, V_symmetric = true);
+            (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators);
+            Vr_realspace = real(VWSinv.V);
+            r_ind_peak = RossbyWaveSpectrum.peakindabs1(Vr_realspace)
+            peak_latprofile = @view Vr_realspace[r_ind_peak, :]
+            _, θind = findmax(abs, peak_latprofile)
+            t1 = abs(pi/2 - θ[θind])
+            minval, maxval = extrema(Vr_realspace);
+            maxsign = abs(minval) > abs(maxval) ? -1 : 1
+            maxvalabs = maximum(abs, (minval,maxval))
+            Vr_realspace_signed = Vr_realspace .* maxsign;
+            target = normalize((rpts .* sin.(θ)').^m, Inf) .* maxvalabs;
+            t2 = sum(abs2, Vr_realspace_signed .- target)
+            t1 * t2
         end
-        real.(lams_realfilt)[argmin(abs.(imag.(lams_realfilt)))]
+        real(lam_m)
     end
     lams_realfilt_plot = lams_realfilt.*(-ν0)
     plot_spectrum && begin
@@ -467,6 +503,36 @@ function diffrot_rossby_ridge(Fsym,
         @info "saving to $filename"
         savefig(filename)
     end
+end
+
+function spectrum_with_datadispersion(Fsym)
+    @assert Fsym.kw[:V_symmetric] "only symmetric solutions supported"
+    f, ax = spectrum(Fsym, zorder=3, fillmarker = false)
+
+    mr_Hanson = collect(keys(HansonGONGfit))
+    ν_H = [HansonGONGfit[m].ν for m in mr_Hanson]
+
+    ax.errorbar(mr_Hanson, value.(ν_H),
+        yerr = errorbars_pyplot(ν_H),
+        color= "brown", ls="None", capsize = 3, label="Hanson 2020 [GONG]",
+        zorder = 2, marker = ".", ms = 5, mfc = "k")
+
+    mr_Liang = collect(keys(Liang2019MDIHMI))
+    ν_H = [Liang2019MDIHMI[m].ν for m in mr_Liang]
+    ax.errorbar(mr_Liang, value.(ν_H),
+        yerr = errorbars_pyplot(ν_H),
+        color= "green", ls="None", capsize = 3, label="Liang 2019 [MDI & HMI]",
+        zorder = 2, marker = ".", ms = 5, mfc = "k")
+
+    mr_Proxauf = collect(keys(ProxaufFit))
+    ν_H = [ProxaufFit[m].ν for m in mr_Proxauf]
+    ax.errorbar(mr_Proxauf, value.(ν_H),
+        yerr = errorbars_pyplot(ν_H),
+        color= "blue", ls="None", capsize = 3, label="Proxauf 2020 [HMI]",
+        zorder = 2, marker = ".", ms = 5, mfc = "k")
+
+    ax.legend()
+    f.tight_layout()
 end
 
 function piformatter(x, _)
@@ -875,7 +941,7 @@ function eigenfunctions_polar(fsym::FilteredEigen, fasym::FilteredEigen, m; kw..
     f.tight_layout()
 end
 
-function eigenfunction_spectrum(v, m; operators, V_symmetric, kw...)
+function compute_eigenfunction_spectra(v, m; operators, V_symmetric)
     @unpack nr, nℓ = operators.radial_params
     nvariables = length(v) ÷ (nr*nℓ)
     Vℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
@@ -896,24 +962,25 @@ function eigenfunction_spectrum(v, m; operators, V_symmetric, kw...)
     Wif = zeros(size(Wi,1), m:maximum(Wℓ))
     @views @. Wif[:, Wℓ] = Wi
 
-    terms = [Vrf, Wrf, Vif, Wif]
+    Sr = reshape(@view(v.re[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
+    Srf = zeros(size(Sr,1), m:maximum(Sℓ))
+    @views @. Srf[:, Sℓ] = Sr
 
-    if nvariables == 3
-        Sr = reshape(@view(v.re[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
-        Srf = zeros(size(Sr,1), m:maximum(Sℓ))
-        @views @. Srf[:, Sℓ] = Sr
+    Si = reshape(@view(v.im[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
+    Sif = zeros(size(Si,1), m:maximum(Sℓ))
+    @views @. Sif[:, Sℓ] = Si
 
-        Si = reshape(@view(v.im[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
-        Sif = zeros(size(Si,1), m:maximum(Sℓ))
-        @views @. Sif[:, Sℓ] = Si
+    map(parent, [Vrf, Wrf, Srf, Vif, Wif, Sif])
+end
 
-        terms = [Vrf, Wrf, Srf, Vif, Wif, Sif]
-    end
+function eigenfunction_spectrum(v, m; operators, V_symmetric, kw...)
+    @unpack nr = operators.radial_params
+    terms = compute_eigenfunction_spectra(v, m; operators, V_symmetric)
 
     x = axes.(terms, 2)
-    titles = nvariables == 3 ? ["Vr", "Wr", "Sr", "Vi", "Wi", "Si"] : ["Vr", "Wr", "Vi", "Wi"]
+    titles = ["Vr", "Wr", "Sr", "Vi", "Wi", "Si"]
 
-    compare_terms(parent.(terms); nrows = 2, titles,
+    compare_terms(terms; nrows = 2, titles,
         xlabel = "spharm ℓ", ylabel = "chebyshev order", x, y = 0:nr-1)
 end
 
