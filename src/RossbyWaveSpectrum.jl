@@ -198,9 +198,7 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
 
     Ir = ConstantOperator(I);
     Iℓ = I : latitudinal_space;
-    unsetspace2d = domainspace(Ir) ⊗ latitudinal_space;
     space2d = radialspace ⊗ latitudinal_space;
-    I2d_unset = I : unsetspace2d;
 
     sinθdθop = sinθdθ_Operator(latitudinal_space);
     cosθop = cosθ_Operator(latitudinal_space);
@@ -260,13 +258,8 @@ end
 
 function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric = true, kw...)
     @unpack nr, nℓ = operators.radial_params;
-    @unpack ddrMCU4, d2dr2MCU2, d3dr3MCU4, onebyr2MCU2,
-        ηρ_ddr_minus_2byrMCU2, onebyr2_d2dr2MCU4,
-        onebyr3_ddrMCU4, onebyr4_chebyMCU4, d4dr4MCU4, ηρ2_by_r2MCU4,
-        ηρ_by_r3MCU4 = operators.operator_matrices;
-    @unpack ddr, d2dr2, d3dr3, DDr, ddrDDr, d2dr2DDr, d2dr2_ηρbyr_op = operators.diff_operators;
-    @unpack ddr_ηρbyr, ηρ, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddrηρ_by_r, d2dr2ηρ_by_r, ηρ_by_r,
-        ηρ_by_r2, ddr_ηρbyr2, onebyr2, onebyr, r, ηρ2_by_r2 = operators.rad_terms;
+    @unpack ddr, d2dr2, d3dr3, DDr, d2dr2_ηρbyr_op = operators.diff_operators;
+    @unpack ηρ, ηρ_by_r, ηρ_by_r2, onebyr2, onebyr, r, ηρ2_by_r2 = operators.rad_terms;
     @unpack radialspace = operators;
     @unpack ν = operators.constants;
     @unpack matCU4, matCU2 = operators;
@@ -274,27 +267,6 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
 
     VVim = matrix_block(A.im, 1, 1)
     WWim = matrix_block(A.im, 2, 2)
-
-
-    # T1_1 terms
-    d3dr3ηρMCU4 = matCU4(d3dr3_ηρ);
-    ηρ_d3dr3MCU4 = matCU4(ηρ * d3dr3);
-    d2dr2ηρ_by_rMCU4 = matCU4(d2dr2ηρ_by_r);
-    threeddrηρ_min_4ηρbyr_d2dr2MCU4 = matCU4((3*ddr_ηρ - 4*ηρ_by_r)*d2dr2);
-    threed2dr2ηρ_min_8ddrηρ_by_r_plus_ηρ_by_r2_ddrMCU4 = matCU4((3*d2dr2_ηρ - 8*ddrηρ_by_r + 8*ηρ_by_r2)*ddr);
-    ddrηρ_by_r2MCU4 = matCU4(ddr_ηρ * onebyr2);
-    ηρ_by_r2_ddrMCU4 = matCU4(ηρ_by_r2 * ddr);
-
-    # T1_2 terms
-    ηρ_by_r_d2dr2MCU4 = matCU4(ηρ_by_r * d2dr2);
-    ddrηρ_by_r_ddr_min_ηρ_by_r2_ddrMCU4 = matCU4(ddrηρ_by_r * ddr) .- matCU4(ηρ_by_r2 * ddr);
-    d2dr2ηρ_by_r_min_2ddrηρ_by_r2MCU4 = matCU4(d2dr2_ηρ * onebyr) .- 2 .* matCU4(ddr_ηρ * onebyr2);
-
-    # T3_1 terms
-    ddrηρbyr2MCU4 = matCU4(ddr_ηρbyr2);
-    ddrηρ_min_2ηρbyr_ddrDDrMCU4 = matCU4((ddr_ηρ - 2ηρ_by_r)*ddrDDr);
-    ηρd2dr2DDrMCU4 = matCU4(ηρ * d2dr2DDr);
-    ddr_ηρbyr_DDrMCU4 = matCU4(ddr_ηρbyr * DDr);
 
     latitudinal_space = NormalizedPlm(m);
 
@@ -304,9 +276,6 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     ∇² = HorizontalLaplacian(latitudinal_space);
     ℓℓp1op = -∇²;
 
-    # V terms
-    V_ℓs = ℓrange(m, nℓ, V_symmetric)
-
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
@@ -314,9 +283,6 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     VVop_ = -ν * ((d2dr2 + ηρ * (ddr - 2onebyr)) ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)
     VVop = (VVop_ : space2d → space2d_D2) |> expand
     VVim .= real(kronmatrix(VVop, nr, V_ℓinds, V_ℓinds)) * Rsun^2
-
-    # W, S terms
-    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
 
     WWop_ = -ν * (
         ((ddr - 2onebyr) ⊗ Iℓ) * ((r * d2dr2_ηρbyr_op) ⊗ Iℓ - ηρ_by_r2 ⊗ ℓℓp1op)
@@ -330,11 +296,6 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     WWim .= real(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds)) .* (Rsun^4 * Weqglobalscaling)
 
     return A
-end
-
-function laplacian_operator(nℓ, m)
-    ℓs = range(m, length = nℓ)
-    Diagonal(@. -ℓs * (ℓs + 1))
 end
 
 function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
