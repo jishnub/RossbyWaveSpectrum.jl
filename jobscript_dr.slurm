@@ -23,8 +23,8 @@ using RossbyWaveSpectrum
 V_symmetric = !parse(Bool, ENV["SLURM_PROCID"]);
 r_out_frac = 0.995;
 Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity_surface(r_out_frac);
-trackingratescaling = 1 + (2e-9/(Ω0/2pi));
+trackingratescaling = 1 + (2.3e-9/(Ω0/2pi));
 #= trackingratescaling = 1; =#
 ComputeRossbySpectrum.main(V_symmetric;
-nr=50, nℓ=30, mrange=1:14, diffrot=true, rotation_profile=:solar_latrad,
+nr=40, nℓ=20, mrange=1:14, diffrot=true, rotation_profile=:solar_latrad,
 r_out_frac, trackingratescaling)'
