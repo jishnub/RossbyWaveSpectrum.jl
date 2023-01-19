@@ -366,50 +366,11 @@ function radial_operators(operatorparams...)
 
     ddr_S0_by_cp_by_r2 = onebyr2 * ddr_S0_by_cp
 
-    # matrix representations
-
-    spaceconversionCU2 = radialspace => radialspace_D2
-    matCU2 = x -> operatormatrix(x, nr, spaceconversionCU2)
-    spaceconversionCU4 = radialspace => radialspace_D4
-    matCU4 = x -> operatormatrix(x, nr, spaceconversionCU4)
-
-    # matrix forms of operators
-    onebyrMCU2 = matCU2(onebyr)
-    onebyrMCU4 = matCU4(onebyr)
-    onebyr2MCU2 = matCU2(onebyr2)
-    onebyr2MCU4 = matCU4(onebyr2);
-
-    ddrMCU4 = matCU4(ddr)
-    rMCU4 = matCU4(r)
-    ddr_minus_2byrMCU4 = @. ddrMCU4 - 2*onebyrMCU4
-    d2dr2MCU2 = matCU2(d2dr2)
-    d2dr2MCU4 = matCU4(d2dr2)
-    d3dr3MCU4 = matCU4(d3dr3)
-    d4dr4MCU4 = matCU4(d4dr4)
-    DDrMCU2 = matCU2(DDr)
-    DDr_minus_2byrMCU2 = matCU2(DDr_minus_2byr)
-    ddrDDrMCU4 = matCU4(ddrDDr);
-    gMCU4 = matCU4(g)
-
     # uniform rotation terms
-    onebyr2_IplusrηρMCU4 = matCU4(onebyr2 + ηρ * onebyr);
     ∇r2_plus_ddr_lnρT_ddr = (d2dr2 + (twobyr * ddr)::Tmul + (ηρT * ddr)::Tmul)::Tplusinf;
-    κ_∇r2_plus_ddr_lnρT_ddrMCU2 = lmul!(κ, matCU2(∇r2_plus_ddr_lnρT_ddr));
-    κ_by_r2MCU2 = lmul!(κ, matCU2(onebyr2));
-    ddr_S0_by_cp_by_r2MCU2 = matCU2(ddr_S0_by_cp_by_r2);
 
     # terms for viscosity
     ddr_minus_2byr = (ddr - twobyr)::Tplusinf;
-    ηρ_ddr_minus_2byrMCU2 = matCU2((ηρ * ddr_minus_2byr)::Tmul);
-    onebyr2_d2dr2MCU4 = matCU4((onebyr2 * d2dr2)::Tmul);
-    onebyr3_ddrMCU4 = matCU4((onebyr3 * ddr)::Tmul);
-    onebyr4_chebyMCU4 = matCU4(onebyr4);
-
-    ηρ_by_rMCU4 = matCU4(ηρ_by_r)
-    ηρ2_by_r2MCU4 = matCU4(ηρ2_by_r2)
-    ηρ_by_r3MCU4 = matCU4(ηρ * onebyr3)
-
-    IU2 = matCU2(I);
 
     scalings = Dict{Symbol, Float64}()
     @pack! scalings = Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling
@@ -428,22 +389,6 @@ function radial_operators(operatorparams...)
         ddr, d2dr2, d3dr3, d4dr4, r2d2dr2, ddr_plus_2byr, ∇r2_plus_ddr_lnρT_ddr,
         d2dr2_ηρbyr_op)
 
-    operator_matrices = Dict{Symbol, typeof(IU2)}();
-    @pack! operator_matrices = DDrMCU2,
-        ddrMCU4, d2dr2MCU2, d2dr2MCU4,
-        ddrDDrMCU4,
-        ddr_minus_2byrMCU4, DDr_minus_2byrMCU2,
-        d3dr3MCU4, d4dr4MCU4,
-        # uniform rotation terms
-        κ_∇r2_plus_ddr_lnρT_ddrMCU2,
-        # viscosity terms
-        ηρ_ddr_minus_2byrMCU2, onebyr2_d2dr2MCU4, onebyr3_ddrMCU4,
-        onebyrMCU2, onebyrMCU4, onebyr2MCU2,
-        onebyr2MCU4, ddr_S0_by_cp_by_r2MCU2, κ_by_r2MCU2,
-        gMCU4, ηρ_by_rMCU4, ηρ2_by_r2MCU4, ηρ_by_r3MCU4,
-        onebyr2_IplusrηρMCU4, onebyr4_chebyMCU4,
-        rMCU4, IU2
-
     radialspaces = (; radialspace, radialspace_D2, radialspace_D4)
 
     op = (;
@@ -457,9 +402,6 @@ function radial_operators(operatorparams...)
         diff_operators,
         rpts,
         radial_params,
-        operator_matrices,
-        matCU2,
-        matCU4,
         operatorparams,
     )
 

@@ -265,7 +265,6 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     @unpack radialspaces = operators;
     @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
     @unpack ν = operators.constants;
-    @unpack matCU4, matCU2 = operators;
     @unpack Weqglobalscaling = operators.scalings;
 
     VVim = matrix_block(A.im, 1, 1)
@@ -305,10 +304,10 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, ΔΩ_frac = 0.01, V_symmetric = true, kw...)
 
     @unpack nr, nℓ = operators.radial_params;
-    @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
+    @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
 
-    @unpack ddr, DDr, ddrDDr = operators.diff_operators
-    @unpack onebyr, onebyr2, ηρ_by_r = operators.rad_terms
+    @unpack ddr, DDr, ddrDDr = operators.diff_operators;
+    @unpack onebyr, onebyr2, ηρ_by_r = operators.rad_terms;
 
     @unpack radialspaces = operators;
     @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
@@ -318,9 +317,6 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     WV = matrix_block(M.re, 2, 1)
     WW = matrix_block(M.re, 2, 2)
     SS = matrix_block(M.re, 3, 3)
-
-    nCS = 2nℓ+1
-    ℓs = range(m, length = nCS)
 
     latitudinal_space = NormalizedPlm(m);
 
@@ -377,12 +373,14 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
                             operators, rotation_profile, ΔΩ_frac),
         V_symmetric = true, kw...)
 
-    @unpack nr, nℓ = operators.radial_params
+    @unpack nr, nℓ = operators.radial_params;
     @unpack DDr, ddr, ddrDDr = operators.diff_operators;
-    @unpack ddrMCU4 = operators.operator_matrices;
     @unpack onebyr, g, ηρ_by_r, onebyr2, twobyr = operators.rad_terms;
-    @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
-    @unpack matCU4, matCU2 = operators;
+    @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
+    @unpack Ω0 = operators.constants;
+
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
 
     VV = matrix_block(M.re, 1, 1);
     VW = matrix_block(M.re, 1, 2);
@@ -392,121 +390,77 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     SW = matrix_block(M.re, 3, 2);
     SS = matrix_block(M.re, 3, 3);
 
-    # @unpack Ω0 = operators.constants;
     @unpack r_out = operators.radial_params;
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv;
-    Ω0 = ΔΩ(r_out)
 
-    ΔΩMCU2 = matCU2(ΔΩ);
-    ddrΔΩMCU2 = matCU2(ddrΔΩ);
-    d2dr2ΔΩMCU4 = matCU4(d2dr2ΔΩ);
+    latitudinal_space = NormalizedPlm(m);
 
-    ddrΔΩ_over_g = ddrΔΩ / g;
-    ddrΔΩ_over_gMCU2 = matCU2(ddrΔΩ_over_g);
-    ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr)::Tmul;
-    ddrΔΩ_over_g_DDrMCU2 = matCU2(ddrΔΩ_over_g_DDr);
-    ddrΔΩ_plus_ΔΩddr = (ddrΔΩ + (ΔΩ * ddr)::Tmul)::Tplusinf;
+    Ir = ConstantOperator(I);
+    Iℓ = I : latitudinal_space;
+    space2d = radialspace ⊗ latitudinal_space;
+    sinθdθop = sinθdθ_Operator(latitudinal_space);
+    cosθop = cosθ_Operator(latitudinal_space);
+    ∇² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇²;
+    inv_ℓℓp1 = inv(ℓℓp1op)
+    two_by_ℓℓp1 = 2inv_ℓℓp1
+    two_by_ℓℓp1_min_1 = two_by_ℓℓp1 - 1
 
-    nCS = 2nℓ+1
-    ℓs = range(m, length = nCS)
-    cosθ = costheta_operator_matrix(nCS, m);
-    sinθdθ = sintheta_dtheta_operator_matrix(nCS, m);
-    cosθsinθdθ = (costheta_operator_matrix(nCS + 1, m) * sintheta_dtheta_operator_matrix(nCS + 1, m))[1:end-1, 1:end-1];
+    V_ℓinds = ℓrange(1, nℓ, V_symmetric)
+    W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    cosθo = OffsetArray(cosθ, ℓs, ℓs);
-    sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs);
-    cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
-    ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs);
+    VVop_ = m * (ΔΩ ⊗ two_by_ℓℓp1_min_1)
+    VWop_ = -(Ir ⊗ two_by_ℓℓp1) * (
+        (ΔΩ * (DDr - 2onebyr) - ddrΔΩ) ⊗ (cosθop * ℓℓp1op) +
+        (ΔΩ * DDr) ⊗ sinθdθop - (ΔΩ * onebyr + ddrΔΩ/2) ⊗ (sinθdθop * ℓℓp1op)
+    )
 
-    DDr_min_2byr = (DDr - twobyr)::Tplusinf;
-    ΔΩ_DDr_min_2byr = (ΔΩ * DDr_min_2byr)::Tmul;
-    ΔΩ_DDr = (ΔΩ * DDr)::Tmul;
-    ΔΩ_by_r = ΔΩ * onebyr;
-    ΔΩ_by_r2 = ΔΩ * onebyr2;
-
-    ΔΩ_by_rMCU2, ΔΩ_DDrMCU2, ΔΩ_DDr_min_2byrMCU2 =
-        map(matCU2, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr));
-
-    ddrΔΩ_plus_ΔΩddrMCU4, twoΔΩ_by_rMCU4, ddrΔΩ_DDrMCU4, ΔΩ_ddrDDrMCU4,
-        ΔΩ_by_r2MCU4, ddrΔΩ_ddr_plus_2byrMCU4, ΔΩ_ηρ_by_rMCU4 =
-        map(matCU4, (ddrΔΩ_plus_ΔΩddr, 2ΔΩ_by_r, ddrΔΩ * DDr, ΔΩ * ddrDDr,
-            ΔΩ_by_r2, ddrΔΩ * (ddr + twobyr), ΔΩ * ηρ_by_r))
-
-    ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4 = zeros(nr, nr);
-    T = zeros(nr, nr);
+    space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
+    VVop = (VVop_ : space2d → space2d_D2) |> expand
+    VWop = (VWop_ : space2d → space2d_D2) |> expand
+    VV_ = real(kronmatrix(VVop, nr, V_ℓinds, V_ℓinds))
+    VW_ = real(kronmatrix(VWop, nr, V_ℓinds, W_ℓinds))
+    VV .+= VV_
+    VW .+= (Rsun / Wscaling) .* VW_
 
     # V terms
     V_ℓs = ℓrange(m, nℓ, V_symmetric);
     # W, S terms
     W_ℓs = ℓrange(m, nℓ, !V_symmetric);
 
-    @views for (ℓind, ℓ) in enumerate(V_ℓs)
-        ℓℓp1 = ℓ * (ℓ + 1)
-        two_over_ℓℓp1 = 2/ℓℓp1
-        two_over_ℓℓp1_min_1 = two_over_ℓℓp1 - 1
+    WVop_ = -(Ir ⊗ inv_ℓℓp1) * (
+        (ΔΩ * ddr + ddrΔΩ) ⊗ (4cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 2) + ∇² * sinθdθop) +
+        (2ΔΩ *onebyr) ⊗ (∇² * sinθdθop))
+    WWop_ = m * (-2ΔΩ * ηρ_by_r ⊗ Iℓ + (ddrΔΩ * DDr) ⊗ two_by_ℓℓp1_min_1
+        + (ΔΩ * ddrDDr) ⊗ two_by_ℓℓp1_min_1
+        - (ΔΩ * onebyr2) ⊗ (two_by_ℓℓp1_min_1 * ℓℓp1op)
+        + (d2dr2ΔΩ + ddrΔΩ * (ddr + twobyr)) ⊗ Iℓ
+        )
 
-        @. T = m * two_over_ℓℓp1_min_1 * ΔΩMCU2
+    space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
+    WVop = (WVop_ : space2d → space2d_D4) |> expand
+    WWop = (WWop_ : space2d → space2d_D4) |> expand
+    WV_ = real(kronmatrix(WVop, nr, W_ℓinds, V_ℓinds));
+    WW_ = real(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds));
+    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* WV_;
+    WW .+= (Weqglobalscaling * Rsun^2) .* WW_;
 
-        VV[Block(ℓind, ℓind)] .+= T
+    # ddrΔΩ_over_g = ddrΔΩ / g;
+    # SVop_ = -m * 2ddrΔΩ_over_g ⊗ cosθop
+    # SVop = (SVop_ : space2d → space2d_D2) |> expand
+    # SV_ = real(kronmatrix(SVop, nr, W_ℓinds, V_ℓinds));
+    # SV .+= (Ω0^2 * Rsun^2 * Seqglobalscaling * Sscaling) .* SV_
 
-        for ℓ′ in intersect(W_ℓs, ℓ-1:2:ℓ+1)
-            ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
+    # SWop_ = (2ddrΔΩ_over_g * DDr) ⊗ (cosθop * sinθdθop)
+    # SWop = (SWop_ : space2d → space2d_D2) |> expand
+    # SW_ = real(kronmatrix(SWop, nr, W_ℓinds, W_ℓinds));
+    # SW .+= (Ω0^2 * Rsun^3 * Seqglobalscaling * Sscaling/Wscaling) .* SW_
 
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
+    SSop_ = -m * (ΔΩ ⊗ Iℓ)
+    SSop = (SSop_ : space2d → space2d_D2) |> expand
+    SS_ = real(kronmatrix(SSop, nr, W_ℓinds, W_ℓinds));
+    SS .+= Seqglobalscaling .* SS_
 
-            cosθ_ℓℓ′ = cosθo[ℓ, ℓ′]
-            sinθdθ_ℓℓ′ = sinθdθo[ℓ, ℓ′]
-
-            @. T = -Rsun * two_over_ℓℓp1 *
-                    (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byrMCU2 - ddrΔΩMCU2) +
-                    sinθdθ_ℓℓ′ * ((ΔΩ_DDrMCU2 - ℓ′ℓ′p1 * ΔΩ_by_rMCU2) - ℓ′ℓ′p1 / 2 * ddrΔΩMCU2)) / Wscaling
-
-            VW[Block(ℓind, ℓ′ind)] .+= T
-        end
-    end
-
-    @views for (ℓind, ℓ) in enumerate(W_ℓs)
-        inds_ℓℓ = blockinds((m, nr), ℓ, ℓ);
-
-        ℓℓp1 = ℓ * (ℓ + 1)
-        two_over_ℓℓp1 = 2/ℓℓp1
-        two_over_ℓℓp1_min_1 = two_over_ℓℓp1 - 1
-
-        @. ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4 = ΔΩ_ddrDDrMCU4 - ℓℓp1 * ΔΩ_by_r2MCU4
-
-        @. T = m * Rsun^2 * (two_over_ℓℓp1_min_1 * (ddrΔΩ_DDrMCU4 + ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4)
-                - 2ΔΩ_ηρ_by_rMCU4 + d2dr2ΔΩMCU4 + ddrΔΩ_ddr_plus_2byrMCU4)
-
-        WW[Block(ℓind, ℓind)] .+= Weqglobalscaling .* T
-
-        SS[Block(ℓind, ℓind)] .+= Seqglobalscaling .* (-m) .* ΔΩMCU2
-
-        for ℓ′ in intersect(V_ℓs, ℓ-1:2:ℓ+1)
-            ℓ′ind = findfirst(isequal(ℓ′), V_ℓs)
-
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-
-            cosθ_ℓℓ′ = cosθo[ℓ, ℓ′]
-            sinθdθ_ℓℓ′ = sinθdθo[ℓ, ℓ′]
-            ∇²_sinθdθ_ℓℓ′ = ∇²_sinθdθo[ℓ, ℓ′]
-
-            @. T = -1/ℓℓp1 * Rsun * (
-                        (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * ddrΔΩ_plus_ΔΩddrMCU4 +
-                        ∇²_sinθdθ_ℓℓ′ * twoΔΩ_by_rMCU4
-                    ) * Wscaling
-
-            WV[Block(ℓind, ℓ′ind)] .+= Weqglobalscaling .* T
-
-            #     @. T = -(Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gMCU2 * Sscaling;
-            #     SV[Block(ℓind, ℓ′ind)] .+= Seqglobalscaling .* T
-        end
-
-        # for ℓ′ in intersect(W_ℓs, ℓ-2:2:ℓ+2)
-        #     ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
-        #     @. T = (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrMCU2 * Sscaling/Wscaling;
-        #     SW[Block(ℓind, ℓ′ind)] .+= Seqglobalscaling .* T
-        # end
-    end
     return M
 end
 
