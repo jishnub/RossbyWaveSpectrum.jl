@@ -61,13 +61,14 @@ end
     @unpack nullspacematrices = constraints
     ZV, ZW, ZS = nullspacematrices
     @unpack r_in, r_out = operators.radial_params
+    @unpack radialspace = operators.radialspaces
 
     @test maximum(abs, constraints.BC * constraints.ZC) < 1e-10
 
     @testset "boundary conditions basis" begin
         @testset "W" begin
             for c in eachcol(ZW)
-                p = Fun(operators.radialspace, c)
+                p = Fun(radialspace, c)
                 @test p(r_in) ≈ 0 atol=1e-14
                 @test p(r_out) ≈ 0 atol=1e-14
                 @test p'(r_in) ≈ 0 atol=1e-12
@@ -76,7 +77,7 @@ end
         end
         @testset "S" begin
             for c in eachcol(ZS)
-                p = Fun(operators.radialspace, c)
+                p = Fun(radialspace, c)
                 @test p'(r_in) ≈ 0 atol=1e-12
                 @test p'(r_out) ≈ 0 atol=1e-12
             end
@@ -84,7 +85,7 @@ end
         @testset "V" begin
             CV = RossbyWaveSpectrum.SolarModel.V_boundary_op(operators);
             for c in eachcol(ZV)
-                p = Fun(operators.radialspace, c)
+                p = Fun(radialspace, c)
                 Cp = CV * p
                 @test Cp(r_in) ≈ 0 atol=1e-11
                 @test Cp(r_out) ≈ 0 atol=1e-11
@@ -254,6 +255,7 @@ end
     constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     @unpack r_in, r_out, Δr = operators.radial_params
     @unpack BCmatrices = constraints;
+    @unpack radialspace = operators.radialspaces;
     MVn, MWn, MSn = BCmatrices;
     @testset for m in [1, 5, 10]
         λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints);
@@ -279,7 +281,7 @@ end
                         inds_ℓ = ℓ_skip .+ (1:nr)
                         v = @view vfn[inds_ℓ]
                         @test MVn * v ≈ zeros(size(MVn,1)) atol=1e-10
-                        pv = Fun(operators.radialspace, v)
+                        pv = Fun(radialspace, v)
                         Cp = Vop * pv;
                         @testset "inner boundary" begin
                             @test Cp(r_in) ≈ 0 atol=1e-10
@@ -295,7 +297,7 @@ end
                         inds_ℓ = nr*nℓ + ℓ_skip .+ (1:nr)
                         w = @view vfn[inds_ℓ]
                         @test MWn * w ≈ zeros(size(MWn,1)) atol=1e-10
-                        pw = Fun(operators.radialspace, w)
+                        pw = Fun(radialspace, w)
                         drpw = pw'
                         @testset "inner boundary" begin
                             @test pw(r_in) ≈ 0 atol=1e-10
@@ -313,7 +315,7 @@ end
                         inds_ℓ = 2nr*nℓ + ℓ_skip .+ (1:nr)
                         S = @view vfn[inds_ℓ]
                         @test MSn * S ≈ zeros(size(MSn,1)) atol=1e-10
-                        pS = Fun(operators.radialspace, S)
+                        pS = Fun(radialspace, S)
                         drpS = pS'
                         @testset "inner boundary" begin
                             @test drpS(r_in) ≈ 0 atol=1e-10
@@ -502,7 +504,8 @@ end
     @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
     @unpack ddr, DDr, ddrDDr = operators.diff_operators;
     @unpack onebyr, ηρ, onebyr2 = operators.rad_terms;
-    @unpack radialspace = operators;
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces
 
     Mc = RossbyWaveSpectrum.allocate_operator_matrix(operators);
     Mr = RossbyWaveSpectrum.allocate_operator_matrix(operators);
@@ -547,8 +550,8 @@ end
                 ℓℓp1op = -∇²;
 
                 space2d = radialspace ⊗ latitudinal_space;
-                space2d_D2 = rangespace(Derivative(radialspace, 2)) ⊗ latitudinal_space;
-                space2d_D4 = rangespace(Derivative(radialspace, 4)) ⊗ latitudinal_space;
+                space2d_D2 = radialspace_D2 ⊗ latitudinal_space;
+                space2d_D4 = radialspace_D4 ⊗ latitudinal_space;
 
                 V_ℓinds = RossbyWaveSpectrum.ℓrange(1, nℓ, V_symmetric);
                 W_ℓinds = RossbyWaveSpectrum.ℓrange(1, nℓ, !V_symmetric);
@@ -671,8 +674,8 @@ end
                 ℓℓp1op = -∇²;
 
                 space2d = radialspace ⊗ latitudinal_space;
-                space2d_D2 = rangespace(Derivative(radialspace, 2)) ⊗ latitudinal_space;
-                space2d_D4 = rangespace(Derivative(radialspace, 4)) ⊗ latitudinal_space;
+                space2d_D2 = radialspace_D2 ⊗ latitudinal_space;
+                space2d_D4 = radialspace_D4 ⊗ latitudinal_space;
 
                 V_ℓinds = RossbyWaveSpectrum.ℓrange(1, nℓ, V_symmetric);
                 W_ℓinds = RossbyWaveSpectrum.ℓrange(1, nℓ, !V_symmetric);
@@ -770,6 +773,7 @@ end
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     @unpack r_in, r_out, Δr = operators.radial_params
     @unpack BCmatrices = constraints;
+    @unpack radialspace = operators.radialspaces
     MVn, MWn, MSn = BCmatrices;
     ΔΩ_frac = 0.02
     @testset for m in [1, 5, 10]
@@ -796,7 +800,7 @@ end
                             inds_ℓ = ℓ_skip .+ (1:nr)
                             v = @view vfn[inds_ℓ]
                             @test MVn * v ≈ zeros(size(MVn,1)) atol=1e-10
-                            pv = Fun(operators.radialspace, v)
+                            pv = Fun(radialspace, v)
                             Cp = Vop * pv;
                             @testset "inner boundary" begin
                                 @test Cp(r_in) ≈ 0 atol=1e-10
@@ -812,7 +816,7 @@ end
                             inds_ℓ = nr*nℓ + ℓ_skip .+ (1:nr)
                             w = @view vfn[inds_ℓ]
                             @test MWn * w ≈ zeros(size(MWn,1)) atol=1e-10
-                            pw = Fun(operators.radialspace, w)
+                            pw = Fun(radialspace, w)
                             drpw = pw'
                             @testset "inner boundary" begin
                                 @test pw(r_in) ≈ 0 atol=1e-10
@@ -830,7 +834,7 @@ end
                             inds_ℓ = 2nr*nℓ + ℓ_skip .+ (1:nr)
                             S = @view vfn[inds_ℓ]
                             @test MSn * S ≈ zeros(size(MSn,1)) atol=1e-10
-                            pS = Fun(operators.radialspace, S)
+                            pS = Fun(radialspace, S)
                             drpS = pS'
                             @testset "inner boundary" begin
                                 @test drpS(r_in) ≈ 0 atol=1e-10
@@ -872,7 +876,7 @@ end
                             inds_ℓ = ℓ_skip .+ (1:nr)
                             v = @view vfn[inds_ℓ]
                             @test MVn * v ≈ zeros(size(MVn,1)) atol=1e-10
-                            pv = Fun(operators.radialspace, v)
+                            pv = Fun(radialspace, v)
                             Cp = Vop * pv;
                             @testset "inner boundary" begin
                                 @test Cp(r_in) ≈ 0 atol=1e-10
@@ -888,7 +892,7 @@ end
                             inds_ℓ = nr*nℓ + ℓ_skip .+ (1:nr)
                             w = @view vfn[inds_ℓ]
                             @test MWn * w ≈ zeros(size(MWn,1)) atol=1e-10
-                            pw = Fun(operators.radialspace, w)
+                            pw = Fun(radialspace, w)
                             drpw = pw'
                             @testset "inner boundary" begin
                                 @test pw(r_in) ≈ 0 atol=1e-10
@@ -906,7 +910,7 @@ end
                             inds_ℓ = 2nr*nℓ + ℓ_skip .+ (1:nr)
                             S = @view vfn[inds_ℓ]
                             @test MSn * S ≈ zeros(size(MSn,1)) atol=1e-10
-                            pS = Fun(operators.radialspace, S)
+                            pS = Fun(radialspace, S)
                             drpS = pS'
                             @testset "inner boundary" begin
                                 @test drpS(r_in) ≈ 0 atol=1e-10

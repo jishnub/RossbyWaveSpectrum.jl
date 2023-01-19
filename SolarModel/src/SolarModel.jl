@@ -76,8 +76,9 @@ end
 function V_boundary_op(operators)::TplusInt
     @unpack r = operators.rad_terms;
     @unpack ddr = operators.diff_operators;
+    @unpack radialspace = operators.radialspaces
 
-    (r * ddr - 2) : operators.radialspace;
+    (r * ddr - 2) : radialspace;
 end
 
 function constraintmatrix(operators)
@@ -86,26 +87,27 @@ function constraintmatrix(operators)
     @unpack nr, nℓ, Δr = operators.radial_params;
     @unpack r = operators.rad_terms;
     @unpack ddr = operators.diff_operators;
+    @unpack radialspace = operators.radialspaces
 
     V_BC_op = V_boundary_op(operators);
     CV = [Evaluation(r_in) * V_BC_op; Evaluation(r_out) * V_BC_op];
     nradconstraintsVS = size(CV,1)::Int;
     MVn = Matrix(CV[:, 1:nr])::Matrix{Float64};
-    QV = QuotientSpace(operators.radialspace, CV);
-    PV = Conversion(QV, operators.radialspace);
+    QV = QuotientSpace(radialspace, CV);
+    PV = Conversion(QV, radialspace);
     ZMVn = PV[1:nr, 1:nr-nradconstraintsVS]::BandedMatrixType;
 
-    CW = [Dirichlet(operators.radialspace); Dirichlet(operators.radialspace, 1) * Δr/2];
+    CW = [Dirichlet(radialspace); Dirichlet(radialspace, 1) * Δr/2];
     nradconstraintsW = size(CW,1);
     MWn = Matrix(CW[:, 1:nr]);
-    QW = QuotientSpace(operators.radialspace, CW);
-    PW = Conversion(QW, operators.radialspace);
+    QW = QuotientSpace(radialspace, CW);
+    PW = Conversion(QW, radialspace);
     ZMWn = PW[1:nr, 1:nr-nradconstraintsW];
 
-    CS = Dirichlet(operators.radialspace, 1) * Δr/2;
+    CS = Dirichlet(radialspace, 1) * Δr/2;
     MSn = Matrix(CS[:, 1:nr]);
-    QS = QuotientSpace(operators.radialspace, CS);
-    PS = Conversion(QS, operators.radialspace);
+    QS = QuotientSpace(radialspace, CS);
+    PS = Conversion(QS, radialspace);
     ZMSn = PS[1:nr, 1:nr-nradconstraintsVS];
 
     rowsB_VS = Fill(nradconstraintsVS, nℓ);
@@ -274,6 +276,9 @@ function radial_operators(operatorparams...)
     d4dr4 = ApproxFun.Derivative(4);
     r2d2dr2 = (r2 * d2dr2)::Tmul;
 
+    radialspace_D2 = rangespace(d2dr2 : radialspace)
+    radialspace_D4 = rangespace(d4dr4 : radialspace)
+
     # density stratification
     ρ = replaceemptywitheps(ApproxFun.chop(Fun(sρ, radialspace), 1e-3));
     @checkncoeff ρ nr
@@ -363,9 +368,9 @@ function radial_operators(operatorparams...)
 
     # matrix representations
 
-    spaceconversionCU2 = radialspace => rangespace(d2dr2:radialspace)
+    spaceconversionCU2 = radialspace => radialspace_D2
     matCU2 = x -> operatormatrix(x, nr, spaceconversionCU2)
-    spaceconversionCU4 = radialspace => rangespace(d4dr4:radialspace)
+    spaceconversionCU4 = radialspace => radialspace_D4
     matCU4 = x -> operatormatrix(x, nr, spaceconversionCU4)
 
     # matrix forms of operators
@@ -439,9 +444,11 @@ function radial_operators(operatorparams...)
         onebyr2_IplusrηρMCU4, onebyr4_chebyMCU4,
         rMCU4, IU2
 
+    radialspaces = (; radialspace, radialspace_D2, radialspace_D4)
+
     op = (;
         radialdomain,
-        radialspace,
+        radialspaces,
         nvariables,
         constants,
         rad_terms,
@@ -676,7 +683,8 @@ function radial_differential_rotation_profile_derivatives_grid(;
 end
 
 function radial_differential_rotation_profile_derivatives_Fun(; operators, kw...)
-    @unpack rpts, radialspace = operators;
+    @unpack rpts, radialspaces = operators;
+    @unpack radialspace = radialspaces
     ΔΩ_terms = radial_differential_rotation_profile_derivatives_grid(; operators, kw...);
     ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = ΔΩ_terms
     nr = length(ΔΩ_r)
@@ -728,7 +736,8 @@ function solar_differential_rotation_profile_derivatives_grid(;
 end
 
 function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
-    @unpack rpts, radialspace = operators;
+    @unpack rpts, radialspaces = operators;
+    @unpack radialspace = radialspaces
     @unpack onebyr = operators.rad_terms;
     @unpack nℓ = operators.radial_params
     θpts = points(ChebyshevInterval(), nℓ);

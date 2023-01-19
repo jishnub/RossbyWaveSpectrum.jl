@@ -128,7 +128,8 @@ function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
 
     @unpack onebyr2 = operators.rad_terms;
     @unpack ddrDDr = operators.diff_operators;
-    @unpack radialspace = operators;
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces
 
     latitudinal_space = NormalizedPlm(m);
 
@@ -148,14 +149,14 @@ function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    space2d_D2 = rangespace(Derivative(radialspace, 2)) ⊗ NormalizedPlm(m)
+    space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
     I2d_D2 = ((Ir ⊗ Iℓ) : space2d → space2d_D2) |> expand
 
     VV_ = real(kronmatrix(I2d_D2, nr, V_ℓinds, V_ℓinds));
     VV .= VV_
     SS .= VV_
 
-    space2d_D4 = rangespace(Derivative(radialspace, 4)) ⊗ NormalizedPlm(m)
+    space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     WWop = ((ddrDDr ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op) : space2d → space2d_D4) |> expand
     WW_ = real(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds));
     WW .= (Weqglobalscaling * Rsun^2) .* WW_
@@ -176,7 +177,8 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
 
     @unpack onebyr, onebyr2, r, r2, g, ηρ, ddr_S0_by_cp_by_r2 = operators.rad_terms;
     @unpack ddr, d2dr2, DDr, ddrDDr, ∇r2_plus_ddr_lnρT_ddr = operators.diff_operators;
-    @unpack radialspace = operators;
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
     @unpack constants = operators;
     @unpack κ = constants;
 
@@ -214,7 +216,7 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
             - DDr ⊗ sinθdθop - onebyr ⊗ (sinθdθop * ∇²))
         )
 
-    space2d_D2 = rangespace(Derivative(radialspace, 2)) ⊗ NormalizedPlm(m)
+    space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
     scaled_curl_u_x_ω_r = (scaled_curl_u_x_ω_r_tmp : space2d → space2d_D2) |> expand;
 
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
@@ -231,7 +233,7 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
             - ddr ⊗ sinθdθop - onebyr ⊗ (sinθdθop * ∇²)),
         iW = (Ir ⊗ twom_by_ℓℓp1) * (ddrDDr ⊗ Iℓ - ((1 + ηρ*r)*onebyr2) ⊗ ℓℓp1op),
         )
-    space2d_D4 = rangespace(Derivative(radialspace, 4)) ⊗ NormalizedPlm(m)
+    space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
 
     WV_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds));
@@ -260,7 +262,8 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     @unpack nr, nℓ = operators.radial_params;
     @unpack ddr, d2dr2, d3dr3, DDr, d2dr2_ηρbyr_op = operators.diff_operators;
     @unpack ηρ, ηρ_by_r, ηρ_by_r2, onebyr2, onebyr, r, ηρ2_by_r2 = operators.rad_terms;
-    @unpack radialspace = operators;
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
     @unpack ν = operators.constants;
     @unpack matCU4, matCU2 = operators;
     @unpack Weqglobalscaling = operators.scalings;
@@ -279,7 +282,7 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    space2d_D2 = rangespace(Derivative(radialspace, 2)) ⊗ NormalizedPlm(m)
+    space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
     VVop_ = -ν * ((d2dr2 + ηρ * (ddr - 2onebyr)) ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)
     VVop = (VVop_ : space2d → space2d_D2) |> expand
     VVim .= real(kronmatrix(VVop, nr, V_ℓinds, V_ℓinds)) * Rsun^2
@@ -291,7 +294,7 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
         - ((ηρ_by_r2 * (ddr - 2onebyr)) ⊗ 2ℓℓp1op)
         - (ηρ2_by_r2 ⊗ (2/3 * ℓℓp1op))
         )
-    space2d_D4 = rangespace(Derivative(radialspace, 4)) ⊗ NormalizedPlm(m)
+    space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     WWop = (WWop_ : space2d → space2d_D4) |> expand
     WWim .= real(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds)) .* (Rsun^4 * Weqglobalscaling)
 
@@ -568,7 +571,7 @@ function solar_differential_rotation_vorticity_Fun(; operators,
 
     (; ΔΩ, dr_ΔΩ, d2r_ΔΩ) = ΔΩprofile_deriv;
 
-    @unpack radialspace = operators;
+    @unpack radialspace = operators.radialspaces;
     # velocity and its derivatives are expanded in Legendre poly
     latitudinal_space = NormalizedPlm(0, NormalizedLegendre());
 
@@ -617,7 +620,8 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     @unpack nr, nℓ = operators.radial_params;
     @unpack onebyr, onebyr2, r2, g = operators.rad_terms;
     @unpack ddr, d2dr2, DDr, ddrDDr = operators.diff_operators;
-    @unpack radialspace = operators;
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
     @unpack Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
     @unpack Ω0 = operators.constants;
 
@@ -651,7 +655,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     curl_u_x_ω_r = (ωΩr * (DDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (Ir ⊗ sinθdθop) - ∂rωΩr) * ufr +
         ((-onebyr2 ⊗ Iℓ) * ∂θωΩr_by_sinθ) * rsinθufθ - im * m * ΔΩ * ωfr;
     scaled_curl_u_x_ω_r_tmp = ((-im * r2) ⊗ inv(ℓℓp1op)) * curl_u_x_ω_r;
-    space2d_D2 = rangespace(Derivative(radialspace, 2)) ⊗ NormalizedPlm(m)
+    space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
     scaled_curl_u_x_ω_r = (scaled_curl_u_x_ω_r_tmp : space2d → space2d_D2) |> expand;
 
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
@@ -680,7 +684,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     ∇²_u_x_ω_r = (Ir ⊗ ∇²) * u_x_ω_r;
 
     scaled_curl_curl_u_x_ω_r_tmp = (Ir ⊗ inv(ℓℓp1op)) * (-ddr_rdiv_ucrossω_h + ∇²_u_x_ω_r);
-    space2d_D4 = rangespace(Derivative(radialspace, 4)) ⊗ NormalizedPlm(m)
+    space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
 
     WV_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds));
@@ -1469,7 +1473,7 @@ end
 function eigenfunction_rad_sh!(VWSinvsh, F, v; operators, n_cutoff = -1, kw...)
     VWS = eigenfunction_spectrum_2D!(F, v; operators, kw...)
     @unpack V, W, S = VWS
-    @unpack radialspace = operators;
+    @unpack radialspace = operators.radialspaces;
 
     Vinv = VWSinvsh.V
     Winv = VWSinvsh.W

@@ -1161,7 +1161,7 @@ end
 
 function plot_constraint_basis(; operators, constraints = RossbyWaveSpectrum.constraintmatrix(operators), kw...)
     @unpack nullspacematrices = constraints
-    @unpack radialspace = operators;
+    @unpack radialspace = operators.radialspaces;
     @unpack rpts = operators
 
     f, axlist = subplots(1,3, sharex = true)
