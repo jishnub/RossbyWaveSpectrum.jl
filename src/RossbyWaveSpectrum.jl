@@ -260,17 +260,14 @@ end
 
 function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric = true, kw...)
     @unpack nr, nℓ = operators.radial_params;
-
     @unpack ddrMCU4, d2dr2MCU2, d3dr3MCU4, onebyr2MCU2,
         ηρ_ddr_minus_2byrMCU2, onebyr2_d2dr2MCU4,
         onebyr3_ddrMCU4, onebyr4_chebyMCU4, d4dr4MCU4, ηρ2_by_r2MCU4,
         ηρ_by_r3MCU4 = operators.operator_matrices;
-
-    @unpack ddr, d2dr2, d3dr3, DDr, ddrDDr, d2dr2DDr = operators.diff_operators;
-
+    @unpack ddr, d2dr2, d3dr3, DDr, ddrDDr, d2dr2DDr, d2dr2_ηρbyr_op = operators.diff_operators;
     @unpack ddr_ηρbyr, ηρ, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddrηρ_by_r, d2dr2ηρ_by_r, ηρ_by_r,
-        ηρ_by_r2, ddr_ηρbyr2, onebyr2, onebyr = operators.rad_terms;
-
+        ηρ_by_r2, ddr_ηρbyr2, onebyr2, onebyr, r, ηρ2_by_r2 = operators.rad_terms;
+    @unpack radialspace = operators;
     @unpack ν = operators.constants;
     @unpack matCU4, matCU2 = operators;
     @unpack Weqglobalscaling = operators.scalings;
@@ -278,13 +275,6 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     VVim = matrix_block(A.im, 1, 1)
     WWim = matrix_block(A.im, 2, 2)
 
-    # caches for the WW term
-    T1_1 = zeros(nr, nr);
-    T1_2 = zeros(nr, nr);
-    T3_1 = zeros(nr, nr);
-    T3_2 = zeros(nr, nr);
-    T4 = zeros(nr, nr);
-    WWop = zeros(nr, nr);
 
     # T1_1 terms
     d3dr3ηρMCU4 = matCU4(d3dr3_ηρ);
@@ -306,45 +296,38 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     ηρd2dr2DDrMCU4 = matCU4(ηρ * d2dr2DDr);
     ddr_ηρbyr_DDrMCU4 = matCU4(ddr_ηρbyr * DDr);
 
+    latitudinal_space = NormalizedPlm(m);
+
+    Ir = ConstantOperator(I);
+    Iℓ = I : latitudinal_space;
+    space2d = radialspace ⊗ latitudinal_space;
+    ∇² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇²;
+
     # V terms
     V_ℓs = ℓrange(m, nℓ, V_symmetric)
 
-    @views for (ℓind, ℓ) in enumerate(V_ℓs)
-        ℓℓp1 = ℓ * (ℓ + 1)
-        @. T1_1 = -ν * (d2dr2MCU2 - ℓℓp1 * onebyr2MCU2 + ηρ_ddr_minus_2byrMCU2) * Rsun^2
+    V_ℓinds = ℓrange(1, nℓ, V_symmetric)
+    W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-        VVim[Block(ℓind, ℓind)] .= T1_1
-    end
+    space2d_D2 = rangespace(Derivative(radialspace, 2)) ⊗ NormalizedPlm(m)
+    VVop_ = -ν * ((d2dr2 + ηρ * (ddr - 2onebyr)) ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)
+    VVop = (VVop_ : space2d → space2d_D2) |> expand
+    VVim .= real(kronmatrix(VVop, nr, V_ℓinds, V_ℓinds)) * Rsun^2
 
     # W, S terms
     W_ℓs = ℓrange(m, nℓ, !V_symmetric)
 
-    @views for (ℓind, ℓ) in enumerate(W_ℓs)
-        ℓℓp1 = ℓ * (ℓ + 1)
-        neg2by3_ℓℓp1 = -2ℓℓp1 / 3
-
-        ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
-        @. T1_1 = ((d3dr3ηρMCU4 -4*d2dr2ηρ_by_rMCU4 + 8*ddrηρ_by_r2MCU4 - 8*ηρ_by_r3MCU4)
-                    + threeddrηρ_min_4ηρbyr_d2dr2MCU4
-                    + threed2dr2ηρ_min_8ddrηρ_by_r_plus_ηρ_by_r2_ddrMCU4
-                    + ηρ_d3dr3MCU4
-                    - (ℓℓp1 - 2)*(ηρ_by_r2_ddrMCU4 + ddrηρ_by_r2MCU4 - 4*ηρ_by_r3MCU4)
-                    )
-        @. T1_2 = (d4dr4MCU4 + ℓpre * onebyr4_chebyMCU4 - 2ℓℓp1*onebyr2_d2dr2MCU4 + 4ℓℓp1*onebyr3_ddrMCU4
-                + 4(ηρ_by_r_d2dr2MCU4 + 2 * ddrηρ_by_r_ddr_min_ηρ_by_r2_ddrMCU4 + d2dr2ηρ_by_r_min_2ddrηρ_by_r2MCU4)
-                -4(ℓℓp1 -2)*ηρ_by_r3MCU4
-                )
-
-        @. T3_1 = (ddrηρ_min_2ηρbyr_ddrDDrMCU4 + ηρd2dr2DDrMCU4 - 2*ddr_ηρbyr_DDrMCU4
-            + ℓℓp1 * (ddrηρbyr2MCU4 + ηρ_by_r2_ddrMCU4))
-        @. T3_2 = 2ℓℓp1*(ηρ_by_r2_ddrMCU4 -2*ηρ_by_r3MCU4)
-
-        @. T4 = neg2by3_ℓℓp1 * ηρ2_by_r2MCU4
-
-        @. WWop = -ν * (T1_1 + T1_2 + T3_1 + T3_2 + T4) * Rsun^4
-
-        WWim[Block(ℓind, ℓind)] .= Weqglobalscaling .* WWop
-    end
+    WWop_ = -ν * (
+        ((ddr - 2onebyr) ⊗ Iℓ) * ((r * d2dr2_ηρbyr_op) ⊗ Iℓ - ηρ_by_r2 ⊗ ℓℓp1op)
+        + (d2dr2 ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op) * ((d2dr2 + 4ηρ_by_r) ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)
+        + (ddr ⊗ Iℓ) * ((ηρ * (ddr - 2onebyr) * DDr) ⊗ Iℓ + ηρ_by_r2 ⊗ ℓℓp1op)
+        - ((ηρ_by_r2 * (ddr - 2onebyr)) ⊗ 2ℓℓp1op)
+        - (ηρ2_by_r2 ⊗ (2/3 * ℓℓp1op))
+        )
+    space2d_D4 = rangespace(Derivative(radialspace, 4)) ⊗ NormalizedPlm(m)
+    WWop = (WWop_ : space2d → space2d_D4) |> expand
+    WWim .= real(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds)) .* (Rsun^4 * Weqglobalscaling)
 
     return A
 end
@@ -1488,7 +1471,7 @@ function filteredeigen(filename::String; kw...)
     fkw = feig.kw
     diffrot::Bool = fkw[:diffrot]
     V_symmetric::Bool = fkw[:V_symmetric]
-    rotation_profile::Symbol = fkw[:rotation_profile]
+    rotation_profile::Union{Symbol, Nothing} = fkw[:rotation_profile]
     smoothing_param::Float64 = get(fkw, :smoothing_param, 1e-5)
 
     matrixfn! = RotMatrix(Val(:matrix), V_symmetric, diffrot, rotation_profile;

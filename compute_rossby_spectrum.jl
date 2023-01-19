@@ -4,7 +4,10 @@ using LinearAlgebra
 using TimerOutputs
 
 function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile;
-            save = true, smoothing_param = 1e-5, print_timer = true)
+            save = true, smoothing_param = 1e-5, print_timer = true,
+            r_in_frac = 0.7, r_out_frac = 0.995,
+            trackingratescaling = 1.0, Seqglobalscaling = 1e-7)
+
     flush(stdout)
     # boundary condition tolerance
     bc_atol = 1e-5
@@ -18,13 +21,6 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
 
     scale_eigenvectors = false
 
-    r_in_frac = 0.6
-    r_out_frac = 0.995
-
-    # Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity_surface(r_out_frac)
-    # trackingratescaling = 1 + (4e-9/(Ω0/2pi))
-    trackingratescaling = 1.0
-    Seqglobalscaling = 1e-7
     scalings = (; Seqglobalscaling, trackingratescaling)
 
     @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac smoothing_param;
@@ -63,6 +59,10 @@ function main(V_symmetric = true;
     diffrot = true,
     rotation_profile = :solar_latrad,
     save = true,
+    r_in_frac = 0.7,
+    r_out_frac = 0.995,
+    trackingratescaling = 1.0,
+    Seqglobalscaling = 1e-7,
     )
 
     @show Libc.gethostname(), V_symmetric
@@ -71,7 +71,7 @@ function main(V_symmetric = true;
             save = false, smoothing_param = 1e-1,
             print_timer = false)
     computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile;
-            save)
+            save, r_in_frac, r_out_frac, trackingratescaling, Seqglobalscaling)
 end
 
 end

@@ -331,7 +331,10 @@ function radial_operators(operatorparams...)
     d2dr2ηρ_by_r = d2dr2_ηρ * onebyr
 
     ddrDDr = (d2dr2 + (ηρ * ddr)::Tmul + ddr_ηρ)::Tplusinf
-    d2dr2DDr = (d3dr3 + (ηρ * d2dr2)::Tmul + (ddr_ηρ * ddr)::Tmul + d2dr2_ηρ)::Tplusinf
+    d2dr2DDr = (d3dr3 + (ηρ * d2dr2)::Tmul + (2ddr_ηρ * ddr)::Tmul + d2dr2_ηρ)::Tplusinf
+
+    d2dr2_ηρbyr_op::Tplusinf = ηρ_by_r * d2dr2 + 2(ddr_ηρ * onebyr - ηρ * onebyr2)*ddr +
+        (d2dr2_ηρ * onebyr - 2ddr_ηρ * onebyr2 + 2ηρ * onebyr3)
 
     g = Fun(sg, radialspace)
 
@@ -417,7 +420,8 @@ function radial_operators(operatorparams...)
         ddrηρ_by_r, d2dr2ηρ_by_r
 
     diff_operators = (; DDr, DDr_minus_2byr, rDDr, rddr, ddrDDr, d2dr2DDr,
-        ddr, d2dr2, d3dr3, d4dr4, r2d2dr2, ddr_plus_2byr, ∇r2_plus_ddr_lnρT_ddr)
+        ddr, d2dr2, d3dr3, d4dr4, r2d2dr2, ddr_plus_2byr, ∇r2_plus_ddr_lnρT_ddr,
+        d2dr2_ηρbyr_op)
 
     operator_matrices = Dict{Symbol, typeof(IU2)}();
     @pack! operator_matrices = DDrMCU2,
