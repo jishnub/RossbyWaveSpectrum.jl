@@ -44,6 +44,7 @@ export computesparse
 export StructMatrix
 export interp1d
 export interp2d
+export smoothed_spline
 export solar_structure_parameter_splines
 export read_solar_model
 export Tmul, Tplusinf, TplusInt
@@ -473,7 +474,12 @@ allocate_operator_mass_matrix(operators, bw...) = (
     allocate_operator_matrix(operators, bw...),
     allocate_mass_matrix(operators))
 
-smoothed_spline(rpts, v; s) = Spline1D(rpts, v, s = sum(abs2, v) * s)
+function smoothed_spline(rpts, v; s = 0.0)
+    if issorted(rpts, rev=true)
+        rpts, v = reverse(rpts), reverse(v)
+    end
+    Spline1D(rpts, v, s = sum(abs2, v) * s)
+end
 function interp1d(xin, z, xout = xin; s = 0.0)
     p = sortperm(xin)
     spline = smoothed_spline(xin[p], z[p]; s)
@@ -568,7 +574,9 @@ function equatorial_rotation_profile_and_derivative_squished_grid(; operators, k
 end
 
 function radial_differential_rotation_profile_derivatives_grid(;
-            operators, rotation_profile = :solar_equator, ΔΩ_frac = 0.01, kw...)
+            operators, rotation_profile = :solar_equator, ΔΩ_frac = 0.01,
+            ΔΩ_scale = 1.0,
+            kw...)
 
     @unpack rpts = operators
     @unpack r_out, nr, r_in = operators.radial_params
@@ -618,9 +626,9 @@ function radial_differential_rotation_profile_derivatives_grid(;
     else
         error("$rotation_profile is not a valid rotation model")
     end
-    ΔΩ_r ./= Ω0;
-    ddrΔΩ_r ./= Ω0;
-    d2dr2ΔΩ_r ./= Ω0;
+    ΔΩ_r .*= ΔΩ_scale/Ω0;
+    ddrΔΩ_r .*= ΔΩ_scale/Ω0;
+    d2dr2ΔΩ_r .*= ΔΩ_scale/Ω0;
     return ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
 end
 
@@ -646,7 +654,9 @@ end
 
 # This function lets us choose between various different profiles
 function solar_differential_rotation_profile_derivatives_grid(;
-        operators, rotation_profile = :latrad, ΔΩ_frac = 0.01, kw...)
+        operators, rotation_profile = :latrad, ΔΩ_frac = 0.01,
+        ΔΩ_scale = 1.0,
+        kw...)
 
     @unpack nℓ, nr = operators.radial_params
     @unpack Ω0 = operators.constants
@@ -672,7 +682,7 @@ function solar_differential_rotation_profile_derivatives_grid(;
         error("$rotation_profile is not a valid rotation model")
     end
     for v in (ΔΩ, dr_ΔΩ, d2r_ΔΩ)
-        v ./= Ω0
+        v .*= ΔΩ_scale/Ω0
     end
     return ΔΩ, dr_ΔΩ, d2r_ΔΩ
 end

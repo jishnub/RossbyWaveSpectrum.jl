@@ -8,6 +8,7 @@ using Reexport
 @reexport using ApproxFunAssociatedLegendre
 @reexport using BlockArrays
 using BlockBandedMatrices
+import Dierckx
 using Folds
 using JLD2
 @reexport using LinearAlgebra
@@ -27,6 +28,7 @@ export Filters
 export filteredeigen
 export FilteredEigen
 export Rsun
+export SolarModel
 
 const SCRATCH = Ref("")
 const DATADIR = Ref("")
@@ -369,8 +371,9 @@ end
 function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, rotation_profile = :solar_equator,
         ΔΩ_frac = 0.01, # only used to test the constant case
+        ΔΩ_scale = 1.0,
         ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives_Fun(;
-                            operators, rotation_profile, ΔΩ_frac),
+                            operators, rotation_profile, ΔΩ_frac, ΔΩ_scale),
         V_symmetric = true, kw...)
 
     @unpack nr, nℓ = operators.radial_params;
@@ -494,9 +497,7 @@ function Base.show(io::IO, O::OpVector)
     print(io, ")")
 end
 
-function solar_differential_rotation_vorticity_Fun(; operators,
-        ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(; operators)
-        )
+function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
 
     @unpack onebyr, r, onebyr2, twobyr = operators.rad_terms;
     @unpack ddr, d2dr2 = operators.diff_operators;
@@ -536,8 +537,9 @@ end
 function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, rotation_profile = :latrad,
         ΔΩ_frac = 0.01, # only used to test the constant case
+        ΔΩ_scale = 1.0, # scale the diff rot profile, for testing
         ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(;
-                            operators, rotation_profile, ΔΩ_frac),
+                            operators, rotation_profile, ΔΩ_frac, ΔΩ_scale),
         ωΩ_deriv = solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv),
         V_symmetric = true, kw...)
 
@@ -946,6 +948,78 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     return eqfilter
 end
 
+function angularindex_maximum(Vr::AbstractMatrix{<:Real}, θ)
+    equator_ind = angularindex_equator(Vr, θ)
+    nθ = length(θ)
+    Δθ_scan = div(nθ, 5)
+    rangescan = intersect(equator_ind .+ (-Δθ_scan:Δθ_scan), axes(Vr, 2))
+    Vr_section = view(Vr, :, rangescan)
+    Imax = argmax(Vr_section)
+    ind_max = Tuple(Imax)[2]
+    ind_max += first(rangescan) - 1
+end
+
+angularindex_equator(Vr, θ) = argmin(abs.(θ .- pi/2))
+
+function sign_changes(radprof)
+    count(Bool.(sign.(abs.(diff(sign.(real(radprof)))))))
+end
+
+function count_num_nodes(radprof::AbstractVector{<:Real}, rpts, radialspace)
+    if issorted(rpts, rev=true)
+        rpts = reverse(rpts)
+        radprof = reverse(radprof)
+    end
+    radprof *= argmax(abs.(extrema(radprof))) == 2 ? 1 : -1
+    zerocrossings = sign_changes(radprof)
+    isempty(zerocrossings) && return 0
+    s = smoothed_spline(rpts, radprof)
+    f = Fun(s, radialspace, 20)
+    roots = ApproxFun.roots(f)
+    isempty(roots) && return 0
+    radialdomain = domain(radialspace)
+
+    # Strip extremeties
+    if ≈(roots[1], leftendpoint(radialdomain), rtol=1e-4, atol=1e-10) && !≈(f(roots[1]), 0, atol=1e-10)
+        deleteat!(roots, 1)
+    end
+    isempty(roots) && return 0
+    if ≈(roots[end], rightendpoint(radialdomain), rtol=1e-4, atol=1e-10) && !≈(f(roots[end]), 0, atol=1e-10)
+        deleteat!(roots, lastindex(roots))
+    end
+    isempty(roots) && return 0
+
+    # Discount nodes that appear spurious
+    sa = smoothed_spline(rpts, abs.(radprof))
+    unsignedarea = Dierckx.integrate(sa, rpts[1], rpts[end])
+
+    signed_areas = zeros(Float64, length(roots)+1)
+    for (ind, (spt, ept)) in enumerate(zip([rpts[1]; roots], [roots; rpts[end]]))
+        signed_areas[ind] = Dierckx.integrate(s, spt, ept)
+    end
+
+    smallcrossings = abs.(signed_areas ./ unsignedarea) .< 0.05
+    signed_areas = signed_areas[.!smallcrossings]
+    ncross = sign_changes(signed_areas)
+
+    min(ncross, zerocrossings)
+end
+function count_radial_nodes_equator(V::AbstractMatrix{<:Complex}, angularindex, rpts, radialspace)
+    radprof = @view V[:, angularindex]
+    nnodes_real = count_num_nodes(real(radprof), rpts, radialspace)
+    nnodes_imag = count_num_nodes(imag(radprof), rpts, radialspace)
+    nnodes_real, nnodes_imag
+end
+function count_V_radial_nodes(v::AbstractVector{<:Complex}, m; operators,
+        angularindex_fn = angularindex_equator, kw...)
+    @unpack radialspace = operators.radialspaces
+    @unpack rpts = operators
+    (; VWSinv, θ) = eigenfunction_realspace(v, m; operators, kw...)
+    (; V) = VWSinv
+    eqind = angularindex_fn(real(V), θ)
+    count_radial_nodes_equator(V, eqind, rpts, radialspace)
+end
+
 function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
     nℓ = operators.radial_params.nℓ,
     Plcosθ = allocate_Pl(m, nℓ),
@@ -956,6 +1030,8 @@ function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
 
     @unpack nparams = operators.radial_params
     @unpack nvariables = operators
+    @unpack rpts = operators
+    @unpack radialspace = operators.radialspaces
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, nℓ, Plcosθ)
@@ -963,8 +1039,7 @@ function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
 
     for X in fields
         radprof = @view X[:, eqind]
-        nnodes_real = count(Bool.(sign.(abs.(diff(sign.(real(radprof)))))))
-        nnodes_imag = count(Bool.(sign.(abs.(diff(sign.(imag(radprof)))))))
+        nnodes_real, nnodes_imag = count_radial_nodes_equator(X, eqind, rpts, radialspace)
         nodesfilter &= nnodes_real <= nnodesmax && nnodes_imag <= nnodesmax
         nodesfilter || break
     end
@@ -1056,7 +1131,7 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
     return true
 end
 
-function allocate_field_caches(nr, nθ, nℓ)
+function allocate_field_caches(nr, nℓ, nθ)
     VWSinv = (; V = zeros(ComplexF64, nr, nθ), W = zeros(ComplexF64, nr, nθ), S = zeros(ComplexF64, nr, nθ))
     VWSinvsh = (; V = zeros(ComplexF64, nr, nℓ), W = zeros(ComplexF64, nr, nℓ), S = zeros(ComplexF64, nr, nℓ))
     F = (; V = zeros(ComplexF64, nr * nℓ), W = zeros(ComplexF64, nr * nℓ), S = zeros(ComplexF64, nr * nℓ))
@@ -1084,7 +1159,7 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
 
     nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
 
-    @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nθ, nℓ)
+    @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nℓ, nθ)
 
     Plcosθ = allocate_Pl(m, nℓ)
 
@@ -1312,10 +1387,11 @@ function rossbyeigenfilename(; operators, kw...)
     isdiffrot = get(kw, :diffrot, false)
     rotation_profile = get(kw, :rotation_profile, "")
     Vsym = kw[:V_symmetric]
+    modeltag = get(kw, :modeltag, "")
     rottag = filenamerottag(isdiffrot, rotation_profile)
     symtag = filenamesymtag(Vsym)
     @unpack nr, nℓ = operators.radial_params;
-    return rossbyeigenfilename(nr, nℓ, rottag, symtag)
+    return rossbyeigenfilename(nr, nℓ, rottag, symtag, modeltag)
 end
 function save_eigenvalues(f, mr; operators, save=true, kw...)
     lam, vec = filter_eigenvalues(f, mr; operators, kw...)
@@ -1350,7 +1426,7 @@ function filter_eigenvalues(f::FilteredEigen; kw...)
     FilteredEigen(λfs, vfs, f.mr, kw2, operators)
 end
 
-function RotMatrix(::Val{T}, V_symmetric, diffrot, rotation_profile; operators, smoothing_param) where {T}
+function RotMatrix(::Val{T}, V_symmetric, diffrot, rotation_profile; operators, kw...) where {T}
     T ∈ (:spectrum, :matrix) || error("unknown code ", T)
     if !diffrot
         RotMatrix(V_symmetric, :uniform, nothing, nothing,
@@ -1358,7 +1434,7 @@ function RotMatrix(::Val{T}, V_symmetric, diffrot, rotation_profile; operators, 
     else
         d = RotMatrix(V_symmetric, rotation_profile, nothing, nothing,
             T == :matrix ? differential_rotation_matrix! : differential_rotation_spectrum!)
-        updaterotatationprofile(d, operators; smoothing_param)
+        updaterotatationprofile(d, operators; kw...)
     end
 end
 
@@ -1501,7 +1577,7 @@ function eigenfunction_realspace(v, m; operators, kw...)
     (; θ) = spharm_θ_grid_uniform(m, nℓ)
     nθ = length(θ)
 
-    @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nθ, nℓ)
+    @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nℓ, nθ)
 
     eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, kw...)
 

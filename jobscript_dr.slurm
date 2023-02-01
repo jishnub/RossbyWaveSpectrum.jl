@@ -1,11 +1,12 @@
 #!/bin/bash
-#SBATCH --time="2:00:00"
+#SBATCH --time="1:00:00"
 #SBATCH --job-name=rosbyspec
 #SBATCH --nodes=1
 #SBATCH -C dalma
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=28
+##SBATCH --mem-per-cpu=6G
 
 echo "############"
 hostname
@@ -22,9 +23,20 @@ srun $julia --project=$project --startup-file=no -t 14 -e \
 using RossbyWaveSpectrum
 V_symmetric = !parse(Bool, ENV["SLURM_PROCID"]);
 r_out_frac = 0.995;
+nr=60;
+nℓ=30;
+mrange=1:14;
 Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity_surface(r_out_frac);
 trackingratescaling = 1 + (2.3e-9/(Ω0/2pi));
 #= trackingratescaling = 1; =#
+ΔΩ_scale = 1.0;
+Δl_cutoff = 20;
+n_cutoff = 20;
+diffrot=false
+rotation_profile=:solar_latrad
+modeltag = diffrot ? "rotscale$(round(ΔΩ_scale, digits=2))" : "";
+
 ComputeRossbySpectrum.main(V_symmetric;
-nr=40, nℓ=20, mrange=1:14, diffrot=true, rotation_profile=:solar_latrad,
-r_out_frac, trackingratescaling)'
+nr, nℓ, mrange, diffrot, rotation_profile,
+r_out_frac, trackingratescaling, ΔΩ_scale, Δl_cutoff, n_cutoff,
+modeltag)'

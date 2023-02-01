@@ -6,6 +6,8 @@ struct UniqueInterval{T, I<:AbstractInterval{T}} <: AbstractInterval{T}
 	parentinterval :: I
 end
 
+Base.parent(U::UniqueInterval) = U.parentinterval
+
 for f in [:endpoints, :closedendpoints]
 	@eval $f(m::UniqueInterval) = $f(m.parentinterval)
 end

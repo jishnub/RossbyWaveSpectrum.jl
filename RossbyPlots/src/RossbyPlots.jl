@@ -1,5 +1,6 @@
 module RossbyPlots
 
+__precompile__(false)
 Base.Experimental.@optlevel 1
 
 using PyCall
@@ -185,12 +186,35 @@ const ScatterParams = Dict(
 # ν0 at r = r_out in nHz, effectively an unit
 freqnHzunit(Ω0) = Ω0 * 1e9/2pi
 
+function Vreal_peak_l(v, m; operators, V_symmetric)
+    @unpack nr, nℓ = operators.radial_params;
+    Vre = compute_eigenfunction_spectra(v, m; operators, V_symmetric)[1]
+    ℓrange = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
+    ℓrange_full = first(ℓrange):last(ℓrange)
+    pow_ℓ = dropdims(sum(abs2, Vre, dims=1), dims=1)
+    pow = sum(pow_ℓ)
+    ℓmaxind = findfirst(p -> p/pow > 0.5, pow_ℓ)
+    isnothing(ℓmaxind) ? nothing : ℓrange_full[ℓmaxind]
+end
+
+function spectrum_peak_ℓ_mask(vecs, mr, filter_Δl; operators, V_symmetric)
+    map(zip(vecs, mr)) do (vsm, m)
+        peak_ls = map(eachcol(vsm)) do v
+            Vreal_peak_l(v, m; operators, V_symmetric)
+        end
+        peak_ls .== m + filter_Δl
+    end
+end
+
 function spectrum(lam::AbstractArray, mr;
     operators,
     f = figure(),
     ax = subplot(),
     m_zoom = mr[max(begin, end - 6):end],
     rossbyridges = true,
+    filter_Δl = nothing,
+    highlight_n = false,
+    vecs = nothing,
     kw...)
 
     ax.set_xlabel("m", fontsize = 12)
@@ -200,36 +224,85 @@ function spectrum(lam::AbstractArray, mr;
 
     @unpack Ω0 = operators.constants
 
+    V_symmetric = kw[:V_symmetric]
+
     νnHzunit = freqnHzunit(Ω0)
     ax.set_ylim(minmax(-0.05 * νnHzunit, -1.5 * νnHzunit)...)
 
+    if !isnothing(filter_Δl)
+        masks = spectrum_peak_ℓ_mask(vecs, mr, filter_Δl; operators, V_symmetric)
+        lam = map(zip(lam, masks)) do (lam_m, mask)
+                lam_m[mask]
+            end
+        vecs = map(zip(vecs, masks)) do (vm, mask)
+                vm[:, mask]
+            end
+    end
+
+    if highlight_n
+        ns = map(zip(vecs, mr)) do (vm, m)
+            map(eachcol(vm)) do v
+                RossbyWaveSpectrum.count_V_radial_nodes(v, m; operators)[1]
+            end
+        end
+        ns_cat = reduce(vcat, ns)
+    end
+
     lamcat = mapreduce(real, vcat, lam) .* νnHzunit
-    lamimcat = mapreduce(imag, vcat, lam) .* νnHzunit
-    vmin, vmax = extrema(lamimcat)
-    vmin = min(0, vmin)
     mcat = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr, lam)])
-    s = ax.scatter(mcat, -lamcat; c = get(kw, :fillmarker, true) ? lamimcat : "white", ScatterParams...,
-        vmax = vmax, vmin = vmin, zorder=get(kw, :zorder, 1), s=get(kw, :s, 30))
+    fillmarker = get(kw, :fillmarker, true) | highlight_n
+    c = if fillmarker && highlight_n
+            cbaxtitle = "n"
+            cbticks = [i for i in 0:3]
+            binedges = [-0.5; cbticks .+ 0.5]
+            norm = matplotlib.colors.BoundaryNorm(binedges, length(binedges), extend="max")
+            cmap = matplotlib.colors.ListedColormap(["navy", "crimson", "limegreen", "gold"])
+            ns_cat
+        elseif fillmarker
+            lamimcat = mapreduce(imag, vcat, lam) .* νnHzunit
+            vmin, vmax = extrema(lamimcat)
+            vmin = min(0, vmin)
+            norm = matplotlib.colors.Normalize(vmin, vmax)
+            cbaxtitle = L"\Im[\nu]" * "[nHz]"
+            cmap = ScatterParams[:cmap]
+            cbticks = nothing
+            lamimcat
+        else
+            cmap = nothing
+            norm = nothing
+            "white"
+        end
+
+    s = ax.scatter(mcat, -lamcat; c, ScatterParams..., cmap, norm,
+        zorder=get(kw, :zorder, 1), s=get(kw, :s, 20))
 
     if get(kw, :fillmarker, true)
         divider = axes_grid1.make_axes_locatable(ax)
         cax = divider.append_axes("right", size = "3%", pad = 0.05)
-        cb = colorbar(mappable = s, cax = cax)
-        cb.ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
-        cb.ax.set_title(L"\Im[\nu]" * "[nHz]")
+        cb = colorbar(mappable = s, cax = cax, extend = "max", ticks = cbticks)
+        if !highlight_n
+            cb.ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
+        end
+        cb.ax.set_title(cbaxtitle)
     end
 
     if rossbyridges
         plot_rossby_ridges(mr; νnHzunit, ax, kw...)
     end
 
-    V_symmetric = kw[:V_symmetric]
-    zoom = V_symmetric && !get(kw, :diffrot, false) && get(kw, :zoom, true)
+    zoom = V_symmetric && get(kw, :zoom, !get(kw, :diffrot, false))
 
     if zoom
         lamcat_inset = mapreduce(real, vcat, lam[m_zoom]) .* νnHzunit
-        lamimcat_inset = mapreduce(imag, vcat, lam[m_zoom]) .* νnHzunit
         mcat_inset = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr[m_zoom], lam[m_zoom])])
+
+        c = if fillmarker && highlight_n
+            ns_cat_inset = reduce(vcat, ns[m_zoom])
+        elseif fillmarker
+            lamimcat_inset = mapreduce(imag, vcat, lam[m_zoom]) .* νnHzunit
+        else
+            "white"
+        end
 
         axins = ax.inset_axes([0.3, 0.1, 0.4, 0.4])
         ymax = (RossbyWaveSpectrum.rossby_ridge(minimum(m_zoom)) + 0.005) * νnHzunit
@@ -238,8 +311,8 @@ function spectrum(lam::AbstractArray, mr;
         axins.xaxis.set_major_locator(ticker.NullLocator())
         axins.yaxis.set_major_locator(ticker.NullLocator())
         plt.setp(axins.spines.values(), color = "0.2", lw = "0.5")
-        axins.scatter(mcat_inset, -lamcat_inset; c = lamimcat_inset, ScatterParams...,
-            vmax = vmax, vmin = vmin)
+        axins.scatter(mcat_inset, -lamcat_inset; c, ScatterParams..., cmap, norm,
+            s=get(kw, :s, 20))
 
         if rossbyridges
             plot_rossby_ridges(m_zoom; νnHzunit, ax = axins, kw...)
@@ -258,7 +331,12 @@ function spectrum(lam::AbstractArray, mr;
 
     ax.axhline(0, ls="dotted", color="0.2", zorder = 0, lw=0.5)
 
+    ΔΩ_scale = get(kw, :ΔΩ_scale, 1.0)
+
     titlestr = V_symmetric ? "Symmetric" : "Antisymmetric"
+    if ΔΩ_scale != 1
+        titlestr *= " ΔΩ_scale = $(round(ΔΩ_scale, digits=2))"
+    end
     ax.set_title(titlestr, fontsize = 12)
 
     if get(kw, :save, false)
@@ -398,7 +476,7 @@ end
 
 for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge, :plot_high_frequency_ridge]
     @eval function $f(feig::FilteredEigen; kw...)
-        $f(feig.lams, feig.mr; operators = feig.operators, feig.kw..., kw...)
+        $f(feig.lams, feig.mr; operators = feig.operators, vecs = feig.vs, feig.kw..., kw...)
     end
 end
 
@@ -505,9 +583,9 @@ function diffrot_rossby_ridge(Fsym,
     end
 end
 
-function spectrum_with_datadispersion(Fsym)
+function spectrum_with_datadispersion(Fsym; kw...)
     @assert Fsym.kw[:V_symmetric] "only symmetric solutions supported"
-    f, ax = spectrum(Fsym, zorder=3, fillmarker = false)
+    f, ax = spectrum(Fsym; zorder=3, fillmarker = false, kw...)
 
     mr_Hanson = collect(keys(HansonGONGfit))
     ν_H = [HansonGONGfit[m].ν for m in mr_Hanson]
@@ -613,12 +691,8 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
     end
     @unpack rpts = operators
     r_frac = rpts ./ Rsun
-    nθ = length(θ)
-    equator_ind = nθ÷2
-    Δθ_scan = div(nθ, 5)
-    rangescan = intersect(equator_ind .+ (-Δθ_scan:Δθ_scan), axes(V, 2))
-    ind_max = findmax(col -> maximum(real, col), eachcol(view(Vr, :, rangescan)))[2]
-    ind_max += first(rangescan) - 1
+    equator_ind = argmin(abs.(θ .- pi/2))
+    ind_max = RossbyWaveSpectrum.angularindex_maximum(Vr, θ)
     V_peak_depthprofile = @view Vr[:, ind_max]
     r_max_ind = argmax(abs.(V_peak_depthprofile))
 
