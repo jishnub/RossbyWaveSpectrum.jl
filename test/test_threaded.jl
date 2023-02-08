@@ -10,9 +10,9 @@ using Folds
 
     mr = 1:15
 
-    As = Folds.map(m -> RossbyWaveSpectrum.uniform_rotation_matrix(m; operators), mr)
+    As = Folds.map(m -> RossbyWaveSpectrum.uniform_rotation_matrix(m; operators, V_symmetric = true), mr)
     for (ind, m) in enumerate(mr)
-        Am = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators)
+        Am = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators, V_symmetric = true)
         @test As[m].re ≈ Am.re
         @test As[m].im ≈ Am.im
     end
@@ -23,13 +23,13 @@ using Folds
     end
 
     λs, vs = RossbyWaveSpectrum.filter_eigenvalues(RossbyWaveSpectrum.uniform_rotation_spectrum!,
-            mr; operators, constraints, print_timer = false);
+            mr; operators, constraints, print_timer = false, V_symmetric = true);
 
     @testset "all m" begin
         @testset for ind in eachindex(mr)
             m = mr[ind]
-            λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints);
-            λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m; operators, constraints);
+            λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints, V_symmetric = true);
+            λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m; operators, constraints, V_symmetric = true);
 
             @test length(λuf) > 0
 

@@ -57,8 +57,8 @@ const Tplusinf = typeof(Multiplication(Fun()) + Derivative())
 const TplusInt = typeof(Multiplication(Fun(), Chebyshev()) + Derivative(Chebyshev()))
 
 
-const BlockMatrixType = BlockMatrix{Float64, Matrix{BlockBandedMatrix{Float64}},
-    Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
+# const BlockMatrixType = BlockMatrix{Float64, Matrix{BlockBandedMatrix{Float64}},
+#     Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
 const BandedMatrixType = BandedMatrices.BandedMatrix{Float64, Matrix{Float64}, Base.OneTo{Int64}}
 
 grid_to_fun(v::AbstractVector, space) = Fun(space, transform(space, v))
@@ -451,7 +451,7 @@ function allocate_block_matrix(nvariables, bandwidth, rows, cols = rows)
     l,u = bandwidth, bandwidth # block bandwidths
     mortar(reshape(
             [blockbandedzero(rows, cols, (l,u)) for _ in 1:nvariables^2],
-                nvariables, nvariables))::BlockMatrixType
+                nvariables, nvariables))
 end
 
 function allocate_operator_matrix(operators, bandwidth = operators.radial_params[:nℓ])

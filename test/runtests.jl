@@ -9,7 +9,6 @@ using FastTransforms
 using FillArrays
 using Dierckx
 using ApproxFun
-using PerformanceTestTools
 using UnPack
 using StructArrays
 using BlockArrays
@@ -184,57 +183,59 @@ blockwise_isapprox(x, y; kw...) = blockwise_cmp((x, y) -> isapprox(x, y; kw...),
     m = 5
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
     @unpack nvariables = operators;
-    M1 = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators);
-    operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
-    M2 = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators = operators2);
-    operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
-    M3 = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators = operators3);
+    for V_symmetric in [true, false]
+        M1 = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators, V_symmetric);
+        operators2 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ);
+        M2 = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators = operators2, V_symmetric);
+        operators3 = RossbyWaveSpectrum.radial_operators(nr+5, nℓ+5);
+        M3 = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators = operators3, V_symmetric);
 
-    M_subsample = RossbyWaveSpectrum.allocate_operator_matrix(operators);
+        M_subsample = RossbyWaveSpectrum.allocate_operator_matrix(operators);
 
-    @testset "same size" begin
-        matrix_subsample!(M_subsample, M1, nr, nr, nℓ, nvariables)
-        @test blockwise_isequal(M_subsample, M1);
-    end
-
-    matrix_subsample!(M_subsample, M2, nr+5, nr, nℓ, nvariables);
-    @testset for rowind in 1:nvariables, colind in 1:nvariables
-        @testset "real" begin
-            M2_ssv = matrix_block(M_subsample.re, rowind, colind);
-            M1v = matrix_block(M1.re, rowind, colind);
-
-            rtol = rowind == 3 && colind == 2 ? 5e-3 : 2e-3
-
-            @test blockwise_isapprox(M2_ssv, M1v; rtol)
+        @testset "same size" begin
+            matrix_subsample!(M_subsample, M1, nr, nr, nℓ, nvariables)
+            @test blockwise_isequal(M_subsample, M1);
         end
 
-        @testset "imag" begin
-            M2_ssv = matrix_block(M_subsample.im, rowind, colind);
-            M1v = matrix_block(M1.im, rowind, colind);
+        matrix_subsample!(M_subsample, M2, nr+5, nr, nℓ, nvariables);
+        @testset for rowind in 1:nvariables, colind in 1:nvariables
+            @testset "real" begin
+                M2_ssv = matrix_block(M_subsample.re, rowind, colind);
+                M1v = matrix_block(M1.re, rowind, colind);
 
-            rtol = rowind == colind == 2 ? 2e-3 : 1e-4
+                rtol = rowind == 3 && colind == 2 ? 5e-3 : 2e-3
 
-            @test blockwise_isapprox(M2_ssv, M1v; rtol)
+                @test blockwise_isapprox(M2_ssv, M1v; rtol)
+            end
+
+            @testset "imag" begin
+                M2_ssv = matrix_block(M_subsample.im, rowind, colind);
+                M1v = matrix_block(M1.im, rowind, colind);
+
+                rtol = rowind == colind == 2 ? 2e-3 : 1e-4
+
+                @test blockwise_isapprox(M2_ssv, M1v; rtol)
+            end
         end
-    end
 
-    matrix_subsample!(M_subsample, M3, nr+5, nr, nℓ, nvariables);
-    @testset for rowind in 1:nvariables, colind in 1:nvariables
-        @testset "real" begin
-            M3_ssv = matrix_block(M_subsample.re, rowind, colind, nvariables)
-            M1v = matrix_block(M1.re, rowind, colind, nvariables)
+        matrix_subsample!(M_subsample, M3, nr+5, nr, nℓ, nvariables);
+        @testset for rowind in 1:nvariables, colind in 1:nvariables
+            @testset "real" begin
+                M3_ssv = matrix_block(M_subsample.re, rowind, colind, nvariables)
+                M1v = matrix_block(M1.re, rowind, colind, nvariables)
 
-            rtol = rowind == 3 && colind == 2 ? 5e-3 : 2e-3
+                rtol = rowind == 3 && colind == 2 ? 5e-3 : 2e-3
 
-            @test blockwise_isapprox(M3_ssv, M1v; rtol)
-        end
-        @testset "imag" begin
-            M3_ssv = matrix_block(M_subsample.im, rowind, colind, nvariables)
-            M1v = matrix_block(M1.im, rowind, colind, nvariables)
+                @test blockwise_isapprox(M3_ssv, M1v; rtol)
+            end
+            @testset "imag" begin
+                M3_ssv = matrix_block(M_subsample.im, rowind, colind, nvariables)
+                M1v = matrix_block(M1.im, rowind, colind, nvariables)
 
-            rtol = rowind == colind == 2 ? 2e-3 : 1e-4
+                rtol = rowind == colind == 2 ? 2e-3 : 1e-4
 
-            @test blockwise_isapprox(M3_ssv, M1v; rtol)
+                @test blockwise_isapprox(M3_ssv, M1v; rtol)
+            end
         end
     end
 end
@@ -258,9 +259,10 @@ end
     @unpack radialspace = operators.radialspaces;
     MVn, MWn, MSn = BCmatrices;
     @testset for m in [1, 5, 10]
-        λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m; operators, constraints);
+        λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m;
+            operators, constraints, V_symmetric = true);
         λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
-            operators, constraints, Δl_cutoff = 7, n_cutoff = 9,
+            operators, constraints, V_symmetric = true, Δl_cutoff = 7, n_cutoff = 9,
             eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
             scale_eigenvectors = false);
         @info "uniform rot: $(length(λuf)) eigenmode$(length(λuf) > 1 ? "s" : "") found for m = $m"
@@ -337,14 +339,16 @@ end
     end
 end
 
-@testset "constant differential rotation and uniform rotation" begin
+@testset "zero constant differential rotation and uniform rotation" begin
     nr, nℓ = 20, 8
     m = 3
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-    Mu = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators);
-    Mc = RossbyWaveSpectrum.differential_rotation_matrix(m;
-            rotation_profile = :constant, operators, ΔΩ_frac = 0);
-    @test blockwise_isapprox(Mu, Mc)
+    @testset for V_symmetric in [true, false]
+        Mu = RossbyWaveSpectrum.uniform_rotation_matrix(m; operators, V_symmetric);
+        Mc = RossbyWaveSpectrum.differential_rotation_matrix(m;
+                rotation_profile = :constant, operators, ΔΩ_frac = 0, V_symmetric);
+        @test blockwise_isapprox(Mu, Mc)
+    end
 end
 
 @testset "radial differential rotation" begin
@@ -356,12 +360,12 @@ end
         Mc = RossbyWaveSpectrum.allocate_operator_matrix(operators);
         Mr = RossbyWaveSpectrum.allocate_operator_matrix(operators);
 
-        @testset for m in [1, 4, 10]
+        @testset for m in [1, 4, 10], V_symmetric in [true, false]
             @testset "radial constant and constant" begin
                 RossbyWaveSpectrum.differential_rotation_matrix!(Mc, m;
-                    rotation_profile = :constant, operators);
+                    rotation_profile = :constant, operators, V_symmetric);
                 RossbyWaveSpectrum.differential_rotation_matrix!(Mr, m;
-                    rotation_profile = :radial_constant, operators);
+                    rotation_profile = :radial_constant, operators, V_symmetric);
 
                 @testset for colind in 1:nvariables, rowind in 1:nvariables
                     Rc = matrix_block(Mr, rowind, colind, nvariables)
@@ -446,10 +450,10 @@ end
             M2 = RossbyWaveSpectrum.allocate_operator_matrix(operators2);
             M3 = RossbyWaveSpectrum.allocate_operator_matrix(operators3);
 
-            @testset for rotation_profile in [:radial_linear, :radial_solar_equator]
-                RossbyWaveSpectrum.differential_rotation_matrix!(M1, m; operators, rotation_profile);
-                RossbyWaveSpectrum.differential_rotation_matrix!(M2, m; operators = operators2, rotation_profile);
-                RossbyWaveSpectrum.differential_rotation_matrix!(M3, m; operators = operators3, rotation_profile);
+            @testset for rotation_profile in [:radial_linear, :radial_solar_equator], V_symmetric in [true, false]
+                RossbyWaveSpectrum.differential_rotation_matrix!(M1, m; operators, rotation_profile, V_symmetric);
+                RossbyWaveSpectrum.differential_rotation_matrix!(M2, m; operators = operators2, rotation_profile, V_symmetric);
+                RossbyWaveSpectrum.differential_rotation_matrix!(M3, m; operators = operators3, rotation_profile, V_symmetric);
 
                 @testset "same size" begin
                     matrix_subsample!(M_subsample, M1, nr, nr, nℓ, nvariables)
@@ -770,7 +774,8 @@ end
 @testset "constant differential rotation solution" begin
     nr, nℓ = 45, 8
     nparams = nr * nℓ
-    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ); constraints = RossbyWaveSpectrum.constraintmatrix(operators);
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+    constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     @unpack r_in, r_out, Δr = operators.radial_params
     @unpack BCmatrices = constraints;
     @unpack radialspace = operators.radialspaces
@@ -779,9 +784,9 @@ end
     @testset for m in [1, 5, 10]
         @testset "constant" begin
             λr, vr, Mr = RossbyWaveSpectrum.differential_rotation_spectrum(m; operators, constraints,
-                rotation_profile = :constant, ΔΩ_frac);
+                rotation_profile = :constant, ΔΩ_frac, V_symmetric = true);
             λrf, vrf = RossbyWaveSpectrum.filter_eigenvalues(λr, vr, Mr, m;
-                operators, constraints, Δl_cutoff = 7, n_cutoff = 9,
+                operators, constraints, V_symmetric = true, Δl_cutoff = 7, n_cutoff = 9,
                 eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
             @info "constant diff rot: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
@@ -856,9 +861,10 @@ end
         end
         @testset "radial constant" begin
             λr, vr, Mr = RossbyWaveSpectrum.differential_rotation_spectrum(m; operators, constraints,
-                rotation_profile = :radial_constant, ΔΩ_frac);
+                rotation_profile = :radial_constant, ΔΩ_frac, V_symmetric = true);
             λrf, vrf = RossbyWaveSpectrum.filter_eigenvalues(λr, vr, Mr, m;
-                operators, constraints, Δl_cutoff = 7, n_cutoff = 9, eig_imag_unstable_cutoff = -1e-3,
+                operators, constraints, V_symmetric = true,
+                Δl_cutoff = 7, n_cutoff = 9, eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
             @info "radial_constant diff rot: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
             @testset "ℓ == m" begin

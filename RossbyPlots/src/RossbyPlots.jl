@@ -170,6 +170,26 @@ const Liang2019MDIHMI = OrderedDict(
     15 => (; ν = Measurement(-22, 2, 3), γ = Measurement(11, 7, 5)),
 )
 
+const HansonHighmfit = OrderedDict(
+    .=>(3:25, (x -> (; ν = x)).(
+        Measurement.([-239.85023787, -194.74218881, -158.17165486, -118.97498962,
+       -111.33150168,  -88.82183249,  -76.4812802 ,  -77.46255087,
+        -66.15595674,  -60.27040155,  -44.4007832 ,  -49.13988037,
+        -42.74126055,  -17.87075571,  -23.86233201,   -9.27675778,
+        -16.82402438,   21.42364466,   -4.56253251,   -5.57888729,
+         51.12102461,   41.23779238,   74.8054728 ],
+    [ 3.71177019,  2.71950549,  2.74778436,  7.68047884,  3.8421045 ,
+        3.06962887,  4.17586493,  3.85660104,  5.18002071,  4.7879219 ,
+        7.34926256,  5.25456844,  5.48006636,  6.39776562,  9.36107323,
+        8.96203759, 11.56557341, 14.44780523,  8.04412307, 54.9300657 ,
+       38.8350157 , 82.12514585, 23.96035167],
+    [ 3.65679971,  2.74835319,  2.73552219,  7.54232931,  3.52837351,
+        3.20261367,  3.96356207,  3.78393831,  5.10844758,  4.61691889,
+        7.53241866,  5.31386927,  5.46743624,  6.54103895,  9.72079996,
+        9.41561522, 11.79312097, 15.06342711,  7.35867335, 30.98882865,
+       30.8959761 , 81.29153888, 62.20129617])))
+    )
+
 function errorbars_pyplot(mmnt::AbstractVector{Measurement})
     hcat(lowerr.(mmnt), higherr.(mmnt))'
 end
@@ -190,31 +210,89 @@ function Vreal_peak_l(v, m; operators, V_symmetric)
     @unpack nr, nℓ = operators.radial_params;
     Vre = compute_eigenfunction_spectra(v, m; operators, V_symmetric)[1]
     ℓrange = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
-    ℓrange_full = first(ℓrange):last(ℓrange)
+    ℓrange_full = axes(Vre,2)
     pow_ℓ = dropdims(sum(abs2, Vre, dims=1), dims=1)
     pow = sum(pow_ℓ)
     ℓmaxind = findfirst(p -> p/pow > 0.5, pow_ℓ)
     isnothing(ℓmaxind) ? nothing : ℓrange_full[ℓmaxind]
 end
 
-function spectrum_peak_ℓ_mask(vecs, mr, filter_Δl; operators, V_symmetric)
+function spectrum_peak_ℓ_mask(vecs, mr, Δl_filter; operators, V_symmetric)
     map(zip(vecs, mr)) do (vsm, m)
         peak_ls = map(eachcol(vsm)) do v
             Vreal_peak_l(v, m; operators, V_symmetric)
         end
-        peak_ls .== m + filter_Δl
+        peak_ls .== m + Δl_filter
     end
 end
 
-function spectrum(lam::AbstractArray, mr;
+function nodes_cutoff_mask(vecs, mr, n_cutoff; operators, V_symmetric)
+    ns = map(zip(vecs, mr)) do (vm, m)
+        map(eachcol(vm)) do v
+            RossbyWaveSpectrum.count_V_radial_nodes(v, m; operators, V_symmetric)[1]
+        end
+    end
+    ns_mask = map(ns) do ns_m
+        ns_m .<= n_cutoff
+    end
+end
+
+function update_cutoffs(lams, vecs, mr; operators,
+        V_symmetric::Union{Bool,Nothing} = nothing,
+        nodes_cutoff::Union{Nothing,Int} = nothing,
+        Δl_filter::Union{Nothing,Int} = nothing
+        )
+
+    if !isnothing(nodes_cutoff) && !isnothing(Δl_filter)
+        ns_mask = nodes_cutoff_mask(vecs, mr, nodes_cutoff; operators, V_symmetric)
+        Δl_mask = spectrum_peak_ℓ_mask(vecs, mr, Δl_filter; operators, V_symmetric)
+        x = map(zip(lams, vecs, ns_mask, Δl_mask)) do (lam, v, nmask, lmask)
+            mask = nmask .& lmask
+            lam[mask], v[:, mask]
+        end
+        first.(x), last.(x)
+    elseif !isnothing(nodes_cutoff)
+        ns_mask = nodes_cutoff_mask(vecs, mr, nodes_cutoff; operators, V_symmetric)
+        x = map(zip(lams, vecs, ns_mask)) do (lam, v, mask)
+            lam[mask], v[:, mask]
+        end
+        first.(x), last.(x)
+    elseif !isnothing(Δl_filter)
+        Δl_mask = spectrum_peak_ℓ_mask(vecs, mr, Δl_filter; operators, V_symmetric)
+        x = map(zip(lams, vecs, Δl_mask)) do (lam, v, mask)
+            lam[mask], v[:, mask]
+        end
+        first.(x), last.(x)
+    else
+        lams, vecs
+    end
+end
+
+function update_cutoffs(F::RossbyWaveSpectrum.FilteredEigen;
+    nodes_cutoff::Union{Nothing,Int} = nothing,
+    Δl_filter::Union{Nothing,Int} = nothing,
+    kw...
+    )
+
+    isnothing(nodes_cutoff) && isnothing(Δl_filter) && return F
+
+    @unpack lams, vs, mr, operators, kw = F
+    @unpack V_symmetric = kw
+    lams, vs = update_cutoffs(lams, vs, mr; operators, V_symmetric, Δl_filter, nodes_cutoff)
+    RossbyWaveSpectrum.FilteredEigen(lams, vs, mr, kw, operators)
+end
+
+function spectrum(lams::AbstractArray, mr;
     operators,
     f = figure(),
     ax = subplot(),
     m_zoom = mr[max(begin, end - 6):end],
     rossbyridges = true,
-    filter_Δl = nothing,
-    highlight_n = false,
+    highlight_nodes = false,
+    nodes_cutoff = nothing,
     vecs = nothing,
+    scale_freq = true,
+    Δl_filter = nothing,
     kw...)
 
     ax.set_xlabel("m", fontsize = 12)
@@ -226,61 +304,60 @@ function spectrum(lam::AbstractArray, mr;
 
     V_symmetric = kw[:V_symmetric]
 
-    νnHzunit = freqnHzunit(Ω0)
-    ax.set_ylim(minmax(-0.05 * νnHzunit, -1.5 * νnHzunit)...)
+    νnHzunit = scale_freq ? freqnHzunit(Ω0)  #= around 453 =# : 1.0
+    ax.set_ylim((-600/453) * νnHzunit, (150/453) * νnHzunit)
 
-    if !isnothing(filter_Δl)
-        masks = spectrum_peak_ℓ_mask(vecs, mr, filter_Δl; operators, V_symmetric)
-        lam = map(zip(lam, masks)) do (lam_m, mask)
-                lam_m[mask]
-            end
-        vecs = map(zip(vecs, masks)) do (vm, mask)
-                vm[:, mask]
-            end
-    end
+    lams, vecs = update_cutoffs(lams, vecs, mr; operators, V_symmetric,
+        Δl_filter, nodes_cutoff)
 
-    if highlight_n
+    if !isnothing(nodes_cutoff) || highlight_nodes
         ns = map(zip(vecs, mr)) do (vm, m)
             map(eachcol(vm)) do v
-                RossbyWaveSpectrum.count_V_radial_nodes(v, m; operators)[1]
+                RossbyWaveSpectrum.count_V_radial_nodes(v, m; operators, V_symmetric)[1]
             end
         end
+    end
+
+    if highlight_nodes || !isnothing(nodes_cutoff)
         ns_cat = reduce(vcat, ns)
     end
 
-    lamcat = mapreduce(real, vcat, lam) .* νnHzunit
-    mcat = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr, lam)])
-    fillmarker = get(kw, :fillmarker, true) | highlight_n
-    c = if fillmarker && highlight_n
+    lamscat = mapreduce(real, vcat, lams) .* νnHzunit
+    mcat = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr, lams)])
+    fillmarker = get(kw, :fillmarker, true) | highlight_nodes
+    c = if highlight_nodes
             cbaxtitle = "n"
-            cbticks = [i for i in 0:3]
+            cbticks = [i for i in 0:(!isnothing(nodes_cutoff) ? min(nodes_cutoff,3) : 3)]
             binedges = [-0.5; cbticks .+ 0.5]
             norm = matplotlib.colors.BoundaryNorm(binedges, length(binedges), extend="max")
-            cmap = matplotlib.colors.ListedColormap(["navy", "crimson", "limegreen", "gold"])
+            marker_colors = ["navy", "crimson", "limegreen", "gold"][
+                1:(!isnothing(nodes_cutoff) ? min(nodes_cutoff +1, end) : end)]
+            cmap = matplotlib.colors.ListedColormap(marker_colors)
             ns_cat
         elseif fillmarker
-            lamimcat = mapreduce(imag, vcat, lam) .* νnHzunit
-            vmin, vmax = extrema(lamimcat)
+            lamsimcat = mapreduce(imag, vcat, lams) .* νnHzunit
+            vmin, vmax = extrema(lamsimcat)
             vmin = min(0, vmin)
             norm = matplotlib.colors.Normalize(vmin, vmax)
             cbaxtitle = L"\Im[\nu]" * "[nHz]"
             cmap = ScatterParams[:cmap]
             cbticks = nothing
-            lamimcat
+            lamsimcat
         else
             cmap = nothing
             norm = nothing
             "white"
         end
 
-    s = ax.scatter(mcat, -lamcat; c, ScatterParams..., cmap, norm,
-        zorder=get(kw, :zorder, 1), s=get(kw, :s, 20))
+    s = ax.scatter(mcat, -lamscat; c, ScatterParams..., cmap, norm,
+        zorder=get(kw, :zorder, 1), s=get(kw, :s, 25), linewidth = 0.7)
 
-    if get(kw, :fillmarker, true)
+    if fillmarker
         divider = axes_grid1.make_axes_locatable(ax)
         cax = divider.append_axes("right", size = "3%", pad = 0.05)
-        cb = colorbar(mappable = s, cax = cax, extend = "max", ticks = cbticks)
-        if !highlight_n
+        cb_extend = !isnothing(nodes_cutoff) && nodes_cutoff < 3 ? "neither" : "max"
+        cb = colorbar(mappable = s, cax = cax, extend = cb_extend, ticks = cbticks)
+        if !highlight_nodes
             cb.ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
         end
         cb.ax.set_title(cbaxtitle)
@@ -293,13 +370,13 @@ function spectrum(lam::AbstractArray, mr;
     zoom = V_symmetric && get(kw, :zoom, !get(kw, :diffrot, false))
 
     if zoom
-        lamcat_inset = mapreduce(real, vcat, lam[m_zoom]) .* νnHzunit
-        mcat_inset = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr[m_zoom], lam[m_zoom])])
+        lamscat_inset = mapreduce(real, vcat, lams[m_zoom]) .* νnHzunit
+        mcat_inset = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr[m_zoom], lams[m_zoom])])
 
-        c = if fillmarker && highlight_n
+        c = if fillmarker && highlight_nodes
             ns_cat_inset = reduce(vcat, ns[m_zoom])
         elseif fillmarker
-            lamimcat_inset = mapreduce(imag, vcat, lam[m_zoom]) .* νnHzunit
+            lamsimcat_inset = mapreduce(imag, vcat, lams[m_zoom]) .* νnHzunit
         else
             "white"
         end
@@ -311,8 +388,8 @@ function spectrum(lam::AbstractArray, mr;
         axins.xaxis.set_major_locator(ticker.NullLocator())
         axins.yaxis.set_major_locator(ticker.NullLocator())
         plt.setp(axins.spines.values(), color = "0.2", lw = "0.5")
-        axins.scatter(mcat_inset, -lamcat_inset; c, ScatterParams..., cmap, norm,
-            s=get(kw, :s, 20))
+        axins.scatter(mcat_inset, -lamscat_inset; c, ScatterParams..., cmap, norm,
+            s=get(kw, :s, 25))
 
         if rossbyridges
             plot_rossby_ridges(m_zoom; νnHzunit, ax = axins, kw...)
@@ -349,16 +426,31 @@ function spectrum(lam::AbstractArray, mr;
     f, ax
 end
 
-function uniform_rotation_spectrum(fsym::FilteredEigen, fasym::FilteredEigen; kw...)
-    f, axlist = subplots(2, 2, sharex = true)
-    spectrum(fsym; kw..., f, ax = axlist[1,1], save = false)
-    spectrum(fasym; kw..., f, ax = axlist[2,1], save = false)
+function uniform_rotation_spectrum(fsym::FilteredEigen, fasym::FilteredEigen;
+        plot_linewidths = true,
+        kw...)
+    f, axlist = subplots(2, 1 + plot_linewidths, sharex = true)
+    m_min = get(kw, :m_min, nothing)
+    @unpack mr = fsym
+    if !isnothing(m_min)
+        mr = max(m_min, minimum(mr)):maximum(mr)
+        fsym = fsym[mr]
+        fasym = fasym[mr]
+    end
+    fsymfilt = update_cutoffs(fsym; kw..., Δl_filter = get(kw, :Δl_filter_sym, nothing))
+    fasymfilt = update_cutoffs(fasym; kw..., Δl_filter = get(kw, :Δl_filter_asym, nothing))
+    commonkw = Base.pairs((; save = false, nodes_cutoff = nothing, Δl_filter = nothing))
+    spectrum(fsymfilt; kw..., f, ax = axlist[1,1], commonkw...)
+    plot_rossby_ridge(fsymfilt; f, ax = axlist[1,1], kw..., commonkw...)
+    spectrum(fasymfilt; kw..., f, ax = axlist[2,1], commonkw...)
+    plot_high_frequency_ridge(fasymfilt; f, ax = axlist[2,1], kw..., commonkw...)
 
-    damping_rossbyridge(fsym; f, ax = axlist[1,2], kw..., save = false)
-    plot_high_frequency_ridge(fasym; f, ax = axlist[2,1], kw..., save = false)
-    damping_highfreqridge(fasym; f, ax = axlist[2,2], kw..., save = false)
+    if plot_linewidths
+        damping_rossbyridge(fsymfilt; f, ax = axlist[1,2], kw..., commonkw...)
+        damping_highfreqridge(fasymfilt; f, ax = axlist[2,2], kw..., commonkw...)
+    end
 
-    f.set_size_inches(9,6)
+    f.set_size_inches(4.5 .* (1 + plot_linewidths), 6)
     f.tight_layout()
     if get(kw, :save, false)
         fpath = joinpath(plotdir, "spectrum_sym_asym.eps")
@@ -390,12 +482,7 @@ function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), k
             mec="black", ms=5, label="this work", zorder = 4)
 
     # observations
-    m_Proxauf = collect(keys(ProxaufFit))
-    γ_Proxauf = [ProxaufFit[m].γ for m in m_Proxauf]
-    γ_Proxauf_val = value.(γ_Proxauf)
-    ax.errorbar(m_Proxauf, γ_Proxauf_val,
-        yerr = errorbars_pyplot(γ_Proxauf),
-        color= "grey", ls="None", capsize = 3, label="P20", zorder = 1, marker = ".", ms = 5, mfc = "k")
+    plot_dispersion(ProxaufFit; var=:γ, ax, color= "grey", label="P20", zorder = 1)
     ax.set_ylabel("linewidth [nHz]", fontsize = 12)
     ax.set_xlabel("m", fontsize = 12)
     ax.legend(loc="best")
@@ -419,13 +506,7 @@ function damping_highfreqridge(lam, mr; operators, f = figure(), ax = subplot(),
     νnHzunit = freqnHzunit(Ω0)
 
     # observations
-    ms_H22 = collect(keys(HansonHFFit))
-    γ_H22 = [x.γ for x in values(HansonHFFit)]
-    γ_H22_val = value.(γ_H22)
-
-    ax.errorbar(ms_H22, γ_H22_val,
-        yerr = errorbars_pyplot(γ_H22),
-        color= "grey", ls="None", capsize = 3, label="H22", zorder = 1, marker = ".", ms=6, mfc="k")
+    plot_dispersion(HansonHFFit; var=:γ, ax, color= "grey", label="H22", zorder = 1)
 
     # model
     λs_HFRridge = [
@@ -454,19 +535,24 @@ function damping_highfreqridge(lam, mr; operators, f = figure(), ax = subplot(),
     return nothing
 end
 
-function plot_high_frequency_ridge(lam, mr; operators, f = figure(), ax = subplot(), kw...)
-    @unpack Ω0 = operators.constants
-
-    νnHzunit = freqnHzunit(Ω0)
-
+function plot_rossby_ridge(lam, mr; f = figure(), ax = subplot(), kw...)
     # observations
-    m_H = collect(keys(HansonHFFit))
-    ν_H = [x.ν for x in values(HansonHFFit)]
-    ax.errorbar(m_H, value.(ν_H),
-        yerr = errorbars_pyplot(ν_H),
-        color= "0.3", ls="dashed", capsize = 3, label="H22")
+    plot_dispersion(HansonHighmfit; ax, color= "0.3", ls="dashed", label="Hanson")
+    ax.legend(loc="best")
+    ax.set_xlim(extrema(mr) .+ (-0.5, 0.5))
+
+    if get(kw, :save, false)
+        f.savefig(joinpath(plotdir, "rossbyridge.eps"))
+    end
+    return nothing
+end
+
+function plot_high_frequency_ridge(lam, mr; f = figure(), ax = subplot(), kw...)
+    # observations
+    plot_dispersion(HansonHFFit; ax, color= "0.3", ls="dashed", label="H22")
 
     ax.legend(loc="best")
+    ax.set_xlim(extrema(mr) .+ (-0.5, 0.5))
 
     if get(kw, :save, false)
         f.savefig(joinpath(plotdir, "highfreqridge.eps"))
@@ -474,9 +560,10 @@ function plot_high_frequency_ridge(lam, mr; operators, f = figure(), ax = subplo
     return nothing
 end
 
-for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge, :plot_high_frequency_ridge]
+for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge,
+        :plot_high_frequency_ridge, :plot_rossby_ridge]
     @eval function $f(feig::FilteredEigen; kw...)
-        $f(feig.lams, feig.mr; operators = feig.operators, vecs = feig.vs, feig.kw..., kw...)
+        $f(feig.lams, feig.mr; feig.operators, vecs = feig.vs, feig.kw..., kw...)
     end
 end
 
@@ -500,8 +587,8 @@ function diffrot_rossby_ridge(Fsym,
     lams_realfilt = map(zip(mr, lams, vs)) do (m, lam_m, vs_m)
         # select the mode that looks like l == m
         lam_m, _ = argmin(zip(lam_m, eachcol(vs_m))) do (lam, v)
-            Vr,Wr = RossbyPlots.compute_eigenfunction_spectra(v, m; operators, V_symmetric = true);
-            (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators);
+            # Vr,Wr = RossbyPlots.compute_eigenfunction_spectra(v, m; operators, V_symmetric = true);
+            (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, V_symmetric = true);
             Vr_realspace = real(VWSinv.V);
             r_ind_peak = RossbyWaveSpectrum.peakindabs1(Vr_realspace)
             peak_latprofile = @view Vr_realspace[r_ind_peak, :]
@@ -583,31 +670,27 @@ function diffrot_rossby_ridge(Fsym,
     end
 end
 
+function plot_dispersion(dataset; var = :ν, ax, kw...)
+    mr_Hanson = collect(keys(dataset))
+    ν_H = [getproperty(dataset[m], var) for m in mr_Hanson]
+    ax.errorbar(mr_Hanson, value.(ν_H);
+        yerr = errorbars_pyplot(ν_H),
+        ls="None", capsize = 3,
+        zorder = 2, marker = ".", ms = 5,
+        mfc = "k", kw...)
+end
+
 function spectrum_with_datadispersion(Fsym; kw...)
     @assert Fsym.kw[:V_symmetric] "only symmetric solutions supported"
-    f, ax = spectrum(Fsym; zorder=3, fillmarker = false, kw...)
+    f, ax = spectrum(Fsym; zorder=3, fillmarker = false, Δl_filter = 0, nodes_cutoff = 2, kw...)
 
     mr_Hanson = collect(keys(HansonGONGfit))
     ν_H = [HansonGONGfit[m].ν for m in mr_Hanson]
 
-    ax.errorbar(mr_Hanson, value.(ν_H),
-        yerr = errorbars_pyplot(ν_H),
-        color= "brown", ls="None", capsize = 3, label="Hanson 2020 [GONG]",
-        zorder = 2, marker = ".", ms = 5, mfc = "k")
-
-    mr_Liang = collect(keys(Liang2019MDIHMI))
-    ν_H = [Liang2019MDIHMI[m].ν for m in mr_Liang]
-    ax.errorbar(mr_Liang, value.(ν_H),
-        yerr = errorbars_pyplot(ν_H),
-        color= "green", ls="None", capsize = 3, label="Liang 2019 [MDI & HMI]",
-        zorder = 2, marker = ".", ms = 5, mfc = "k")
-
-    mr_Proxauf = collect(keys(ProxaufFit))
-    ν_H = [ProxaufFit[m].ν for m in mr_Proxauf]
-    ax.errorbar(mr_Proxauf, value.(ν_H),
-        yerr = errorbars_pyplot(ν_H),
-        color= "blue", ls="None", capsize = 3, label="Proxauf 2020 [HMI]",
-        zorder = 2, marker = ".", ms = 5, mfc = "k")
+    plot_dispersion(HansonGONGfit; ax, color= "darkkhaki", label="Hanson 2020 [GONG]")
+    plot_dispersion(Liang2019MDIHMI; ax, color= "sandybrown", label="Liang 2019 [MDI & HMI]")
+    plot_dispersion(ProxaufFit; ax, color= "cornflowerblue", label="Proxauf 2020 [HMI]")
+    plot_dispersion(HansonHighmfit; ax, color= "cornflowerblue", label="Hanson")
 
     ax.legend()
     f.tight_layout()
@@ -860,14 +943,13 @@ function eignorm(v)
 end
 
 function multiple_eigenfunctions_surface_m(feig::FilteredEigen, m; kw...)
-    @unpack operators = feig
-    multiple_eigenfunctions_surface_m(feig.lams, feig.vs, m; operators, kw...)
+    multiple_eigenfunctions_surface_m(feig.lams, feig.vs, m; feig.operators, feig.kw..., kw...)
 end
 function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractVector, m; kw...)
     multiple_eigenfunctions_surface_m(λs[m], vecs[m], m; kw...)
 end
 function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMatrix, m;
-        operators, f = figure(), kw...)
+        operators, f = figure(), V_symmetric,  kw...)
 
     @unpack rpts = operators;
     rsurfind = argmax(rpts)
@@ -890,7 +972,7 @@ function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMa
     vm = vecs[:, range(rossbyindex, step=-1, length=nmodes)]
 
     for (ind, (v, (ls, c, marker))) in enumerate(zip(eachcol(vm), lscm))
-        (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators)
+        (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, V_symmetric)
         @unpack V = VWSinv
         Vr = realview(V)
         Vr_surf = Vr[rsurfind, :]
@@ -912,14 +994,13 @@ function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMa
 end
 
 function multiple_eigenfunctions_radial_m(feig::FilteredEigen, m; kw...)
-    @unpack operators = feig
-    multiple_eigenfunctions_radial_m(feig.lams, feig.vs, m; operators, kw...)
+    multiple_eigenfunctions_radial_m(feig.lams, feig.vs, m; feig.operators, feig.kw..., kw...)
 end
 function multiple_eigenfunctions_radial_m(λs::AbstractVector, vecs::AbstractVector, m; kw...)
     multiple_eigenfunctions_radial_m(λs[m], vecs[m], m; kw...)
 end
 function multiple_eigenfunctions_radial_m(λs::AbstractVector, vecs::AbstractMatrix, m;
-        operators, f = figure(), kw...)
+        operators, f = figure(), V_symmetric, kw...)
 
     @unpack rpts = operators;
     rfrac = rpts./Rsun
@@ -942,7 +1023,7 @@ function multiple_eigenfunctions_radial_m(λs::AbstractVector, vecs::AbstractMat
     vm = vecs[:, range(rossbyindex, step=-1, length=nmodes)]
 
     for (ind, (v, (ls, c, marker))) in enumerate(zip(eachcol(vm), lscm))
-        (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators)
+        (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, V_symmetric)
         @unpack V = VWSinv
         Vr = realview(V)
         eqind = argmin(abs.(θ .- pi/2))
@@ -1019,32 +1100,35 @@ function compute_eigenfunction_spectra(v, m; operators, V_symmetric)
     @unpack nr, nℓ = operators.radial_params
     nvariables = length(v) ÷ (nr*nℓ)
     Vℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
+    Vℓ_full = first(Vℓ):last(Vℓ)
     Wℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, !V_symmetric)
+    Wℓ_full = first(Wℓ):last(Wℓ)
     Sℓ = Wℓ
+    Sℓ_full = Wℓ_full
 
     Vr = reshape(@view(v.re[1:nr*nℓ]), nr, nℓ);
     Vi = reshape(@view(v.im[1:nr*nℓ]), nr, nℓ);
     Wr = reshape(@view(v.re[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ);
     Wi = reshape(@view(v.im[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ);
 
-    Vrf = zeros(size(Vr,1), m:maximum(Vℓ));
+    Vrf = zeros(size(Vr,1), Vℓ_full);
     @views @. Vrf[:, Vℓ] = Vr
-    Vif = zeros(size(Vi,1), m:maximum(Vℓ))
+    Vif = zeros(size(Vi,1), Vℓ_full);
     @views @. Vif[:, Vℓ] = Vi
-    Wrf = zeros(size(Wr,1), m:maximum(Wℓ))
+    Wrf = zeros(size(Wr,1), Wℓ_full);
     @views @. Wrf[:, Wℓ] = Wr
-    Wif = zeros(size(Wi,1), m:maximum(Wℓ))
+    Wif = zeros(size(Wi,1), Wℓ_full);
     @views @. Wif[:, Wℓ] = Wi
 
     Sr = reshape(@view(v.re[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
-    Srf = zeros(size(Sr,1), m:maximum(Sℓ))
+    Srf = zeros(size(Sr,1), Sℓ_full)
     @views @. Srf[:, Sℓ] = Sr
 
     Si = reshape(@view(v.im[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
-    Sif = zeros(size(Si,1), m:maximum(Sℓ))
+    Sif = zeros(size(Si,1), Sℓ_full)
     @views @. Sif[:, Sℓ] = Si
 
-    map(parent, [Vrf, Wrf, Srf, Vif, Wif, Sif])
+    [Vrf, Wrf, Srf, Vif, Wif, Sif]
 end
 
 function eigenfunction_spectrum(v, m; operators, V_symmetric, kw...)

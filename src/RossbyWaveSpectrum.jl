@@ -172,7 +172,7 @@ function uniform_rotation_matrix(m; operators, kw...)
     return A
 end
 
-function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_symmetric = true, kw...)
+function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_symmetric, kw...)
     @unpack Ω0 = operators.constants;
     @unpack nr, nℓ = operators.radial_params
     @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
@@ -827,13 +827,13 @@ updaterotatationprofile(d, _) = d
 
 rossby_ridge(m; ΔΩ_frac = 0) = 2 / (m + 1) * (1 + ΔΩ_frac) - m * ΔΩ_frac
 
-function eigenvalue_filter(x, m;
+function eigenvalue_filter(λ, m;
     eig_imag_unstable_cutoff = -1e-6,
-    eig_imag_to_real_ratio_cutoff = 1,
+    eig_imag_to_real_ratio_cutoff = 3,
     eig_imag_stable_cutoff = Inf)
 
     freq_sectoral = 2 / (m + 1)
-    eig_imag_unstable_cutoff <= imag(x) < min(freq_sectoral * eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
+    eig_imag_unstable_cutoff <= imag(λ) < min(freq_sectoral * eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
 end
 function boundary_condition_filter(v::StructVector{<:Complex}, BC::AbstractMatrix{<:Real},
         BCVcache::StructVector{<:Complex} = allocate_BCcache(size(BC,1)), atol = 1e-5)
@@ -923,9 +923,12 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
     θ_cutoff = deg2rad(60), equator_power_cutoff_frac = 0.3;
     nℓ = operators.radial_params.nℓ,
     Plcosθ = allocate_Pl(m, nℓ),
-    filterfieldpowercutoff = 1e-4)
+    filterfieldpowercutoff = 1e-4,
+    V_symmetric,
+    )
 
-    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, nℓ, Plcosθ)
+    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m;
+            operators, nℓ, Plcosθ, V_symmetric)
 
     eqfilter = true
 
@@ -1051,12 +1054,12 @@ module Filters
     export DefaultFilter
     @bitflag FilterFlag::UInt8 begin
         NONE=0
-        EIGEN
-        EIGVAL
-        EIGVEC
-        BC
-        SPATIAL
-        NODES
+        EIGEN # Eigensystem satisfy
+        EIGVAL # Imaginary to real ratio
+        EIGVEC # spectrum power cutoff in n and l
+        BC # boundary conditions
+        SPATIAL # peak near the equator
+        NODES # number of radial nodes
     end
     FilterFlag(F::FilterFlag) = F
     function Base.:(!)(F::FilterFlag)
@@ -1070,7 +1073,8 @@ module Filters
 end
 using .Filters
 
-function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any}, filterflags = DefaultFilter)
+function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any},
+        filterflags = DefaultFilter)
 
     @unpack BC = constraints
     @unpack nℓ = operators.radial_params;
@@ -1087,6 +1091,7 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
     @unpack eigen_rtol = kw
     @unpack filterfieldpowercutoff = kw
     @unpack nnodesmax = kw
+    @unpack V_symmetric = kw
 
     (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache;
 
@@ -1095,37 +1100,52 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
     if Filters.EIGVAL in allfilters
         f = eigenvalue_filter(λ, m;
         eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
-        f || (@debug "EIGVAL" f; return false)
+        if !f
+            @debug "EIGVAL" λ, eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff
+            return false
+        end
     end
 
     if Filters.EIGVEC in allfilters
         f = eigvec_spectrum_filter!(F, v, m, operators;
             n_cutoff, Δl_cutoff, eigvec_spectrum_power_cutoff,
             filterfieldpowercutoff)
-        f || (@debug "EIGVEC" f; return false)
+        if !f
+            @debug "EIGVEC" n_cutoff, Δl_cutoff, eigvec_spectrum_power_cutoff, filterfieldpowercutoff
+        end
     end
 
     if Filters.BC in allfilters
         f = boundary_condition_filter(v, BC, BCVcache, bc_atol)
-        f || (@debug "BC" f; return false)
+        if !f
+            @debug "BC" bc_atol
+        end
     end
 
     if Filters.SPATIAL in allfilters
         f = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
             θ_cutoff, equator_power_cutoff_frac; nℓ, Plcosθ,
-            filterfieldpowercutoff)
-        f || (@debug "SPATIAL" f; return false)
+            filterfieldpowercutoff, V_symmetric)
+        if !f
+            @debug "SPATIAL" θ_cutoff, equator_power_cutoff_frac, filterfieldpowercutoff
+        end
     end
 
     if Filters.EIGEN in allfilters
         f = eigensystem_satisfy_filter(λ, v, M, MVcache; rtol = eigen_rtol)
-        f || (@debug "EIGEN" f; return false)
+        if !f
+            @debug "EIGEN" λ eigen_rtol
+            return false
+        end
     end
 
     if Filters.NODES in allfilters
         f = nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
-                nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax)
-        f || (@debug "NODES" f; return false)
+                nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax, V_symmetric)
+        if !f
+            @debug "NODES" filterfieldpowercutoff, nnodesmax
+            return false
+        end
     end
 
     return true
@@ -1171,7 +1191,7 @@ const DefaultFilterParams = Dict(
     :bc_atol => 1e-5,
     # eigval filter
     :eig_imag_unstable_cutoff => -1e-6,
-    :eig_imag_to_real_ratio_cutoff => 1,
+    :eig_imag_to_real_ratio_cutoff => 3,
     :eig_imag_stable_cutoff => Inf,
     # eigensystem satisfy filter
     :eigen_rtol => 0.01,
@@ -1418,6 +1438,12 @@ function FilteredEigen(fname::String)
     FilteredEigen(lam, vec, mr, kw, operators)
 end
 
+function Base.getindex(F::FilteredEigen, r::AbstractUnitRange{Int})
+    lams = F.lams[r]
+    vs = F.vs[r]
+    FilteredEigen(lams, vs, r, F.kw, F.operators)
+end
+
 function filter_eigenvalues(f::FilteredEigen; kw...)
     @unpack operators = f
     kw2 = merge(f.kw, kw)
@@ -1518,9 +1544,9 @@ function spharm_θ_grid_uniform(m, nℓ, ℓmax_mul = 4)
 end
 
 function invshtransform2!(VWSinv, VWS, m;
+    V_symmetric,
     nℓ = size(VWS.V, 2),
     Plcosθ = allocate_Pl(m, nℓ),
-    V_symmetric = true,
     Δl_cutoff = lastindex(Plcosθ),
     kw...)
 
