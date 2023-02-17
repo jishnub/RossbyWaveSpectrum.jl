@@ -19,6 +19,7 @@ export sinθdθ_plus_2cosθ_Operator
 export HorizontalLaplacian
 export expand
 export kronmatrix
+export kronmatrix!
 
 const WeightedNormalizedJacobi = JacobiWeight{<:NormalizedPolynomialSpace{<:Jacobi{<:ChebyshevInterval}}}
 const JacobiMaybeNormalized = Union{Jacobi{<:ChebyshevInterval},
@@ -318,15 +319,24 @@ end
 
 ##################################################################################
 
-function kronmatrix(P::PlusOperator, nr,
+function kronmatrix!(C, P::PlusOperator, nr,
 		ℓindrange_row::AbstractRange, ℓindrange_col::AbstractRange)
 
+	C .= 0
 	X = zeros(eltype(P), nr*length(ℓindrange_row), nr*length(ℓindrange_col))
-	mapfoldl((x,y) -> x .+= y, P.ops, init=zero(X)) do op
+	mapfoldl((x,y) -> x .+= y, P.ops, init=C) do op
 		let Y = X
 			kronmatrix!(Y, op, nr, ℓindrange_row, ℓindrange_col)
 		end
 	end
+	return C
+end
+function kronmatrix(P::PlusOperator, nr,
+		ℓindrange_row::AbstractRange, ℓindrange_col::AbstractRange)
+
+	C = zeros(eltype(P), nr*length(ℓindrange_row), nr*length(ℓindrange_col))
+	kronmatrix!(C, P, nr, ℓindrange_row, ℓindrange_col)
+	return C
 end
 function _kronmatrix(Kops::NTuple{2,Operator{T}}, nr,
 		ℓindrange_row::AbstractRange, ℓindrange_col::AbstractRange) where {T}

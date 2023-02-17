@@ -224,9 +224,12 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    VV_ = kronmatrix(scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds);
-    VW_ = kronmatrix(scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds);
+    temp = zeros(eltype(A), nr * nℓ, nr * nℓ)
+
+    VV_ = kronmatrix!(temp, scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds);
     VV .= real.(VV_);
+
+    VW_ = kronmatrix!(temp, scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds);
     VW .= (Rsun / Wscaling) .* real.(VW_);
 
     scaled_curl_curl_u_x_ω_r_tmp = OpVector(
@@ -238,21 +241,22 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
 
-    WV_ = kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds);
-    WW_ = kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds);
+    WV_ = kronmatrix!(temp, scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds);
     WV .= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
+
+    WW_ = kronmatrix!(temp, scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds);
     WW .= (Weqglobalscaling * Rsun^2) .* real.(WW_);
 
     WSop = (-g/(Ω0^2 * Rsun) ⊗ Iℓ) : space2d → space2d_D4
-    WS_ = kronmatrix(WSop, nr, W_ℓinds, W_ℓinds);
+    WS_ = kronmatrix!(temp, WSop, nr, W_ℓinds, W_ℓinds);
     WS .= real.(WS_) .* (Wscaling/Sscaling) * Weqglobalscaling
 
     SWop = (ddr_S0_by_Cp_by_r2 ⊗ ℓℓp1op) : space2d → space2d_D2
-    SW_ = kronmatrix(SWop, nr, W_ℓinds, W_ℓinds);
+    SW_ = kronmatrix!(temp, SWop, nr, W_ℓinds, W_ℓinds);
     SW .= real.(SW_) .* (Rsun^3 * Seqglobalscaling * Sscaling/Wscaling)
 
     SSop = ((-κ * (∇r2_plus_ddr_lnρT_ddr ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)) : space2d → space2d_D2) |> expand
-    SS_ = kronmatrix(SSop, nr, W_ℓinds, W_ℓinds);
+    SS_ = kronmatrix!(temp, SSop, nr, W_ℓinds, W_ℓinds);
     SS .= real.(SS_) .* (Rsun^2 * Seqglobalscaling)
 
     viscosity_terms!(A, m; operators, V_symmetric, kw...)
@@ -283,10 +287,13 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
+    temp = zeros(eltype(A), nr * nℓ, nr * nℓ)
+
     space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
     VVop_ = -ν * ((d2dr2 + ηρ * (ddr - 2onebyr)) ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)
     VVop = (VVop_ : space2d → space2d_D2) |> expand
-    VVim .= real.(kronmatrix(VVop, nr, V_ℓinds, V_ℓinds)) * Rsun^2
+    VV_ = kronmatrix!(temp, VVop, nr, V_ℓinds, V_ℓinds)
+    VVim .= real.(VV_) * Rsun^2
 
     WWop_ = -ν * (
         ((ddr - 2onebyr) ⊗ Iℓ) * ((r * d2dr2_ηρbyr_op) ⊗ Iℓ - ηρ_by_r2 ⊗ ℓℓp1op)
@@ -297,7 +304,8 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
         )
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     WWop = (WWop_ : space2d → space2d_D4) |> expand
-    WWim .= real.(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds)) .* (Rsun^4 * Weqglobalscaling)
+    WW_ = kronmatrix!(temp, WWop, nr, W_ℓinds, W_ℓinds)
+    WWim .= real.(WW_) .* (Rsun^4 * Weqglobalscaling)
 
     return A
 end
@@ -340,12 +348,14 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     VWop_ = -ΔΩ_frac * (Ir ⊗ two_by_ℓℓp1) * ((DDr - 2onebyr) ⊗ (cosθop * ℓℓp1op) +
                     DDr ⊗ sinθdθop - onebyr ⊗ (sinθdθop * ℓℓp1op))
 
+    temp = zeros(eltype(M), nr * nℓ, nr * nℓ)
+
     space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
     VVop = (VVop_ : space2d → space2d_D2) |> expand
     VWop = (VWop_ : space2d → space2d_D2) |> expand
-    VV_ = kronmatrix(VVop, nr, V_ℓinds, V_ℓinds)
+    VV_ = kronmatrix!(temp, VVop, nr, V_ℓinds, V_ℓinds)
     VV .+= real.(VV_)
-    VW_ = kronmatrix(VWop, nr, V_ℓinds, W_ℓinds)
+    VW_ = kronmatrix!(temp, VWop, nr, V_ℓinds, W_ℓinds)
     VW .+= (Rsun / Wscaling) .* real.(VW_)
 
     WVop_ = -ΔΩ_frac * (Ir ⊗ inv_ℓℓp1) * (ddr ⊗ (4cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 2)) +
@@ -355,14 +365,14 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     WVop = (WVop_ : space2d → space2d_D4) |> expand
     WWop = (WWop_ : space2d → space2d_D4) |> expand
-    WV_ = kronmatrix(WVop, nr, W_ℓinds, V_ℓinds);
+    WV_ = kronmatrix!(temp, WVop, nr, W_ℓinds, V_ℓinds);
     WV .+= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
-    WW_ = kronmatrix(WWop, nr, W_ℓinds, W_ℓinds);
+    WW_ = kronmatrix!(temp, WWop, nr, W_ℓinds, W_ℓinds);
     WW .+= (Weqglobalscaling * Rsun^2) .* real.(WW_);
 
     SSop_ = -m * ΔΩ_frac * (Ir ⊗ Iℓ)
     SSop = (SSop_ : space2d → space2d_D2) |> expand
-    SS_ = kronmatrix(SSop, nr, W_ℓinds, W_ℓinds);
+    SS_ = kronmatrix!(temp, SSop, nr, W_ℓinds, W_ℓinds);
     SS .+= Seqglobalscaling .* real.(SS_)
 
     return M
@@ -418,12 +428,14 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         (ΔΩ * DDr) ⊗ sinθdθop - (ΔΩ * onebyr + ddrΔΩ/2) ⊗ (sinθdθop * ℓℓp1op)
     )
 
+    temp = zeros(eltype(M), nr * nℓ, nr * nℓ)
+
     space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
     VVop = (VVop_ : space2d → space2d_D2) |> expand
     VWop = (VWop_ : space2d → space2d_D2) |> expand
-    VV_ = kronmatrix(VVop, nr, V_ℓinds, V_ℓinds)
+    VV_ = kronmatrix!(temp, VVop, nr, V_ℓinds, V_ℓinds)
     VV .+= real.(VV_)
-    VW_ = kronmatrix(VWop, nr, V_ℓinds, W_ℓinds)
+    VW_ = kronmatrix!(temp, VWop, nr, V_ℓinds, W_ℓinds)
     VW .+= (Rsun / Wscaling) .* real.(VW_)
 
     # V terms
@@ -443,25 +455,25 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     WVop = (WVop_ : space2d → space2d_D4) |> expand
     WWop = (WWop_ : space2d → space2d_D4) |> expand
-    WV_ = kronmatrix(WVop, nr, W_ℓinds, V_ℓinds);
+    WV_ = kronmatrix!(temp, WVop, nr, W_ℓinds, V_ℓinds);
     WV .+= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
-    WW_ = kronmatrix(WWop, nr, W_ℓinds, W_ℓinds);
+    WW_ = kronmatrix!(temp, WWop, nr, W_ℓinds, W_ℓinds);
     WW .+= (Weqglobalscaling * Rsun^2) .* real.(WW_);
 
     # ddrΔΩ_over_g = ddrΔΩ / g;
     # SVop_ = -m * 2ddrΔΩ_over_g ⊗ cosθop
     # SVop = (SVop_ : space2d → space2d_D2) |> expand
-    # SV_ = real(kronmatrix(SVop, nr, W_ℓinds, V_ℓinds));
+    # SV_ = real(kronmatrix!(temp, SVop, nr, W_ℓinds, V_ℓinds));
     # SV .+= (Ω0^2 * Rsun^2 * Seqglobalscaling * Sscaling) .* SV_
 
     # SWop_ = (2ddrΔΩ_over_g * DDr) ⊗ (cosθop * sinθdθop)
     # SWop = (SWop_ : space2d → space2d_D2) |> expand
-    # SW_ = real(kronmatrix(SWop, nr, W_ℓinds, W_ℓinds));
+    # SW_ = real(kronmatrix!(temp, SWop, nr, W_ℓinds, W_ℓinds));
     # SW .+= (Ω0^2 * Rsun^3 * Seqglobalscaling * Sscaling/Wscaling) .* SW_
 
     SSop_ = -m * (ΔΩ ⊗ Iℓ)
     SSop = (SSop_ : space2d → space2d_D2) |> expand
-    SS_ = kronmatrix(SSop, nr, W_ℓinds, W_ℓinds);
+    SS_ = kronmatrix!(temp, SSop, nr, W_ℓinds, W_ℓinds);
     SS .+= Seqglobalscaling .* real.(SS_)
 
     return M
@@ -595,10 +607,12 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    VV_ = kronmatrix(scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds)
+    temp = zeros(eltype(M), nr * nℓ, nr * nℓ)
+
+    VV_ = kronmatrix!(temp, scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds)
     VV .+= real.(VV_);
 
-    VW_ = kronmatrix(scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds)
+    VW_ = kronmatrix!(temp, scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds)
     VW .+= (Rsun / Wscaling) .* real.(VW_);
 
     # we compute the derivative of rdiv_ucrossω_h analytically
@@ -622,10 +636,10 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
 
-    WV_ = kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds)
+    WV_ = kronmatrix!(temp, scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds)
     WV .+= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
 
-    WW_ = kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds)
+    WW_ = kronmatrix!(temp, scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds)
     WW .+= (Weqglobalscaling * Rsun^2) .* real.(WW_);
 
     # entropy terms
@@ -637,7 +651,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     # SW .+= (Seqglobalscaling * (Ω0^2 * Rsun^3) * Sscaling/Wscaling) .* real.(SW_)
 
     SS_doppler_term = expand(-m*ΔΩ * I : space2d → space2d_D2)
-    SS_ = kronmatrix(SS_doppler_term, nr, W_ℓinds, W_ℓinds);
+    SS_ = kronmatrix!(temp, SS_doppler_term, nr, W_ℓinds, W_ℓinds);
     SS .+= Seqglobalscaling .* real.(SS_);
 
     return M
