@@ -66,7 +66,7 @@ function cbformat(x, _)
     a * L"\times10^{%$c}"
 end
 
-function plot_rossby_ridges(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
+function rossby_ridge_datas(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
         ax.plot(mr, -RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
             label = ΔΩ_frac == 0 ? L"\frac{2(Ω/2π)}{m+1}" : "Doppler\nshifted",
@@ -213,7 +213,7 @@ function Vreal_peak_l(v, m; operators, V_symmetric)
     ℓrange_full = axes(Vre,2)
     pow_ℓ = dropdims(sum(abs2, Vre, dims=1), dims=1)
     pow = sum(pow_ℓ)
-    ℓmaxind = findfirst(p -> p/pow > 0.5, pow_ℓ)
+    ℓmaxind = findfirst(p -> p/pow > 0.25, pow_ℓ)
     isnothing(ℓmaxind) ? nothing : ℓrange_full[ℓmaxind]
 end
 
@@ -364,19 +364,20 @@ function spectrum(lams::AbstractArray, mr;
     end
 
     if rossbyridges
-        plot_rossby_ridges(mr; νnHzunit, ax, kw...)
+        rossby_ridge_datas(mr; νnHzunit, ax, kw...)
     end
 
     zoom = V_symmetric && get(kw, :zoom, !get(kw, :diffrot, false))
 
     if zoom
-        lamscat_inset = mapreduce(real, vcat, lams[m_zoom]) .* νnHzunit
-        mcat_inset = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr[m_zoom], lams[m_zoom])])
+        zoom_inds = in(m_zoom).(mr)
+        lamscat_inset = mapreduce(real, vcat, lams[zoom_inds]) .* νnHzunit
+        mcat_inset = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr[zoom_inds], lams[zoom_inds])])
 
         c = if fillmarker && highlight_nodes
-            ns_cat_inset = reduce(vcat, ns[m_zoom])
+            ns_cat_inset = reduce(vcat, ns[zoom_inds])
         elseif fillmarker
-            lamsimcat_inset = mapreduce(imag, vcat, lams[m_zoom]) .* νnHzunit
+            lamsimcat_inset = mapreduce(imag, vcat, lams[zoom_inds]) .* νnHzunit
         else
             "white"
         end
@@ -392,7 +393,7 @@ function spectrum(lams::AbstractArray, mr;
             s=get(kw, :s, 25))
 
         if rossbyridges
-            plot_rossby_ridges(m_zoom; νnHzunit, ax = axins, kw...)
+            rossby_ridge_datas(m_zoom; νnHzunit, ax = axins, kw...)
         end
 
         ax.indicate_inset_zoom(axins, edgecolor = "grey", lw = 0.5)
@@ -441,9 +442,9 @@ function uniform_rotation_spectrum(fsym::FilteredEigen, fasym::FilteredEigen;
     fasymfilt = update_cutoffs(fasym; kw..., Δl_filter = get(kw, :Δl_filter_asym, nothing))
     commonkw = Base.pairs((; save = false, nodes_cutoff = nothing, Δl_filter = nothing))
     spectrum(fsymfilt; kw..., f, ax = axlist[1,1], commonkw...)
-    plot_rossby_ridge(fsymfilt; f, ax = axlist[1,1], kw..., commonkw...)
+    rossby_ridge_data(fsymfilt; f, ax = axlist[1,1], kw..., commonkw...)
     spectrum(fasymfilt; kw..., f, ax = axlist[2,1], commonkw...)
-    plot_high_frequency_ridge(fasymfilt; f, ax = axlist[2,1], kw..., commonkw...)
+    high_frequency_ridge_data(fasymfilt; f, ax = axlist[2,1], kw..., commonkw...)
 
     if plot_linewidths
         damping_rossbyridge(fsymfilt; f, ax = axlist[1,2], kw..., commonkw...)
@@ -457,7 +458,7 @@ function uniform_rotation_spectrum(fsym::FilteredEigen, fasym::FilteredEigen;
         @info "saving to $fpath"
         f.savefig(fpath)
     end
-    return nothing
+    return f, axlist
 end
 
 function mantissa_exponent_format(a)
@@ -466,7 +467,14 @@ function mantissa_exponent_format(a)
     (a_mantissa == 1 ? "" : L"%$a_mantissa\times") * L"10^{%$a_exponent}"
 end
 
-function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), kw...)
+function rossbyridge_modes(lams, mr; operators, kw...)
+    map(zip(mr, lams)) do (m, λ)
+        isempty(λ) && return eltype(λ)[NaN + im*NaN]
+        λ[argmin(abs.(real.(λ) .- RossbyWaveSpectrum.rossby_ridge(m)))]
+    end
+end
+
+function damping_rossbyridge(lams, mr; operators, f = figure(), ax = subplot(), kw...)
     V_symmetric = kw[:V_symmetric]
     @assert V_symmetric "V must be symmetric for rossby ridge plots"
     @unpack Ω0, ν = operators.constants
@@ -474,8 +482,7 @@ function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), k
 
     νnHzunit = freqnHzunit(Ω0)
 
-    λs_rossbyridge = [
-    (isempty(λ) ? eltype(λ)[NaN + im*NaN] : λ[argmin(abs.(real.(λ) .- RossbyWaveSpectrum.rossby_ridge(m)))]) for (m,λ) in zip(mr, lam)]
+    λs_rossbyridge = rossbyridge_modes(lams, mr; operators)
 
     ax.plot(mr, imag.(λs_rossbyridge) .* 2 #= HWHM to FWHM =# * νnHzunit,
             ls="dotted", color="grey", marker="o", mfc="white",
@@ -486,7 +493,7 @@ function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), k
     ax.set_ylabel("linewidth [nHz]", fontsize = 12)
     ax.set_xlabel("m", fontsize = 12)
     ax.legend(loc="best")
-    ax.set_title("Sectoral modes", fontsize = 12)
+    ax.set_title("Rossby ridge", fontsize = 12)
     ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
 
     ax.xaxis.set_major_locator(ticker.MaxNLocator(5, integer = true))
@@ -494,10 +501,22 @@ function damping_rossbyridge(lam, mr; operators, f = figure(), ax = subplot(), k
     if get(kw, :save, false)
         f.savefig(joinpath(plotdir, "damping_rossby.eps"))
     end
-    return nothing
+    return f, ax
 end
 
-function damping_highfreqridge(lam, mr; operators, f = figure(), ax = subplot(), kw...)
+function high_frequency_ridge_modes(lams, mr; operators, kw...)
+    @unpack Ω0 = operators.constants
+    νnHzunit = freqnHzunit(Ω0)
+    map(zip(mr, lams)) do (m, λ)
+        (isempty(λ) || m < 5) && return eltype(λ)(NaN + im*NaN)
+        lower_cutoff = RossbyWaveSpectrum.rossby_ridge(m)
+        upper_cutoff = RossbyWaveSpectrum.rossby_ridge(m) + 180/νnHzunit
+        λ_inrange = λ[lower_cutoff .< real.(λ) .< upper_cutoff]
+        isempty(λ_inrange) ? eltype(λ)(NaN + im*NaN) : argmin(imag, λ_inrange)
+    end
+end
+
+function damping_highfreqridge(lams, mr; operators, f = figure(), ax = subplot(), kw...)
     V_symmetric = kw[:V_symmetric]
     @assert !V_symmetric "V must be antisymmetric for high-frequency rossby ridge plots"
     @unpack Ω0, ν = operators.constants
@@ -509,12 +528,7 @@ function damping_highfreqridge(lam, mr; operators, f = figure(), ax = subplot(),
     plot_dispersion(HansonHFFit; var=:γ, ax, color= "grey", label="H22", zorder = 1)
 
     # model
-    λs_HFRridge = [
-    isempty(λ) || m < 5 ? eltype(λ)(NaN + im*NaN) : begin
-        approx_HFR_freq = 2.5 * RossbyWaveSpectrum.rossby_ridge(m)
-        λ_below = λ[real.(λ) .< approx_HFR_freq]
-        λ_below[argmin(abs.(real.(λ_below) .- approx_HFR_freq))]
-        end for (m,λ) in zip(mr, lam)]
+    λs_HFRridge = high_frequency_ridge_modes(lams, mr; operators)
 
     ax.plot(mr, imag.(λs_HFRridge) .* 2 #= HWHM to FWHM =# * νnHzunit,
             ls="dotted", color="grey", marker="o", mfc="white",
@@ -532,10 +546,10 @@ function damping_highfreqridge(lam, mr; operators, f = figure(), ax = subplot(),
     if get(kw, :save, false)
         f.savefig(joinpath(plotdir, "damping_highfreqridge.eps"))
     end
-    return nothing
+    return f, ax
 end
 
-function plot_rossby_ridge(lam, mr; f = figure(), ax = subplot(), kw...)
+function rossby_ridge_data(lams, mr; f = figure(), ax = subplot(), kw...)
     # observations
     plot_dispersion(HansonHighmfit; ax, color= "0.3", ls="dashed", label="Hanson")
     ax.legend(loc="best")
@@ -544,10 +558,10 @@ function plot_rossby_ridge(lam, mr; f = figure(), ax = subplot(), kw...)
     if get(kw, :save, false)
         f.savefig(joinpath(plotdir, "rossbyridge.eps"))
     end
-    return nothing
+    return f, ax
 end
 
-function plot_high_frequency_ridge(lam, mr; f = figure(), ax = subplot(), kw...)
+function high_frequency_ridge_data(lams, mr; f = figure(), ax = subplot(), kw...)
     # observations
     plot_dispersion(HansonHFFit; ax, color= "0.3", ls="dashed", label="H22")
 
@@ -557,11 +571,11 @@ function plot_high_frequency_ridge(lam, mr; f = figure(), ax = subplot(), kw...)
     if get(kw, :save, false)
         f.savefig(joinpath(plotdir, "highfreqridge.eps"))
     end
-    return nothing
+    return f, ax
 end
 
 for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge,
-        :plot_high_frequency_ridge, :plot_rossby_ridge]
+        :high_frequency_ridge_data, :rossby_ridge_data, :rossbyridge_modes, :high_frequency_ridge_modes]
     @eval function $f(feig::FilteredEigen; kw...)
         $f(feig.lams, feig.mr; feig.operators, vecs = feig.vs, feig.kw..., kw...)
     end

@@ -10,7 +10,6 @@ using BandedMatrices
 import BandedMatrices: BandedMatrix
 using ApproxFunOrthogonalPolynomials
 using ApproxFunSingularities
-using LazyArrays
 using BlockBandedMatrices
 
 export NormalizedPlm
@@ -308,31 +307,6 @@ end
 expand(λ::Number, O::Operator) = λ * O
 expand(O::Operator, λ::Number) = O * λ
 
-# function expand(A::MultiplicationWrapper, B::MultiplicationWrapper)
-# 	expand(A.op, B.op)
-# end
-# function expand(M::MultiplicationWrapper, K::Operator)
-# 	expand(M.op, K)
-# end
-# function expand(K::Operator, M::MultiplicationWrapper)
-# 	expand(K, M.op)
-# end
-
-# function expand(C::ConversionWrapper{<:KroneckerOperator}, D::ConversionWrapper{<:KroneckerOperator})
-# 	expand(C.op, D.op)
-# end
-# function expand(C::ConversionWrapper{<:KroneckerOperator}, O::Operator)
-# 	expand(C.op, O)
-# end
-# function expand(O::Operator, C::ConversionWrapper{<:KroneckerOperator})
-# 	expand(O, C.op)
-# end
-
-# function expand(K::KroneckerOperator, C::ConstantOperator)
-# 	(; λ) = C
-# 	expand(K, λ)
-# end
-
 function expand(C::ConstantTimesOperator, K::KroneckerOperator)
 	(; λ, op) = C
 	expand(op, expand(λ, K))
@@ -344,35 +318,38 @@ end
 
 ##################################################################################
 
-function kronmatrix(M::MultiplicationWrapper, args...)
-	kronmatrix(M.op, args...)
+function kronmatrix(P::PlusOperator, nr,
+		ℓindrange_row::AbstractRange, ℓindrange_col::AbstractRange)
+
+	X = zeros(eltype(P), nr*length(ℓindrange_row), nr*length(ℓindrange_col))
+	mapfoldl((x,y) -> x .+= y, P.ops, init=zero(X)) do op
+		let Y = X
+			kronmatrix!(Y, op, nr, ℓindrange_row, ℓindrange_col)
+		end
+	end
 end
-function kronmatrix(P::PlusOperator, args...)
-	mapfoldl(op -> kronmatrix(op, args...), (x,y) -> x .+= y, P.ops)
-end
-function kronmatrix(K::KroneckerOperator, nr, nℓ::Integer)
-	kronmatrix(K::KroneckerOperator, nr, 1:nℓ, 1:nℓ)
+function _kronmatrix(Kops::NTuple{2,Operator{T}}, nr,
+		ℓindrange_row::AbstractRange, ℓindrange_col::AbstractRange) where {T}
+
+	Or::Operator{T}, Oθ::Operator{T} = Kops
+	ℓindrange_row_ur = first(ℓindrange_row):last(ℓindrange_row)
+	ℓindrange_col_ur = first(ℓindrange_col):last(ℓindrange_col)
+	O1full = Oθ[ℓindrange_row_ur, ℓindrange_col_ur]::AbstractMatrix{T}
+	O1 = O1full[1:step(ℓindrange_row):end, 1:step(ℓindrange_col):end]::AbstractMatrix{T}
+	Matrix(O1)::Matrix{T}, Matrix(Or[1:nr, 1:nr])::Matrix{T}
 end
 function kronmatrix(K::KroneckerOperator, nr,
 		ℓindrange_row::AbstractRange, ℓindrange_col::AbstractRange)
-	Or, Oθ = K.ops
-	ℓindrange_row_ur = first(ℓindrange_row):last(ℓindrange_row)
-	ℓindrange_col_ur = first(ℓindrange_col):last(ℓindrange_col)
-	O1full = Oθ[ℓindrange_row_ur, ℓindrange_col_ur]
-	O1 = O1full[1:step(ℓindrange_row):end, 1:step(ℓindrange_col):end]
-	kronmatrix(Matrix(O1), Matrix(Or[1:nr, 1:nr]))
-end
 
-function kronmatrix(A::BandedMatrix, B::AbstractMatrix)
-	rows = Fill(size(B,1), size(A,1))
-	cols = Fill(size(B,2), size(A,2))
-	BlockBandedMatrix(Kron(A, B), rows, cols, bandwidths(A))
+	C = zeros(eltype(K), nr*length(ℓindrange_row), nr*length(ℓindrange_col))
+	kronmatrix!(C, K, nr, ℓindrange_row, ℓindrange_col)
 end
-function kronmatrix(A::BandedMatrix, B::BandedMatrix)
-	rows = Fill(size(B,1), size(A,1))
-	cols = Fill(size(B,2), size(A,2))
-	BandedBlockBandedMatrix(Kron(A, B), rows, cols, bandwidths(A), bandwidths(B))
+function kronmatrix!(C, K::KroneckerOperator, nr,
+		ℓindrange_row::AbstractRange, ℓindrange_col::AbstractRange)
+
+	A, B = _kronmatrix(K.ops, nr, ℓindrange_row, ℓindrange_col)
+	kron!(C, A, B)
+	return C
 end
-kronmatrix(A::AbstractMatrix, B::AbstractMatrix) = kron(A, B)
 
 end # module ApproxFunAssociatedLegendre

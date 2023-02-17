@@ -6,10 +6,12 @@ using TimerOutputs
 function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile;
             smoothing_param = 1e-5,
             r_in_frac = 0.7, r_out_frac = 0.995,
-            trackingratescaling = 1.0, Seqglobalscaling = 1e-7,
+            trackingratescaling = 1.0, Seqglobalscaling = 1.0,
             ΔΩ_scale = 1.0,
             Δl_cutoff = 15,
             n_cutoff = 15,
+            viscosity = 2e12,
+            trackingrate = :cutoff,
             extrakw...
             )
 
@@ -22,15 +24,17 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
 
     scalings = (; Seqglobalscaling, trackingratescaling)
 
+    hostname = Libc.gethostname()
+    @show hostname
     @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac smoothing_param ΔΩ_scale;
-    @show V_symmetric diffrot rotation_profile;
+    @show V_symmetric diffrot rotation_profile viscosity;
     @show extrakw
     @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads();
 
     timer = TimerOutput()
 
     operators = @timeit timer "operators" begin
-        RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = 2e12, scalings);
+        RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = viscosity, trackingrate, scalings);
     end
 
     spectrumfn! = @timeit timer "spectrumfn" begin

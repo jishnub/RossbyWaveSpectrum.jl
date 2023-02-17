@@ -12,6 +12,7 @@ using LinearAlgebra
 using DomainSets
 using FillArrays
 using IntervalSets
+using SnoopPrecompile
 using SparseArrays
 using StructArrays
 using UnPack
@@ -344,14 +345,19 @@ function radial_operators(operatorparams...)
 
     g = Fun(sg, radialspace)
 
-    tracking_rate_rad = if trackingrate === :cutoff
-            r_out_frac
+    Ω0::Float64 = if trackingrate isa Number
+            trackingrate * 2pi
+        elseif trackingrate === :cutoff
+            equatorial_rotation_angular_velocity_surface(r_out_frac)
         elseif trackingrate === :surface
-            1.0
+            equatorial_rotation_angular_velocity_surface(1.0)
+        elseif trackingrate === :carrington
+            456e-9 * 2pi
         else
-            throw(ArgumentError("trackingrate must be one of :cutoff or :surface"))
+            throw(ArgumentError("trackingrate must be a nHz value, or one of :carrington, :cutoff or :surface"))
         end
-    Ω0 = equatorial_rotation_angular_velocity_surface(tracking_rate_rad) * trackingratescaling
+
+    Ω0 *= trackingratescaling
 
     # viscosity
     ν /= Ω0 * Rsun^2
@@ -359,13 +365,13 @@ function radial_operators(operatorparams...)
 
     δ = Fun(superadiabaticity, radialspace);
     γ = 1.64
-    cp = 1.7e8
+    Cp = 1.7e8
 
-    # ddr_S0_by_cp = γ/cp * δ * ηρ;
-    ddr_S0_by_cp = chop(Fun(x -> γ / cp * superadiabaticity(x) * ηρ(x), radialspace), 1e-3);
-    @checkncoeff ddr_S0_by_cp nr
+    # ddr_S0_by_Cp = γ/Cp * δ * ηρ;
+    ddr_S0_by_Cp = chop(Fun(x -> γ / Cp * superadiabaticity(x) * ηρ(x), radialspace), 1e-3);
+    @checkncoeff ddr_S0_by_Cp nr
 
-    ddr_S0_by_cp_by_r2 = onebyr2 * ddr_S0_by_cp
+    ddr_S0_by_Cp_by_r2 = onebyr2 * ddr_S0_by_Cp
 
     # uniform rotation terms
     ∇r2_plus_ddr_lnρT_ddr = (d2dr2 + (twobyr * ddr)::Tmul + (ηρT * ddr)::Tmul)::Tplusinf;
@@ -383,7 +389,7 @@ function radial_operators(operatorparams...)
         onebyr2, onebyr3, onebyr4,
         ηρT, ρ, g, r, r2,
         ηρ_by_r, ηρ_by_r2, ηρ2_by_r2, ddr_ηρbyr, ddr_ηρbyr2, ηρ_by_r3,
-        ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddr_S0_by_cp_by_r2,
+        ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddr_S0_by_Cp_by_r2,
         ddrηρ_by_r, d2dr2ηρ_by_r
 
     diff_operators = (; DDr, DDr_minus_2byr, rDDr, rddr, ddrDDr, d2dr2DDr,
@@ -717,6 +723,11 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
         map(replaceemptywitheps, (ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ))
 
     (; ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ)
+end
+
+@precompile_all_calls begin
+    operators = radial_operators(20, 10)
+    solar_differential_rotation_profile_derivatives_Fun(; operators)
 end
 
 end # module SolarModel

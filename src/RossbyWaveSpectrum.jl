@@ -177,7 +177,7 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
     @unpack nr, nℓ = operators.radial_params
     @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
 
-    @unpack onebyr, onebyr2, r, r2, g, ηρ, ddr_S0_by_cp_by_r2 = operators.rad_terms;
+    @unpack onebyr, onebyr2, r, r2, g, ηρ, ddr_S0_by_Cp_by_r2 = operators.rad_terms;
     @unpack ddr, d2dr2, DDr, ddrDDr, ∇r2_plus_ddr_lnρT_ddr = operators.diff_operators;
     @unpack radialspaces = operators;
     @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
@@ -224,10 +224,10 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    VV_ = real(kronmatrix(scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds));
-    VW_ = real(kronmatrix(scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds));
-    VV .= VV_;
-    VW .= (Rsun / Wscaling) .* VW_;
+    VV_ = kronmatrix(scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds);
+    VW_ = kronmatrix(scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds);
+    VV .= real.(VV_);
+    VW .= (Rsun / Wscaling) .* real.(VW_);
 
     scaled_curl_curl_u_x_ω_r_tmp = OpVector(
         V = (Ir ⊗ two_by_ℓℓp1) * (
@@ -238,22 +238,22 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
 
-    WV_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds));
-    WW_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds));
-    WV .= (Weqglobalscaling * Rsun * Wscaling) .* WV_;
-    WW .= (Weqglobalscaling * Rsun^2) .* WW_;
+    WV_ = kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds);
+    WW_ = kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds);
+    WV .= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
+    WW .= (Weqglobalscaling * Rsun^2) .* real.(WW_);
 
     WSop = (-g/(Ω0^2 * Rsun) ⊗ Iℓ) : space2d → space2d_D4
-    WS_ = real(kronmatrix(WSop, nr, W_ℓinds, W_ℓinds));
-    WS .= WS_ .* (Wscaling/Sscaling) * Weqglobalscaling
+    WS_ = kronmatrix(WSop, nr, W_ℓinds, W_ℓinds);
+    WS .= real.(WS_) .* (Wscaling/Sscaling) * Weqglobalscaling
 
-    SWop = (ddr_S0_by_cp_by_r2 ⊗ ℓℓp1op) : space2d → space2d_D2
-    SW_ = real(kronmatrix(SWop, nr, W_ℓinds, W_ℓinds));
-    SW .= SW_ .* (Rsun^3 * Seqglobalscaling * Sscaling/Wscaling)
+    SWop = (ddr_S0_by_Cp_by_r2 ⊗ ℓℓp1op) : space2d → space2d_D2
+    SW_ = kronmatrix(SWop, nr, W_ℓinds, W_ℓinds);
+    SW .= real.(SW_) .* (Rsun^3 * Seqglobalscaling * Sscaling/Wscaling)
 
     SSop = ((-κ * (∇r2_plus_ddr_lnρT_ddr ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)) : space2d → space2d_D2) |> expand
-    SS_ = real(kronmatrix(SSop, nr, W_ℓinds, W_ℓinds));
-    SS .= SS_ .* (Rsun^2 * Seqglobalscaling)
+    SS_ = kronmatrix(SSop, nr, W_ℓinds, W_ℓinds);
+    SS .= real.(SS_) .* (Rsun^2 * Seqglobalscaling)
 
     viscosity_terms!(A, m; operators, V_symmetric, kw...)
 
@@ -286,7 +286,7 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
     space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
     VVop_ = -ν * ((d2dr2 + ηρ * (ddr - 2onebyr)) ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)
     VVop = (VVop_ : space2d → space2d_D2) |> expand
-    VVim .= real(kronmatrix(VVop, nr, V_ℓinds, V_ℓinds)) * Rsun^2
+    VVim .= real.(kronmatrix(VVop, nr, V_ℓinds, V_ℓinds)) * Rsun^2
 
     WWop_ = -ν * (
         ((ddr - 2onebyr) ⊗ Iℓ) * ((r * d2dr2_ηρbyr_op) ⊗ Iℓ - ηρ_by_r2 ⊗ ℓℓp1op)
@@ -297,7 +297,7 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
         )
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     WWop = (WWop_ : space2d → space2d_D4) |> expand
-    WWim .= real(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds)) .* (Rsun^4 * Weqglobalscaling)
+    WWim .= real.(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds)) .* (Rsun^4 * Weqglobalscaling)
 
     return A
 end
@@ -343,10 +343,10 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
     VVop = (VVop_ : space2d → space2d_D2) |> expand
     VWop = (VWop_ : space2d → space2d_D2) |> expand
-    VV_ = real(kronmatrix(VVop, nr, V_ℓinds, V_ℓinds))
-    VW_ = real(kronmatrix(VWop, nr, V_ℓinds, W_ℓinds))
-    VV .+= VV_
-    VW .+= (Rsun / Wscaling) .* VW_
+    VV_ = kronmatrix(VVop, nr, V_ℓinds, V_ℓinds)
+    VV .+= real.(VV_)
+    VW_ = kronmatrix(VWop, nr, V_ℓinds, W_ℓinds)
+    VW .+= (Rsun / Wscaling) .* real.(VW_)
 
     WVop_ = -ΔΩ_frac * (Ir ⊗ inv_ℓℓp1) * (ddr ⊗ (4cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 2)) +
         (ddr + 2onebyr) ⊗ (∇² * sinθdθop))
@@ -355,15 +355,15 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     WVop = (WVop_ : space2d → space2d_D4) |> expand
     WWop = (WWop_ : space2d → space2d_D4) |> expand
-    WV_ = real(kronmatrix(WVop, nr, W_ℓinds, V_ℓinds));
-    WW_ = real(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds));
-    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* WV_;
-    WW .+= (Weqglobalscaling * Rsun^2) .* WW_;
+    WV_ = kronmatrix(WVop, nr, W_ℓinds, V_ℓinds);
+    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
+    WW_ = kronmatrix(WWop, nr, W_ℓinds, W_ℓinds);
+    WW .+= (Weqglobalscaling * Rsun^2) .* real.(WW_);
 
     SSop_ = -m * ΔΩ_frac * (Ir ⊗ Iℓ)
     SSop = (SSop_ : space2d → space2d_D2) |> expand
-    SS_ = real(kronmatrix(SSop, nr, W_ℓinds, W_ℓinds));
-    SS .+= Seqglobalscaling .* SS_
+    SS_ = kronmatrix(SSop, nr, W_ℓinds, W_ℓinds);
+    SS .+= Seqglobalscaling .* real.(SS_)
 
     return M
 end
@@ -421,10 +421,10 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
     VVop = (VVop_ : space2d → space2d_D2) |> expand
     VWop = (VWop_ : space2d → space2d_D2) |> expand
-    VV_ = real(kronmatrix(VVop, nr, V_ℓinds, V_ℓinds))
-    VW_ = real(kronmatrix(VWop, nr, V_ℓinds, W_ℓinds))
-    VV .+= VV_
-    VW .+= (Rsun / Wscaling) .* VW_
+    VV_ = kronmatrix(VVop, nr, V_ℓinds, V_ℓinds)
+    VV .+= real.(VV_)
+    VW_ = kronmatrix(VWop, nr, V_ℓinds, W_ℓinds)
+    VW .+= (Rsun / Wscaling) .* real.(VW_)
 
     # V terms
     V_ℓs = ℓrange(m, nℓ, V_symmetric);
@@ -443,10 +443,10 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     WVop = (WVop_ : space2d → space2d_D4) |> expand
     WWop = (WWop_ : space2d → space2d_D4) |> expand
-    WV_ = real(kronmatrix(WVop, nr, W_ℓinds, V_ℓinds));
-    WW_ = real(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds));
-    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* WV_;
-    WW .+= (Weqglobalscaling * Rsun^2) .* WW_;
+    WV_ = kronmatrix(WVop, nr, W_ℓinds, V_ℓinds);
+    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
+    WW_ = kronmatrix(WWop, nr, W_ℓinds, W_ℓinds);
+    WW .+= (Weqglobalscaling * Rsun^2) .* real.(WW_);
 
     # ddrΔΩ_over_g = ddrΔΩ / g;
     # SVop_ = -m * 2ddrΔΩ_over_g ⊗ cosθop
@@ -461,8 +461,8 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
     SSop_ = -m * (ΔΩ ⊗ Iℓ)
     SSop = (SSop_ : space2d → space2d_D2) |> expand
-    SS_ = real(kronmatrix(SSop, nr, W_ℓinds, W_ℓinds));
-    SS .+= Seqglobalscaling .* SS_
+    SS_ = kronmatrix(SSop, nr, W_ℓinds, W_ℓinds);
+    SS .+= Seqglobalscaling .* real.(SS_)
 
     return M
 end
@@ -595,10 +595,11 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    VV_ = real(kronmatrix(scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds));
-    VW_ = real(kronmatrix(scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds));
-    VV .+= VV_;
-    VW .+= (Rsun / Wscaling) .* VW_;
+    VV_ = kronmatrix(scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds)
+    VV .+= real.(VV_);
+
+    VW_ = kronmatrix(scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds)
+    VW .+= (Rsun / Wscaling) .* real.(VW_);
 
     # we compute the derivative of rdiv_ucrossω_h analytically
     # this lets us use the more accurate representations of ddrDDr instead of using ddr * DDr
@@ -621,22 +622,23 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
 
-    WV_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds));
-    WW_ = real(kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds));
-    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* WV_;
-    WW .+= (Weqglobalscaling * Rsun^2) .* WW_;
+    WV_ = kronmatrix(scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds)
+    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
+
+    WW_ = kronmatrix(scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds)
+    WW .+= (Weqglobalscaling * Rsun^2) .* real.(WW_);
 
     # entropy terms
     # thermal_wind_term_tmp = im*((2/g) ⊗ Iℓ) * dz_ΔΩ * rsinθufθ
     # thermal_wind_term = expand(thermal_wind_term_tmp : space2d → space2d_D2)
-    # SV_ = real(kronmatrix(thermal_wind_term.V, nr, W_ℓinds, V_ℓinds));
-    # SV .+= (Seqglobalscaling * (Ω0^2 * Rsun^2) * Sscaling) .* SV_
-    # SW_ = real(kronmatrix(thermal_wind_term.iW, nr, W_ℓinds, W_ℓinds));
-    # SW .+= (Seqglobalscaling * (Ω0^2 * Rsun^3) * Sscaling/Wscaling) .* SW_
+    # SV_ = kronmatrix(thermal_wind_term.V, nr, W_ℓinds, V_ℓinds);
+    # SV .+= (Seqglobalscaling * (Ω0^2 * Rsun^2) * Sscaling) .* real.(SV_)
+    # SW_ = kronmatrix(thermal_wind_term.iW, nr, W_ℓinds, W_ℓinds);
+    # SW .+= (Seqglobalscaling * (Ω0^2 * Rsun^3) * Sscaling/Wscaling) .* real.(SW_)
 
     SS_doppler_term = expand(-m*ΔΩ * I : space2d → space2d_D2)
-    SS_ = real(kronmatrix(SS_doppler_term, nr, W_ℓinds, W_ℓinds));
-    SS .+= Seqglobalscaling * SS_
+    SS_ = kronmatrix(SS_doppler_term, nr, W_ℓinds, W_ℓinds);
+    SS .+= Seqglobalscaling .* real.(SS_);
 
     return M
 end
@@ -1112,6 +1114,7 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
             filterfieldpowercutoff)
         if !f
             @debug "EIGVEC" n_cutoff, Δl_cutoff, eigvec_spectrum_power_cutoff, filterfieldpowercutoff
+            return false
         end
     end
 
@@ -1119,6 +1122,7 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
         f = boundary_condition_filter(v, BC, BCVcache, bc_atol)
         if !f
             @debug "BC" bc_atol
+            return false
         end
     end
 
@@ -1128,6 +1132,7 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
             filterfieldpowercutoff, V_symmetric)
         if !f
             @debug "SPATIAL" θ_cutoff, equator_power_cutoff_frac, filterfieldpowercutoff
+            return false
         end
     end
 
@@ -1307,24 +1312,28 @@ function eigvec_spectrum_filter_map!(Ctid, spectrumfn!, m, operators, constraint
         timer = TimerOutput(), kw...)
     M, cache, temp_projectback = Ctid;
     timerlocal = TimerOutput()
+    @debug "starting computation for m = $m on tid = $(Threads.threadid()) with $(BLAS.get_num_threads()) BLAS threads"
     X = @timeit timerlocal "m=$m tid=$(Threads.threadid()) spectrum" begin
         spectrumfn!(M, m; operators, constraints, cache, temp_projectback, timer = timerlocal, kw...)
     end;
+    @debug "computed eigenvalues for m = $m on tid = $(Threads.threadid()) with $(BLAS.get_num_threads()) BLAS threads"
     F = @timeit timerlocal "m=$m tid=$(Threads.threadid()) filter" begin
         filter_eigenvalues(X..., m; operators, constraints, kw...)
     end;
+    @debug "filtered eigenvalues for m = $m on tid = $(Threads.threadid()) with $(BLAS.get_num_threads()) BLAS threads"
     merge!(timer, timerlocal, tree_point = ["spectrum_filter"])
     return F
 end
 
 function eigvec_spectrum_filter_map_nthreads!(c, nt, spectrumfn!, mr, operators, constraints; kw...)
     nblasthreads = BLAS.get_num_threads()
-    nt = Threads.nthreads()
 
     TMapReturnEltype = Tuple{Vector{ComplexF64},
                     StructArray{ComplexF64, 2, @NamedTuple{re::Matrix{Float64},im::Matrix{Float64}}, Int64}}
     try
-        BLAS.set_num_threads(max(1, div(nblasthreads, nt)))
+        nblasthreads_new = max(1, div(nblasthreads, nt))
+        BLAS.set_num_threads(nblasthreads_new)
+        @debug "using $nblasthreads_new BLAS threads for m range = $mr"
         if length(mr) > 0
             Folds.map(mr) do m
                 Ctid = take!(c)
@@ -1371,9 +1380,11 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
             mr1 = @view mr[1:end-nthreads_trailing_elems]
             mr2 = @view mr[end-nthreads_trailing_elems+1:end]
 
+            @debug "starting first set for m range = $mr1 with $(Threads.nthreads()) threads"
             λv1 = eigvec_spectrum_filter_map_nthreads!(c, Threads.nthreads(), spectrumfn!, mr1, operators, constraints;
                 timer, kw...)
 
+            @debug "starting first set for m range = $mr2 with $nthreads_trailing_elems threads"
             λv2 = eigvec_spectrum_filter_map_nthreads!(c, nthreads_trailing_elems, spectrumfn!, mr2, operators, constraints;
                 timer, kw...)
 
@@ -1382,6 +1393,7 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
             append!(λs, λs2)
             append!(vs, vs2)
         else
+            @debug "starting for m range = $mr with $(Threads.nthreads()) threads"
             λv = eigvec_spectrum_filter_map_nthreads!(c, Threads.nthreads(), spectrumfn!, mr, operators, constraints;
                 timer, kw...)
             λs, vs = map(first, λv), map(last, λv)
