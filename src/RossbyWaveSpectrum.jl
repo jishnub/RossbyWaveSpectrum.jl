@@ -598,8 +598,10 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     rsinθufϕ = OpVector(V = -Ir ⊗ sinθdθop, iW = (m * DDr) ⊗ Iℓ);
     rsinθωfϕ = OpVector(V = im * m * ddr ⊗ Iℓ, iW = -im * (ddrDDr ⊗ Iℓ - onebyr2op ⊗ ℓℓp1op));
 
-    curl_u_x_ω_r = (ωΩr * (DDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (Ir ⊗ sinθdθop) - ∂rωΩr) * ufr +
-        ((-onebyr2 ⊗ Iℓ) * ∂θωΩr_by_sinθ) * rsinθufθ - im * m * ΔΩ * ωfr;
+    curl_uf_x_ωΩ_r = ((ωΩr * (DDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (Ir ⊗ sinθdθop) - ∂rωΩr) * ufr +
+        ((-onebyr2 ⊗ Iℓ) * ∂θωΩr_by_sinθ) * rsinθufθ);
+    curl_uΩ_x_ωf_r = -im * m * ΔΩ * ωfr;
+    curl_u_x_ω_r = curl_uf_x_ωΩ_r + curl_uΩ_x_ωf_r;
     scaled_curl_u_x_ω_r_tmp = ((-im * r2) ⊗ inv(ℓℓp1op)) * curl_u_x_ω_r;
     space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
     scaled_curl_u_x_ω_r = (scaled_curl_u_x_ω_r_tmp : space2d → space2d_D2) |> expand;

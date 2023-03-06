@@ -707,19 +707,22 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     ΔΩ_terms = solar_differential_rotation_profile_derivatives_grid(; operators, kw...);
     ΔΩ_rθ, dr_ΔΩ_rθ, d2r_ΔΩ_rθ = ΔΩ_terms;
 
-    space = radialspace ⊗ NormalizedLegendre()
+    space = radialspace ⊗ Legendre()
 
     cosθ = Fun(Legendre());
     Ir = I : radialspace;
-    sinθdθop = -(1-cosθ^2)*Derivative(Legendre())
+    dcosθ = Derivative(Legendre())
+    sinθdθop = -(1-cosθ^2)*dcosθ
 
     s = get(kw, :smoothing_param, 1e-5)
 
     ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space), s);
 
     dr_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, dr_ΔΩ_rθ, s = s), space), s);
-    dz_ΔΩ_ = (Ir ⊗ cosθ) * dr_ΔΩ - (onebyr ⊗ sinθdθop) * ΔΩ;
-    dz_ΔΩ = chop(Fun(dz_ΔΩ_, space))::typeof(ΔΩ);
+    onebyr_sinθdθ = KroneckerOperator(Multiplication(onebyr, radialspace), sinθdθop,
+                radialspace ⊗ domainspace(dcosθ), radialspace ⊗ rangespace(dcosθ))
+    dz_ΔΩ_ = (Ir ⊗ cosθ) * dr_ΔΩ - onebyr_sinθdθ * ΔΩ;
+    dz_ΔΩ = chop(Fun(dz_ΔΩ_, space));
 
     d2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, d2r_ΔΩ_rθ, s = s), space), s);
 
