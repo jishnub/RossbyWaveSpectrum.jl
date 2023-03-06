@@ -319,12 +319,19 @@ end
 
 ##################################################################################
 
+function addto!(x, y)
+	for i in eachindex(x,y)
+		x[i] += y[i]
+	end
+	return x
+end
+
 function kronmatrix!(C, P::PlusOperator, nr,
 		ℓindrange_row::AbstractRange, ℓindrange_col::AbstractRange)
 
 	C .= 0
 	X = zeros(eltype(P), nr*length(ℓindrange_row), nr*length(ℓindrange_col))
-	mapfoldl((x,y) -> x .+= y, P.ops, init=C) do op
+	mapfoldl(addto!, P.ops, init=C) do op
 		let Y = X
 			kronmatrix!(Y, op, nr, ℓindrange_row, ℓindrange_col)
 		end

@@ -907,7 +907,7 @@ function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = 1e-
 end
 
 function eigvec_spectrum_filter!(F, v, m, operators;
-    n_cutoff = 7, Δl_cutoff = 7, eigvec_spectrum_power_cutoff = 0.9,
+    n_cutoff = 7, Δl_cutoff = 7, eigvec_spectrum_power_cutoff = 0.5,
     filterfieldpowercutoff = 1e-4,
     kw...)
 
@@ -1217,7 +1217,7 @@ const DefaultFilterParams = Dict(
     # smooth eigenvector filter
     :Δl_cutoff => 7,
     :n_cutoff => 10,
-    :eigvec_spectrum_power_cutoff => 0.9,
+    :eigvec_spectrum_power_cutoff => 0.5,
     # spatial localization filter
     :θ_cutoff => deg2rad(60),
     :equator_power_cutoff_frac => 0.3,

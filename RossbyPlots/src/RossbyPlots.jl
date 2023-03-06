@@ -107,6 +107,7 @@ struct Measurement
 end
 Measurement(a, b) = Measurement(a, b, b)
 value(m::Measurement) = m.value
+value(x) = x
 uncertainty(m::Measurement) = (lowerr, higherr)
 lowerr(m::Measurement) = m.lowerr
 higherr(m::Measurement) = m.higherr
@@ -467,10 +468,23 @@ function mantissa_exponent_format(a)
     (a_mantissa == 1 ? "" : L"%$a_mantissa\times") * L"10^{%$a_exponent}"
 end
 
-function rossbyridge_modes(lams, mr; operators, kw...)
+function rossbyridge_mode_indices(lams, mr; operators, kw...)
+    @unpack Ω0, ν = operators.constants
+    νnHzunit = -freqnHzunit(Ω0)
     map(zip(mr, lams)) do (m, λ)
         isempty(λ) && return eltype(λ)[NaN + im*NaN]
-        λ[argmin(abs.(real.(λ) .- RossbyWaveSpectrum.rossby_ridge(m)))]
+        λ0 = if haskey(HansonHighmfit, m)
+            value(HansonHighmfit[m].ν)/νnHzunit
+        else
+            RossbyWaveSpectrum.rossby_ridge(m)
+        end
+        argmin(abs.(real.(λ) .- λ0))
+    end
+end
+function rossbyridge_mode_frequencies(lams, mr; operators, kw...)
+    inds = rossbyridge_mode_indices(lams, mr; operators, kw...)
+    map(zip(lams, inds)) do (λ, i)
+        λ[i]
     end
 end
 
@@ -482,7 +496,7 @@ function damping_rossbyridge(lams, mr; operators, f = figure(), ax = subplot(), 
 
     νnHzunit = freqnHzunit(Ω0)
 
-    λs_rossbyridge = rossbyridge_modes(lams, mr; operators)
+    λs_rossbyridge = rossbyridge_mode_frequencies(lams, mr; operators)
 
     ax.plot(mr, imag.(λs_rossbyridge) .* 2 #= HWHM to FWHM =# * νnHzunit,
             ls="dotted", color="grey", marker="o", mfc="white",
@@ -504,15 +518,20 @@ function damping_rossbyridge(lams, mr; operators, f = figure(), ax = subplot(), 
     return f, ax
 end
 
-function high_frequency_ridge_modes(lams, mr; operators, kw...)
+function HFR_mode_frequencies(lams, mr; operators, kw...)
     @unpack Ω0 = operators.constants
     νnHzunit = freqnHzunit(Ω0)
     map(zip(mr, lams)) do (m, λ)
         (isempty(λ) || m < 5) && return eltype(λ)(NaN + im*NaN)
-        lower_cutoff = RossbyWaveSpectrum.rossby_ridge(m)
-        upper_cutoff = RossbyWaveSpectrum.rossby_ridge(m) + 180/νnHzunit
-        λ_inrange = λ[lower_cutoff .< real.(λ) .< upper_cutoff]
-        isempty(λ_inrange) ? eltype(λ)(NaN + im*NaN) : argmin(imag, λ_inrange)
+        if haskey(HansonHFFit, m)
+            λ0 = value(HansonHFFit[m].ν)/(-νnHzunit)
+            λ[argmin(abs.(real.(λ) .- λ0))]
+        else
+            lower_cutoff = RossbyWaveSpectrum.rossby_ridge(m)
+            upper_cutoff = RossbyWaveSpectrum.rossby_ridge(m) + 180/νnHzunit
+            λ_inrange = λ[lower_cutoff .< real.(λ) .< upper_cutoff]
+            isempty(λ_inrange) ? eltype(λ)(NaN + im*NaN) : argmin(imag, λ_inrange)
+        end
     end
 end
 
@@ -528,7 +547,7 @@ function damping_highfreqridge(lams, mr; operators, f = figure(), ax = subplot()
     plot_dispersion(HansonHFFit; var=:γ, ax, color= "grey", label="H22", zorder = 1)
 
     # model
-    λs_HFRridge = high_frequency_ridge_modes(lams, mr; operators)
+    λs_HFRridge = HFR_mode_frequencies(lams, mr; operators)
 
     ax.plot(mr, imag.(λs_HFRridge) .* 2 #= HWHM to FWHM =# * νnHzunit,
             ls="dotted", color="grey", marker="o", mfc="white",
@@ -575,7 +594,9 @@ function high_frequency_ridge_data(lams, mr; f = figure(), ax = subplot(), kw...
 end
 
 for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge,
-        :high_frequency_ridge_data, :rossby_ridge_data, :rossbyridge_modes, :high_frequency_ridge_modes]
+        :high_frequency_ridge_data, :rossby_ridge_data,
+        :rossbyridge_mode_indices, :rossbyridge_mode_frequencies,
+        :HFR_mode_frequencies]
     @eval function $f(feig::FilteredEigen; kw...)
         $f(feig.lams, feig.mr; feig.operators, vecs = feig.vs, feig.kw..., kw...)
     end
@@ -776,7 +797,9 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
 end
 
 function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
-        operators, field = :V, f = figure(), component = real, kw...)
+        operators, field = :V, f = figure(), component = real,
+        angular_profile = :max,
+        kw...)
 
     V = getproperty(VWSinv, field)::Matrix{ComplexF64}
     Vr = copy(component(V))
@@ -787,11 +810,14 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         Vr ./= scale
     end
     @unpack rpts = operators
+    @unpack r_out = operators.radial_params
     r_frac = rpts ./ Rsun
     equator_ind = argmin(abs.(θ .- pi/2))
     ind_max = RossbyWaveSpectrum.angularindex_maximum(Vr, θ)
     V_peak_depthprofile = @view Vr[:, ind_max]
     r_max_ind = argmax(abs.(V_peak_depthprofile))
+    r_out_ind = argmax(abs.(rpts .- r_out))
+    Vr .*= sign(Vr[r_out_ind, equator_ind])
 
     cmap = get(kw, :cmap, "Greys")
 
@@ -819,8 +845,15 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         end
     end
 
+    norm0 = matplotlib.colors.TwoSlopeNorm(vcenter=0)
+
     if !polar
-        axsurf.plot(θ, (@view Vr[r_max_ind, :]), color = "black")
+        r_plot_ind = if angular_profile == :max
+            r_max_ind
+        elseif angular_profile == :surface
+            r_out_ind
+        end
+        axsurf.plot(θ, (@view Vr[r_plot_ind, :]), color = "black")
         if get(kw, :setylabel, true)
             axsurf.set_ylabel("Angular\nprofile", fontsize = 11)
         end
@@ -843,13 +876,13 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         axdepth.xaxis.set_major_formatter(xfmt)
         axdepth.xaxis.tick_top()
 
-        axprofile.pcolormesh(θ, r_frac, Vr, cmap = cmap, rasterized = true, shading = "auto")
+        axprofile.pcolormesh(θ, r_frac, Vr; cmap, norm=norm0, rasterized = true, shading = "auto")
         xlabel = get(kw, :longxlabel, true) ? "colatitude (θ) [radians]" : "θ [radians]"
         axprofile.set_xlabel(xlabel, fontsize = 11)
     else
         x = r_frac .* sin.(θ)'
         z = r_frac .* cos.(θ)'
-        p = axprofile.pcolormesh(x, z, Vr, cmap = cmap, rasterized = true,
+        p = axprofile.pcolormesh(x, z, Vr; cmap, norm=norm0, rasterized = true,
             shading = "auto")
         axprofile.yaxis.set_major_locator(ticker.MaxNLocator(3))
         axprofile.xaxis.set_major_locator(ticker.MaxNLocator(3))
@@ -857,14 +890,14 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         axprofile.set_ylabel(L"z/R_\odot", fontsize=12)
         f.set_size_inches(3, 3)
         cb = colorbar(mappable=p, ax=axprofile)
-        cb.ax.yaxis.set_major_locator(ticker.MaxNLocator(3))
+        # cb.ax.yaxis.set_major_locator(ticker.MultipleLocator(0.2))
     end
 
     if get(kw, :suptitle, true)
         fieldname = field == :V ? "Toroidal" :
                     field == :W ? "Poloidal" :
                     field == :S ? "Entropy" : nothing
-        axprofile.set_title("$fieldname streamfunction")
+        axprofile.set_title("$fieldname streamfunction m = $m")
     end
 
     if !get(kw, :constrained_layout, false)
@@ -877,7 +910,8 @@ end
 
 function eigenfunction(feig::FilteredEigen, m::Integer, ind::Integer; kw...)
     @unpack operators = feig
-    eigenfunction(feig.vs[m][:, ind], m; operators, feig.kw..., kw...)
+    mind = findfirst(==(m), feig.mr)
+    eigenfunction(feig.vs[mind][:, ind], m; operators, feig.kw..., kw...)
 end
 
 function eigenfunction(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
@@ -887,7 +921,8 @@ end
 
 function eigenfunctions_allstreamfn(f::FilteredEigen, m::Integer, vind::Integer; kw...)
     @unpack operators = f
-    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(f.vs[m][:, vind], m;
+    mind = findfirst(==(m), feig.mr)
+    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(f.vs[mind][:, vind], m;
             operators, f.kw..., kw...)
     if get(kw, :scale_eigenvectors, false)
         RossbyWaveSpectrum.scale_eigenvectors!(VWSinv; operators)
@@ -935,20 +970,8 @@ function eigenfunctions_allstreamfn(VWSinv::NamedTuple, θ, m; operators, kw...)
 end
 
 function eigenfunction_rossbyridge(f::FilteredEigen, m; kw...)
-    eigenfunction_rossbyridge(f.lams[m], f.vs[m], m; operators = f.operators, f.kw..., kw...)
-end
-
-function eigenfunction_rossbyridge(λs::AbstractVector{<:AbstractVector},
-    vs::AbstractVector{<:AbstractMatrix}, m; kw...)
-    eigenfunction_rossbyridge(λs[m], vs[m], m; kw...)
-end
-
-function eigenfunction_rossbyridge(λs::AbstractVector{<:Number},
-    vs::AbstractMatrix{<:Number}, m; kw...)
-
-    ΔΩ_frac = get(kw, :ΔΩ_frac, 0)
-    minind = findmin(abs, real(λs) .- RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_frac))[2]
-    eigenfunction(vs[:, minind], m; kw...)
+    mind = findfirst(==(m), feig.mr)
+    eigenfunction_rossbyridge(f.lams[mind], f.vs[mind], m; operators = f.operators, f.kw..., kw...)
 end
 
 function eignorm(v)

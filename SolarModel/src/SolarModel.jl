@@ -236,7 +236,6 @@ end
 struct OperatorWrap{T}
     x::T
 end
-Base.show(io::IO, ::Type{<:OperatorWrap}) = print(io, "Operators")
 Base.show(io::IO, o::OperatorWrap) = print(io, "Operators")
 Base.getproperty(y::OperatorWrap, name::Symbol) = getproperty(getfield(y, :x), name)
 Base.propertynames(y::OperatorWrap) = Base.propertynames(getfield(y, :x))
@@ -550,12 +549,21 @@ function solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts, θpts)
     d2r_ΔΩ_fullinterp = derivative.((splΔΩ2D,), rpts, θpts', nux = 2, nuy = 0)
     ΔΩ_fullinterp, dr_ΔΩ_fullinterp, d2r_ΔΩ_fullinterp
 end
-function solar_rotation_profile_and_derivative_grid(; operators, kw...)
+function maybe_stretched_radius(; operators, squished = false)
     @unpack rpts = operators
+    @unpack r_out = operators.radial_params
+    if squished
+        rpts ./ r_out .* Rsun
+    else
+        rpts
+    end
+end
+function solar_rotation_profile_and_derivative_grid(; squished = false, operators, kw...)
     @unpack nℓ = operators.radial_params
     θpts = points(ChebyshevInterval(), nℓ)
     splΔΩ2D = solar_rotation_profile_spline(; operators, kw...)
-    solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts, θpts)
+    rpts_maybestretched = maybe_stretched_radius(; operators, squished)
+    solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts_maybestretched, θpts)
 end
 
 function _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts)
@@ -565,18 +573,11 @@ function _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts)
     d2dr2ΔΩ_r = derivative.((splΔΩ2D,), rpts, equator_coord, nux = 2, nuy = 0)
     ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
 end
-function equatorial_rotation_profile_and_derivative_grid(; operators, kw...)
+function equatorial_rotation_profile_and_derivative_grid(; squished = false, operators, kw...)
     @unpack rpts = operators
     splΔΩ2D = solar_rotation_profile_spline(; operators, kw...)
-    _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts)
-end
-
-function equatorial_rotation_profile_and_derivative_squished_grid(; operators, kw...)
-    @unpack rpts = operators;
-    @unpack r_out = operators.radial_params;
-    splΔΩ2D = solar_rotation_profile_spline(; operators, kw...)
-    rpts_stretched = rpts ./ r_out .* Rsun
-    _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts_stretched)
+    rpts_maybestretched = maybe_stretched_radius(; operators, squished)
+    _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts_maybestretched)
 end
 
 function radial_differential_rotation_profile_derivatives_grid(;
@@ -593,7 +594,7 @@ function radial_differential_rotation_profile_derivatives_grid(;
             equatorial_rotation_profile_and_derivative_grid(; operators, kw...)
     elseif rotation_profile == :solar_equator_squished
         ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r =
-            equatorial_rotation_profile_and_derivative_squished_grid(; operators, kw...)
+            equatorial_rotation_profile_and_derivative_grid(; squished = true, operators, kw...)
     elseif rotation_profile == :linear # for testing
         f = ΔΩ_frac / (r_in / Rsun - 1)
         ΔΩ_r = @. Ω0 * f * (rpts / Rsun - 1)
@@ -672,18 +673,21 @@ function solar_differential_rotation_profile_derivatives_grid(;
     if rotation_profile == :constant
         ΔΩ = fill(Ω0 * ΔΩ_frac, nr, nθ)
         dr_ΔΩ, d2r_ΔΩ = (zeros(nr, nθ) for i in 1:2)
-    elseif rotation_profile == :radial_equator
+    elseif rotation_profile ∈ (:radial_equator, :radial_equator_squished)
         ΔΩ_r_, ddrΔΩ_r_, d2dr2ΔΩ_r_ = radial_differential_rotation_profile_derivatives_grid(;
-            operators, rotation_profile = :solar_equator, kw...)
+            operators, rotation_profile = :solar_equator,
+            squished = rotation_profile == :radial_equator_squished, kw...)
         for x in (ΔΩ_r_, ddrΔΩ_r_, d2dr2ΔΩ_r_)
             x .*= Ω0
         end
         ΔΩ = repeat(ΔΩ_r_, 1, nℓ)
         dr_ΔΩ = repeat(ddrΔΩ_r_, 1, nℓ)
         d2r_ΔΩ = repeat(d2dr2ΔΩ_r_, 1, nℓ)
-    elseif rotation_profile == :latrad
+    elseif rotation_profile ∈ (:latrad, :latrad_squished)
         ΔΩ, dr_ΔΩ, d2r_ΔΩ =
-            solar_rotation_profile_and_derivative_grid(; operators, kw...)
+            solar_rotation_profile_and_derivative_grid(; operators,
+                squished = rotation_profile == :latrad_squished,
+                kw...)
     else
         error("$rotation_profile is not a valid rotation model")
     end
