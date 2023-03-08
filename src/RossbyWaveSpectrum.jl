@@ -510,7 +510,6 @@ function Base.show(io::IO, O::OpVector)
 end
 
 function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
-
     @unpack onebyr, r, onebyr2, twobyr = operators.rad_terms;
     @unpack ddr, d2dr2 = operators.diff_operators;
 
@@ -519,31 +518,49 @@ function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deri
     @unpack radialspace = operators.radialspaces;
     # velocity and its derivatives are expanded in Legendre poly
     latitudinal_space = NormalizedPlm(0, NormalizedLegendre());
+    space2d = radialspace ⊗ latitudinal_space
 
     cosθ = Fun(Legendre());
     Ir = I : radialspace;
     Iℓ = I : latitudinal_space;
     ∇² = HorizontalLaplacian(latitudinal_space);
 
-    sinθ_plus_2cosθ = sinθdθ_plus_2cosθ_Operator(latitudinal_space);
-    ωΩr = (Ir ⊗ sinθ_plus_2cosθ) * ΔΩ;
-    ∂rωΩr = (Ir ⊗ sinθ_plus_2cosθ) * dr_ΔΩ;
+    sinθdθ_plus_2cosθ = sinθdθ_plus_2cosθ_Operator(latitudinal_space);
+    ωΩr = (Ir ⊗ sinθdθ_plus_2cosθ) * ΔΩ;
+    ∂rωΩr = (Ir ⊗ sinθdθ_plus_2cosθ) * dr_ΔΩ;
     # cotθddθ = cosθ * 1/sinθ * d/dθ = -cosθ * d/d(cosθ) = -x*d/dx
     cotθdθ = KroneckerOperator(Ir, -cosθ * Derivative(Legendre()),
         radialspace * Legendre(), radialspace * Jacobi(1,1));
-    cotθdθΔΩ = Fun(cotθdθ * ΔΩ, radialspace ⊗ latitudinal_space);
+    cotθdθΔΩ = Fun(cotθdθ * ΔΩ, space2d);
     ∇²_min_2 = ∇²-2;
-    ∂θωΩr_by_sinθ = (Ir ⊗ ∇²_min_2) * ΔΩ + 2cotθdθΔΩ;
-    cotθdθdr_ΔΩ = Fun(cotθdθ * dr_ΔΩ, radialspace ⊗ latitudinal_space);
-    ∂r∂θωΩr_by_sinθ = (Ir ⊗ ∇²_min_2) * dr_ΔΩ + 2cotθdθdr_ΔΩ;
-    ωΩθ_by_rsinθ = -(dr_ΔΩ + (twobyr ⊗ Iℓ) * ΔΩ);
-    ∂rωΩθ_by_rsinθ = -(d2r_ΔΩ + (twobyr ⊗ Iℓ) * dr_ΔΩ - (2onebyr2 ⊗ Iℓ) * ΔΩ);
+    inv_sinθ_∂θωΩr = (Ir ⊗ ∇²_min_2) * ΔΩ + 2cotθdθΔΩ;
+    cotθdθdr_ΔΩ = Fun(cotθdθ * dr_ΔΩ, space2d);
+    inv_sinθ_∂r∂θωΩr = (Ir ⊗ ∇²_min_2) * dr_ΔΩ + 2cotθdθdr_ΔΩ;
+    inv_rsinθ_ωΩθ = Fun(-(dr_ΔΩ + (twobyr ⊗ Iℓ) * ΔΩ), space2d);
+    ∂r_inv_rsinθ_ωΩθ = Fun(-(d2r_ΔΩ + (twobyr ⊗ Iℓ) * dr_ΔΩ - (2onebyr2 ⊗ Iℓ) * ΔΩ), space2d);
 
-    ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ, ∂rωΩθ_by_rsinθ =
+    ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_sinθ_∂r∂θωΩr, inv_rsinθ_ωΩθ, ∂r_inv_rsinθ_ωΩθ =
+        promote(map(replaceemptywitheps,
+            (ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_sinθ_∂r∂θωΩr, inv_rsinθ_ωΩθ, ∂r_inv_rsinθ_ωΩθ))...)
+
+    # Add the Coriolis force terms, that is ωΩ -> ωΩ + 2ΔΩ
+    ωΩr_plus_2ΔΩr = ωΩr + Fun((Ir ⊗ 2cosθ) * ΔΩ, space2d)
+    ∂r_ωΩr_plus_2ΔΩr = ∂rωΩr + Fun((Ir ⊗ 2cosθ) * dr_ΔΩ, space2d)
+    inv_sinθ_∂θ_ωΩr_plus_2ΔΩr = inv_sinθ_∂θωΩr + Fun(2(cotθdθ * ΔΩ - ΔΩ), space2d)
+    inv_sinθ_∂r∂θ_ωΩr_plus_2ΔΩr = inv_sinθ_∂r∂θωΩr + Fun(2(cotθdθ * dr_ΔΩ - dr_ΔΩ), space2d)
+    inv_rsinθ_ωΩθ_plus_2ΔΩθ = inv_rsinθ_ωΩθ - Fun(2(onebyr ⊗ Iℓ) * ΔΩ, space2d)
+    ∂r_inv_rsinθ_ωΩθ_plus_2ΔΩθ = ∂r_inv_rsinθ_ωΩθ - Fun(2*((onebyr ⊗ Iℓ) * dr_ΔΩ - (onebyr2 ⊗ Iℓ) * ΔΩ), space2d)
+
+    ωΩr_plus_2ΔΩr, ∂r_ωΩr_plus_2ΔΩr, inv_sinθ_∂θ_ωΩr_plus_2ΔΩr,
+            inv_sinθ_∂r∂θ_ωΩr_plus_2ΔΩr, inv_rsinθ_ωΩθ_plus_2ΔΩθ, ∂r_inv_rsinθ_ωΩθ_plus_2ΔΩθ =
         map(replaceemptywitheps,
-            (ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ, ∂rωΩθ_by_rsinθ))
+            (ωΩr_plus_2ΔΩr, ∂r_ωΩr_plus_2ΔΩr, inv_sinθ_∂θ_ωΩr_plus_2ΔΩr,
+                inv_sinθ_∂r∂θ_ωΩr_plus_2ΔΩr, inv_rsinθ_ωΩθ_plus_2ΔΩθ, ∂r_inv_rsinθ_ωΩθ_plus_2ΔΩθ))
 
-    (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ, ∂rωΩθ_by_rsinθ)
+    raw = (; ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_rsinθ_ωΩθ, inv_sinθ_∂r∂θωΩr, ∂r_inv_rsinθ_ωΩθ)
+    coriolis = NamedTuple{keys(raw)}((ωΩr_plus_2ΔΩr, ∂r_ωΩr_plus_2ΔΩr, inv_sinθ_∂θ_ωΩr_plus_2ΔΩr,
+        inv_rsinθ_ωΩθ_plus_2ΔΩθ, inv_sinθ_∂r∂θ_ωΩr_plus_2ΔΩr, ∂r_inv_rsinθ_ωΩθ_plus_2ΔΩθ))
+    (; raw, coriolis)
 end
 
 function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
@@ -584,8 +601,8 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     ℓℓp1op = -∇²;
 
     (; ΔΩ, dr_ΔΩ, dz_ΔΩ) = ΔΩprofile_deriv;
-    (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ, ∂r∂θωΩr_by_sinθ,
-        ∂rωΩθ_by_rsinθ, ∂rωΩθ_by_rsinθ) = ωΩ_deriv;
+    (; ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_rsinθ_ωΩθ, inv_sinθ_∂r∂θωΩr,
+        ∂r_inv_rsinθ_ωΩθ, ∂r_inv_rsinθ_ωΩθ) = ωΩ_deriv.raw;
 
     onebyr2op = Multiplication(onebyr2);
     ufr_W = onebyr2op ⊗ ℓℓp1op;
@@ -598,8 +615,8 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     rsinθufϕ = OpVector(V = -Ir ⊗ sinθdθop, iW = (m * DDr) ⊗ Iℓ);
     rsinθωfϕ = OpVector(V = im * m * ddr ⊗ Iℓ, iW = -im * (ddrDDr ⊗ Iℓ - onebyr2op ⊗ ℓℓp1op));
 
-    curl_uf_x_ωΩ_r = ((ωΩr * (DDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (Ir ⊗ sinθdθop) - ∂rωΩr) * ufr +
-        ((-onebyr2 ⊗ Iℓ) * ∂θωΩr_by_sinθ) * rsinθufθ);
+    curl_uf_x_ωΩ_r = ((ωΩr * (DDr ⊗ Iℓ) + inv_rsinθ_ωΩθ * (Ir ⊗ sinθdθop) - ∂rωΩr) * ufr +
+        ((-onebyr2 ⊗ Iℓ) * inv_sinθ_∂θωΩr) * rsinθufθ);
     curl_uΩ_x_ωf_r = -im * m * ΔΩ * ωfr;
     curl_u_x_ω_r = curl_uf_x_ωΩ_r + curl_uΩ_x_ωf_r;
     scaled_curl_u_x_ω_r_tmp = ((-im * r2) ⊗ inv(ℓℓp1op)) * curl_u_x_ω_r;
@@ -620,16 +637,16 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     # we compute the derivative of rdiv_ucrossω_h analytically
     # this lets us use the more accurate representations of ddrDDr instead of using ddr * DDr
     ddr_rdiv_ucrossω_h = OpVector(
-        V = ((2ωΩr + ΔΩ * (Ir ⊗ sinθdθop)) * (ddr ⊗ ℓℓp1op) - ∂θωΩr_by_sinθ * (ddr ⊗ sinθdθop)
-            + (2∂rωΩr + dr_ΔΩ * (Ir ⊗ sinθdθop)) * (Ir ⊗ ℓℓp1op) - ∂r∂θωΩr_by_sinθ * (Ir ⊗ sinθdθop)
+        V = ((2ωΩr + ΔΩ * (Ir ⊗ sinθdθop)) * (ddr ⊗ ℓℓp1op) - inv_sinθ_∂θωΩr * (ddr ⊗ sinθdθop)
+            + (2∂rωΩr + dr_ΔΩ * (Ir ⊗ sinθdθop)) * (Ir ⊗ ℓℓp1op) - inv_sinθ_∂r∂θωΩr * (Ir ⊗ sinθdθop)
             ),
         iW = m *
-            (∂θωΩr_by_sinθ * (ddrDDr ⊗ Iℓ) + ωΩθ_by_rsinθ * (ddr ⊗ ℓℓp1op)
-            + ∂r∂θωΩr_by_sinθ * (DDr ⊗ Iℓ) + ∂rωΩθ_by_rsinθ * (Ir ⊗ ℓℓp1op)
+            (inv_sinθ_∂θωΩr * (ddrDDr ⊗ Iℓ) + inv_rsinθ_ωΩθ * (ddr ⊗ ℓℓp1op)
+            + inv_sinθ_∂r∂θωΩr * (DDr ⊗ Iℓ) + ∂r_inv_rsinθ_ωΩθ * (Ir ⊗ ℓℓp1op)
             )
     );
 
-    uf_x_ωΩ_r = -ωΩθ_by_rsinθ * rsinθufϕ;
+    uf_x_ωΩ_r = -inv_rsinθ_ωΩθ * rsinθufϕ;
     uΩ_x_ωf_r = -ΔΩ * rsinθωfθ;
     u_x_ω_r = uf_x_ωΩ_r + uΩ_x_ωf_r;
     ∇²_u_x_ω_r = (Ir ⊗ ∇²) * u_x_ω_r;

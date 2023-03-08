@@ -707,6 +707,11 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     ΔΩ_terms = solar_differential_rotation_profile_derivatives_grid(; operators, kw...);
     ΔΩ_rθ, dr_ΔΩ_rθ, d2r_ΔΩ_rθ = ΔΩ_terms;
 
+    # Symmetrize in θ
+    ΔΩ_rθ = (reverse(ΔΩ_rθ, dims=2) .+ ΔΩ_rθ) ./ 2
+    dr_ΔΩ_rθ = (reverse(dr_ΔΩ_rθ, dims=2) .+ dr_ΔΩ_rθ) ./ 2
+    d2r_ΔΩ_rθ = (reverse(d2r_ΔΩ_rθ, dims=2) .+ d2r_ΔΩ_rθ) ./ 2
+
     space = radialspace ⊗ Legendre()
 
     cosθ = Fun(Legendre());
@@ -719,12 +724,23 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space), s);
 
     dr_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, dr_ΔΩ_rθ, s = s), space), s);
+    if ncoefficients(dr_ΔΩ) > 0
+        c = coefficients(ProductFun(dr_ΔΩ))
+        c[:, 2:2:end] .= 0 # odd terms
+        dr_ΔΩ = Fun(ProductFun(c, factors(space)...))
+    end
+
     onebyr_sinθdθ = KroneckerOperator(Multiplication(onebyr, radialspace), sinθdθop,
                 radialspace ⊗ domainspace(dcosθ), radialspace ⊗ rangespace(dcosθ))
     dz_ΔΩ_ = (Ir ⊗ cosθ) * dr_ΔΩ - onebyr_sinθdθ * ΔΩ;
     dz_ΔΩ = chop(Fun(dz_ΔΩ_, space));
 
     d2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, d2r_ΔΩ_rθ, s = s), space), s);
+    if ncoefficients(d2r_ΔΩ) > 0
+        c = coefficients(ProductFun(d2r_ΔΩ))
+        c[:, 2:2:end] .= 0 # odd terms
+        d2r_ΔΩ = Fun(ProductFun(c, factors(space)...))
+    end
 
     ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ =
         map(replaceemptywitheps, (ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ))

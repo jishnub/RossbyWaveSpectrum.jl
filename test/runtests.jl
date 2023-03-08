@@ -1,6 +1,6 @@
 module TestMod
 
-using RossbyWaveSpectrum: RossbyWaveSpectrum, matrix_block, Rsun, Msun, G, StructMatrix
+using RossbyWaveSpectrum: RossbyWaveSpectrum, Rsun, Msun, G
 using Test
 using LinearAlgebra
 using OffsetArrays
@@ -10,11 +10,11 @@ using FillArrays
 using Dierckx
 using ApproxFun
 using UnPack
-using StructArrays
-using BlockArrays
 using ApproxFunAssociatedLegendre
 
 using RossbyWaveSpectrum.Filters: NODES, SPATIAL, EIGVEC, EIGVAL, EIGEN, BC
+
+include("testutils.jl")
 
 @testset "project quality" begin
     Aqua.test_all(RossbyWaveSpectrum, ambiguities = false, undefined_exports=false)
@@ -145,39 +145,6 @@ end
     end
 end
 
-function matrix_subsample!(M_subsample::BlockArray{<:Real}, M::BlockArray{<:Real}, nr_M, nr, nℓ, nvariables)
-    nparams = nr*nℓ
-    @views for colind in 1:nvariables, rowind in 1:nvariables
-        Mblock = matrix_block(M, rowind, colind)
-        M_subsample_block = matrix_block(M_subsample, rowind, colind)
-        for ℓ′ind in 1:nℓ, ℓind in 1:nℓ
-            Mblock_ℓℓ′ = Mblock[Block(ℓind, ℓ′ind)]
-            M_subsample_block_ℓℓ′ = M_subsample_block[Block(ℓind, ℓ′ind)]
-            M_subsample_block_ℓℓ′ .= Mblock_ℓℓ′[axes(M_subsample_block_ℓℓ′)...]
-        end
-    end
-    return M_subsample
-end
-
-function matrix_subsample!(M_subsample::StructArray{<:Complex,2}, M::StructArray{<:Complex,2}, args...)
-    matrix_subsample!(M_subsample.re, M.re, args...)
-    matrix_subsample!(M_subsample.im, M.im, args...)
-    return M_subsample
-end
-
-blockwise_cmp(f, x, y) = f(x,y)
-function blockwise_cmp(f, S1::StructMatrix{<:Complex}, S2::StructMatrix{<:Complex})
-    blockwise_cmp(f, S1.re, S2.re) && blockwise_cmp(f, S1.im, S2.im)
-end
-function blockwise_cmp(f, B1::BlockMatrix{<:Real}, B2::BlockMatrix{<:Real})
-    all(zip(blocks(B1), blocks(B2))) do (x, y)
-        blockwise_cmp(f, x, y)
-    end
-end
-
-blockwise_isequal(x, y) = blockwise_cmp(==, x, y)
-blockwise_isapprox(x, y; kw...) = blockwise_cmp((x, y) -> isapprox(x, y; kw...), x, y)
-
 @testset "matrix convergence with resolution: uniform rotation" begin
     nr, nℓ = 50, 2
     m = 5
@@ -240,15 +207,6 @@ blockwise_isapprox(x, y; kw...) = blockwise_cmp((x, y) -> isapprox(x, y; kw...),
     end
 end
 
-function rossby_ridge_eignorm(λ, v, (A, B), m, nparams; ΔΩ_frac = 0)
-    matchind = argmin(abs.(real(λ) .- RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_frac)))
-    vi = v[:, matchind];
-    λi = λ[matchind]
-    normsden = [norm(λi * @view(vi[i*nparams .+ (1:nparams)])) for i in 0:2]
-    normsnum = [norm((A[i*nparams .+ (1:nparams), :]*vi - λi*B[i*nparams .+ (1:nparams), :]*vi)) for i in 0:2]
-    [(d/norm(λi) > 1e-10 ? n/d : 0) for (n, d) in zip(normsnum, normsden)]
-end
-
 @testset "uniform rotation solution" begin
     nr, nℓ = 40, 8
     nparams = nr * nℓ
@@ -258,18 +216,20 @@ end
     @unpack BCmatrices = constraints;
     @unpack radialspace = operators.radialspaces;
     MVn, MWn, MSn = BCmatrices;
-    @testset for m in [1, 5, 10]
+    @testset for m in (1, 5, 10), V_symmetric in [true, false]
         λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m;
-            operators, constraints, V_symmetric = true);
+            operators, constraints, V_symmetric);
         λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
-            operators, constraints, V_symmetric = true, Δl_cutoff = 7, n_cutoff = 9,
+            operators, constraints, V_symmetric, Δl_cutoff = 7, n_cutoff = 9,
             eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
             scale_eigenvectors = false);
         @info "uniform rot: $(length(λuf)) eigenmode$(length(λuf) > 1 ? "s" : "") found for m = $m"
-        @testset "ℓ == m" begin
-            res, ind = findmin(abs.(real(λuf) .- 2/(m+1)))
-            @testset "eigenvalue" begin
-                @test res < 1e-4
+        if V_symmetric
+            @testset "ℓ == m" begin
+                res, ind = findmin(abs.(real(λuf) .- 2/(m+1)))
+                @testset "eigenvalue" begin
+                    @test res < 1e-4
+                end
             end
         end
         vfn = zeros(eltype(vuf), size(vuf, 1));
@@ -507,7 +467,7 @@ end
     @unpack nvariables = operators;
     @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
     @unpack ddr, DDr, ddrDDr = operators.diff_operators;
-    @unpack onebyr, ηρ, onebyr2 = operators.rad_terms;
+    @unpack onebyr, ηρ, onebyr2, r = operators.rad_terms;
     @unpack radialspaces = operators;
     @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces
 
@@ -516,23 +476,33 @@ end
     Ms = RossbyWaveSpectrum.allocate_operator_matrix(operators);
 
     cosθ = Fun(Legendre());
+    cosθop = Multiplication(cosθ)
 
     @testset "compare with constant" begin
         ΔΩ_frac = 0.01
-        ΔΩprofile_deriv = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
+        ΔΩprofile_deriv = @inferred RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
             operators, rotation_profile = :constant, smoothing_param=1e-3, ΔΩ_frac);
         (; ΔΩ, dr_ΔΩ, d2r_ΔΩ) = ΔΩprofile_deriv;
 
-        ωΩ_deriv = RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
+        ωΩ_deriv = @inferred RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
             operators, ΔΩprofile_deriv);
-        (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ) = ωΩ_deriv;
+        ωΩterms_raw = ωΩ_deriv.raw;
+        ωΩterms_coriolis = ωΩ_deriv.coriolis;
 
         @testset "compare with analytical" begin
-            cosθop = Multiplication(cosθ)
-            @test ωΩr ≈ (I ⊗ 2cosθop) * ΔΩ
-            @test ∂rωΩr ≈ zero(∂rωΩr) atol=1e-14
-            @test ∂θωΩr_by_sinθ ≈ -2ΔΩ
-            @test ωΩθ_by_rsinθ ≈ (Multiplication(-2*onebyr) ⊗ I) * ΔΩ
+            @test ωΩterms_raw.ωΩr ≈ (I ⊗ 2cosθop) * ΔΩ
+            @test ωΩterms_raw.∂rωΩr ≈ zero(ωΩterms_raw.∂rωΩr) atol=1e-14
+            @test ωΩterms_raw.inv_sinθ_∂θωΩr ≈ -2ΔΩ
+            @test ωΩterms_raw.inv_rsinθ_ωΩθ ≈ (Multiplication(-2*onebyr) ⊗ I) * ΔΩ
+            @test ωΩterms_raw.inv_sinθ_∂r∂θωΩr ≈ zero(ωΩterms_raw.inv_sinθ_∂r∂θωΩr) atol=1e-14
+            @test ωΩterms_raw.∂r_inv_rsinθ_ωΩθ ≈ (Multiplication(2*onebyr2) ⊗ I) * ΔΩ
+
+            @test ωΩterms_coriolis.ωΩr ≈ (I ⊗ 4cosθop) * ΔΩ
+            @test ωΩterms_coriolis.∂rωΩr ≈ zero(ωΩterms_coriolis.∂rωΩr) atol=1e-14
+            @test ωΩterms_coriolis.inv_sinθ_∂θωΩr ≈ -4ΔΩ
+            @test ωΩterms_coriolis.inv_sinθ_∂r∂θωΩr ≈ zero(ωΩterms_coriolis.inv_sinθ_∂r∂θωΩr) atol=1e-14
+            @test ωΩterms_coriolis.inv_rsinθ_ωΩθ ≈ (Multiplication(-4*onebyr) ⊗ I) * ΔΩ
+            @test ωΩterms_coriolis.∂r_inv_rsinθ_ωΩθ ≈ (Multiplication(4*onebyr2) ⊗ I) * ΔΩ
 
             @testset for m in [1, 4, 10], V_symmetric in [true, false]
                 Ms.re .= 0;
@@ -548,7 +518,6 @@ end
                 SSre = Ms.re[Block(3,3)];
 
                 latitudinal_space = NormalizedPlm(m);
-                cosθop = Multiplication(cosθ, latitudinal_space);
                 sinθdθop = sinθdθ_Operator(latitudinal_space);
                 ∇² = HorizontalLaplacian(latitudinal_space);
                 ℓℓp1op = -∇²;
@@ -644,19 +613,31 @@ end
         end
     end
     @testset "compare with radial" begin
-        ΔΩprofile_deriv = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
+        ΔΩprofile_deriv = @inferred RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
             operators, rotation_profile = :radial_equator, smoothing_param=1e-5);
         (; ΔΩ, dr_ΔΩ, d2r_ΔΩ) = ΔΩprofile_deriv;
 
-        ωΩ_deriv = RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
+        ωΩ_deriv = @inferred RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
             operators, ΔΩprofile_deriv);
-        (; ωΩr, ∂rωΩr, ∂θωΩr_by_sinθ, ωΩθ_by_rsinθ) = ωΩ_deriv;
+        ωΩterms_raw = ωΩ_deriv.raw;
+        ωΩterms_coriolis = ωΩ_deriv.coriolis;
 
         @testset "compare with analytical" begin
-            cosθop = Multiplication(cosθ);
-            @test ωΩr ≈ ((I ⊗ 2cosθop) * ΔΩ)
-            @test ∂rωΩr ≈ ((I ⊗ 2cosθop) * dr_ΔΩ)
-            @test ∂θωΩr_by_sinθ ≈ -2ΔΩ
+            @test ωΩterms_raw.ωΩr ≈ (I ⊗ 2cosθop) * ΔΩ
+            @test ωΩterms_raw.∂rωΩr ≈ (I ⊗ 2cosθop) * dr_ΔΩ
+            @test ωΩterms_raw.inv_sinθ_∂θωΩr ≈ -2ΔΩ
+            @test ωΩterms_raw.inv_rsinθ_ωΩθ ≈ -(dr_ΔΩ + (Multiplication(2onebyr) ⊗ I) * ΔΩ)
+            @test ωΩterms_raw.inv_sinθ_∂r∂θωΩr ≈ -2dr_ΔΩ
+            @test ωΩterms_raw.∂r_inv_rsinθ_ωΩθ ≈ -(d2r_ΔΩ + (Multiplication(2onebyr) ⊗ I) * dr_ΔΩ
+                                        - (Multiplication(2onebyr2) ⊗ I) * ΔΩ)
+
+            @test ωΩterms_coriolis.ωΩr ≈ (I ⊗ 4cosθop) * ΔΩ
+            @test ωΩterms_coriolis.∂rωΩr ≈ (I ⊗ 4cosθop) * dr_ΔΩ
+            @test ωΩterms_coriolis.inv_sinθ_∂θωΩr ≈ -4ΔΩ
+            @test ωΩterms_coriolis.inv_rsinθ_ωΩθ ≈ ωΩterms_raw.inv_rsinθ_ωΩθ - (Multiplication(2onebyr) ⊗ I) * ΔΩ
+            @test ωΩterms_coriolis.inv_sinθ_∂r∂θωΩr ≈ -4dr_ΔΩ
+            @test ωΩterms_coriolis.∂r_inv_rsinθ_ωΩθ ≈ (ωΩterms_raw.∂r_inv_rsinθ_ωΩθ -
+                        ((Multiplication(2onebyr) ⊗ I) * dr_ΔΩ - (Multiplication(2onebyr2) ⊗ I) * ΔΩ))
 
             @testset for m in [1, 4, 10], V_symmetric in [true, false]
                 Ms.re .= 0;
@@ -672,7 +653,6 @@ end
                 SSre = Ms.re[Block(3,3)];
 
                 latitudinal_space = NormalizedPlm(m);
-                cosθop = Multiplication(cosθ, latitudinal_space);
                 sinθdθop = sinθdθ_Operator(latitudinal_space);
                 ∇² = HorizontalLaplacian(latitudinal_space);
                 ℓℓp1op = -∇²;
@@ -781,19 +761,15 @@ end
     @unpack radialspace = operators.radialspaces
     MVn, MWn, MSn = BCmatrices;
     ΔΩ_frac = 0.02
-    @testset for m in [1, 5, 10]
+    @testset for m in (1, 5, 10), V_symmetric in [true, false]
         @testset "constant" begin
             λr, vr, Mr = RossbyWaveSpectrum.differential_rotation_spectrum(m; operators, constraints,
-                rotation_profile = :constant, ΔΩ_frac, V_symmetric = true);
+                rotation_profile = :constant, ΔΩ_frac, V_symmetric);
             λrf, vrf = RossbyWaveSpectrum.filter_eigenvalues(λr, vr, Mr, m;
-                operators, constraints, V_symmetric = true, Δl_cutoff = 7, n_cutoff = 9,
+                operators, constraints, V_symmetric, Δl_cutoff = 7, n_cutoff = 9,
                 eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
             @info "constant diff rot: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
-            @testset "ℓ == m" begin
-                ω0 = RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_frac)
-                @test findmin(abs.(real(λrf) .- ω0))[1] < 1e-4
-            end
             vfn = zeros(eltype(vrf), size(vrf, 1))
             @testset "boundary condition" begin
                 Vop = RossbyWaveSpectrum.SolarModel.V_boundary_op(operators);
@@ -861,16 +837,12 @@ end
         end
         @testset "radial constant" begin
             λr, vr, Mr = RossbyWaveSpectrum.differential_rotation_spectrum(m; operators, constraints,
-                rotation_profile = :radial_constant, ΔΩ_frac, V_symmetric = true);
+                rotation_profile = :radial_constant, ΔΩ_frac, V_symmetric);
             λrf, vrf = RossbyWaveSpectrum.filter_eigenvalues(λr, vr, Mr, m;
-                operators, constraints, V_symmetric = true,
+                operators, constraints, V_symmetric,
                 Δl_cutoff = 7, n_cutoff = 9, eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
             @info "radial_constant diff rot: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
-            @testset "ℓ == m" begin
-                ω0 = RossbyWaveSpectrum.rossby_ridge(m; ΔΩ_frac)
-                @test findmin(abs.(real(λrf) .- ω0))[1] < 1e-4
-            end
             vfn = zeros(eltype(vrf), size(vrf, 1))
             @testset "boundary condition" begin
                 Vop = RossbyWaveSpectrum.SolarModel.V_boundary_op(operators);
@@ -943,7 +915,7 @@ include("run_threadedtests.jl")
 
 @testset "compute_rossby_spectrum.jl" begin
     include(joinpath(dirname(dirname(pathof(RossbyWaveSpectrum))), "compute_rossby_spectrum.jl"))
-    for V_symmetric in (true, false), diffrot in (false,)
+    for V_symmetric in [true, false], diffrot in (false,)
         ComputeRossbySpectrum.computespectrum(8, 6, 1:1, V_symmetric, diffrot, :radial_solar_equator,
             save = false, print_timer = false)
     end
