@@ -19,6 +19,7 @@ UnPack = "3a884ed6-31ef-47d7-9d2a-63182c4928ed"
 
 [compat]
 ApproxFun = "0.13.6"
+FFTW = "1 - 1.5"
 LaTeXStrings = "1"
 MKL = "0.6"
 OrderedCollections = "1"
@@ -26,3 +27,6 @@ PyCall = "1.93"
 PyPlot = "2.10"
 StructArrays = "0.6"
 UnPack = "1"
+
+[weakdeps]
+FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
