@@ -1,6 +1,6 @@
 name = "RossbyWaveSpectrum"
 uuid = "7fbe2b4f-a8e1-4092-9718-18aa0af13fd5"
-authors = ["jishnub <jishnu.bhattacharya@nyu.edu>"]
+authors = ["Jishnu Bhattacharya <jishnu.bhattacharya@nyu.edu>"]
 version = "0.1.0"
 
 [deps]

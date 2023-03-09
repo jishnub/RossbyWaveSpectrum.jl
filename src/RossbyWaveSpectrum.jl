@@ -344,8 +344,8 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    VVop_ = m * ΔΩ_frac * (Ir ⊗ two_by_ℓℓp1_min_1)
-    VWop_ = -ΔΩ_frac * (Ir ⊗ two_by_ℓℓp1) * ((DDr - 2onebyr) ⊗ (cosθop * ℓℓp1op) +
+    VVop_ = ΔΩ_frac * m * (Ir ⊗ (4inv_ℓℓp1 - 1))
+    VWop_ = ΔΩ_frac * (Ir ⊗ (-4inv_ℓℓp1)) * ((DDr - 2onebyr) ⊗ (cosθop * ℓℓp1op) +
                     DDr ⊗ sinθdθop - onebyr ⊗ (sinθdθop * ℓℓp1op))
 
     temp = zeros(eltype(M), nr * nℓ, nr * nℓ)
@@ -358,9 +358,9 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     VW_ = kronmatrix!(temp, VWop, nr, V_ℓinds, W_ℓinds)
     VW .+= (Rsun / Wscaling) .* real.(VW_)
 
-    WVop_ = -ΔΩ_frac * (Ir ⊗ inv_ℓℓp1) * (ddr ⊗ (4cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 2)) +
-        (ddr + 2onebyr) ⊗ (∇² * sinθdθop))
-    WWop_ = m * ΔΩ_frac * (-2ηρ_by_r ⊗ Iℓ + ddrDDr ⊗ two_by_ℓℓp1_min_1 - onebyr2 ⊗ (two_by_ℓℓp1_min_1 * ℓℓp1op))
+    WVop_ = -ΔΩ_frac * (Ir ⊗ inv_ℓℓp1) * (ddr ⊗ (6cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 4)) +
+        (ddr + 4onebyr) ⊗ (∇² * sinθdθop))
+    WWop_ = m * (-ΔΩ_frac) * (4ηρ_by_r ⊗ Iℓ - ddrDDr ⊗ (2two_by_ℓℓp1 - 1) + onebyr2 ⊗ (4 - ℓℓp1op))
 
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     WVop = (WVop_ : space2d → space2d_D4) |> expand
@@ -422,10 +422,10 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    VVop_ = m * (ΔΩ ⊗ two_by_ℓℓp1_min_1)
-    VWop_ = -(Ir ⊗ two_by_ℓℓp1) * (
+    VVop_ = m * (ΔΩ ⊗ (4inv_ℓℓp1 - 1))
+    VWop_ = -(Ir ⊗ 4inv_ℓℓp1) * (
         (ΔΩ * (DDr - 2onebyr) - ddrΔΩ) ⊗ (cosθop * ℓℓp1op) +
-        (ΔΩ * DDr) ⊗ sinθdθop - (ΔΩ * onebyr + ddrΔΩ/2) ⊗ (sinθdθop * ℓℓp1op)
+        (ΔΩ * DDr) ⊗ sinθdθop - (ΔΩ * onebyr + ddrΔΩ/4) ⊗ (sinθdθop * ℓℓp1op)
     )
 
     temp = zeros(eltype(M), nr * nℓ, nr * nℓ)
@@ -446,9 +446,9 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     WVop_ = -(Ir ⊗ inv_ℓℓp1) * (
         (ΔΩ * ddr + ddrΔΩ) ⊗ (4cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 2) + ∇² * sinθdθop) +
         (2ΔΩ *onebyr) ⊗ (∇² * sinθdθop))
-    WWop_ = m * (-2ΔΩ * ηρ_by_r ⊗ Iℓ + (ddrΔΩ * DDr) ⊗ two_by_ℓℓp1_min_1
-        + (ΔΩ * ddrDDr) ⊗ two_by_ℓℓp1_min_1
-        - (ΔΩ * onebyr2) ⊗ (two_by_ℓℓp1_min_1 * ℓℓp1op)
+    WWop_ = m * (-2ΔΩ * ηρ_by_r ⊗ Iℓ + (ddrΔΩ * DDr) ⊗ (two_by_ℓℓp1 - 1)
+        + (ΔΩ * ddrDDr) ⊗ (two_by_ℓℓp1 - 1)
+        - (ΔΩ * onebyr2) ⊗ ((two_by_ℓℓp1 - 1) * ℓℓp1op)
         + (d2dr2ΔΩ + ddrΔΩ * (ddr + twobyr)) ⊗ Iℓ
         )
 
@@ -602,7 +602,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
     (; ΔΩ, dr_ΔΩ, dz_ΔΩ) = ΔΩprofile_deriv;
     (; ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_rsinθ_ωΩθ, inv_sinθ_∂r∂θωΩr,
-        ∂r_inv_rsinθ_ωΩθ, ∂r_inv_rsinθ_ωΩθ) = ωΩ_deriv.raw;
+        ∂r_inv_rsinθ_ωΩθ, ∂r_inv_rsinθ_ωΩθ) = ωΩ_deriv.coriolis;
 
     onebyr2op = Multiplication(onebyr2);
     ufr_W = onebyr2op ⊗ ℓℓp1op;
