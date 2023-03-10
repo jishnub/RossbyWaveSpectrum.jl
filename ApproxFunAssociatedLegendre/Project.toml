@@ -1,6 +1,6 @@
 name = "ApproxFunAssociatedLegendre"
 uuid = "48bd048b-2bcf-409a-92a0-8749fd24560e"
-authors = ["Jishnu Bhattacharya <jishnub@users.noreply.github.com>"]
+authors = ["Jishnu Bhattacharya <jishnu.bhattacharya@nyu.edu>"]
 version = "0.1.0"
 
 [deps]

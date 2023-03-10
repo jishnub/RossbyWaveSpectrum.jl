@@ -1244,8 +1244,8 @@ function plot_matrix_block(M, rowind, colind, nℓ, ℓind, ℓ′ind, nvariable
 end
 
 function plot_diffrot_radial(; operators, kw...)
-    r_raw = RossbyWaveSpectrum.solar_rotation_profile_radii()
-    Ω_raw = RossbyWaveSpectrum.solar_rotation_profile_raw()
+    r_raw = SolarModel.solar_rotation_profile_radii()
+    Ω_raw = SolarModel.solar_rotation_profile_raw()
     θinds = axes(Ω_raw,2)
     eqind = first(θinds) + (first(θinds) + last(θinds)) ÷ 2
     Ω_raw_eq = Ω_raw[:, eqind]
@@ -1260,7 +1260,7 @@ function plot_diffrot_radial(; operators, kw...)
     @unpack rpts = operators
 
     if get(kw, :plot_smoothed, true)
-        (; ΔΩ,) = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun_Fun(;
+        (; ΔΩ,) = SolarModel.radial_differential_rotation_profile_derivatives_Fun(;
             operators, rotation_profile = get(kw, :rotation_profile, :solar_equator), kw...);
         plot(rpts/Rsun, ΔΩ.(rpts)*Ω0*1e9/2pi, label="smoothed model")
     end
@@ -1423,5 +1423,19 @@ function plot_scale_heights(; operators, kw...)
     return nothing
 end
 
+function plot_density_scale_heights(; operators, kw...)
+    @unpack splines, rpts = operators
+    @unpack sηρ, ddrsηρ, d2dr2sηρ, d3dr3sηρ = splines;
+
+    f, ax = subplots(4, 1, sharex = true)
+    plotkw = pairs((; color = get(kw, :color, "grey"), marker = get(kw, :marker, ".")))
+    ax[1].plot(rpts, sηρ(rpts); plotkw...)
+    ax[2].plot(rpts, ddrsηρ(rpts); plotkw...)
+    ax[3].plot(rpts, d2dr2sηρ(rpts); plotkw...)
+    ax[4].plot(rpts, d3dr3sηρ(rpts); plotkw...)
+
+    f.set_size_inches(4, 6)
+    f.tight_layout()
+end
 
 end # module plots

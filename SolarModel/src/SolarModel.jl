@@ -169,9 +169,9 @@ end
 read_solar_model() = readdlm(joinpath(SOLARMODELDIR[], "ModelS.detailed"))::Matrix{Float64}
 
 function solar_structure_parameter_splines(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only for tests =# = true)
-    ModelS = read_solar_model()
+    ModelS = read_solar_model();
     r_modelS = @view ModelS[:, 1];
-    r_inds = r_in .<= r_modelS .<= r_out;
+    r_inds = min(r_in, 0.5Rsun) .<= r_modelS .<= max(r_out, 0.995Rsun);
     r_modelS = reverse(r_modelS[r_inds]);
     q_modelS = exp.(reverse(ModelS[r_inds, 2]));
     T_modelS = reverse(ModelS[r_inds, 3]);
@@ -190,13 +190,13 @@ function solar_structure_parameter_splines(; r_in = 0.7Rsun, r_out = Rsun, _stra
         ddrlogρ_modelS .= 0
     end
     sηρ = smoothed_spline(r_modelS, ddrlogρ_modelS, s = 1e-4);
-    sηρ_by_r = smoothed_spline(r_modelS, ddrlogρ_modelS ./ r_modelS, s = 1e-5);
-    sηρ_by_r2 = smoothed_spline(r_modelS, ddrlogρ_modelS ./ r_modelS.^2, s = 1e-6);
-    ddrsηρ = smoothed_spline(r_modelS, derivative(sηρ, r_modelS), s = 1e-5);
-    ddrsηρ_by_r = smoothed_spline(r_modelS, derivative(sηρ_by_r, r_modelS), s = 1e-4);
-    ddrsηρ_by_r2 = smoothed_spline(r_modelS, derivative(sηρ_by_r2, r_modelS), s = 1e-4);
-    d2dr2sηρ = smoothed_spline(r_modelS, derivative(ddrsηρ, r_modelS), s = 1e-4)
-    d3dr3sηρ = smoothed_spline(r_modelS, derivative(ddrsηρ, r_modelS, nu=2), s = 1e-4)
+    sηρ_by_r = smoothed_spline(r_modelS, ddrlogρ_modelS ./ r_modelS, s = 1e-4);
+    sηρ_by_r2 = smoothed_spline(r_modelS, ddrlogρ_modelS ./ r_modelS.^2, s = 1e-4);
+    ddrsηρ = smoothed_spline(r_modelS, Dierckx.derivative(sηρ, r_modelS), s = 1e-4);
+    ddrsηρ_by_r = smoothed_spline(r_modelS, Dierckx.derivative(sηρ_by_r, r_modelS), s = 1e-4);
+    ddrsηρ_by_r2 = smoothed_spline(r_modelS, Dierckx.derivative(sηρ_by_r2, r_modelS), s = 1e-4);
+    d2dr2sηρ = smoothed_spline(r_modelS, Dierckx.derivative(ddrsηρ, r_modelS), s = 1e-4);
+    d3dr3sηρ = smoothed_spline(r_modelS, Dierckx.derivative(ddrsηρ, r_modelS, nu=2), s = 1e-4);
 
     sT = Spline1D(r_modelS, T_modelS);
     slogT = smoothed_spline(r_modelS, logT_modelS, s = 1e-7);
@@ -215,6 +215,18 @@ function solar_structure_parameter_splines(; r_in = 0.7Rsun, r_out = Rsun, _stra
     splines = Dict{Symbol, typeof(sρ)}()
     @pack! splines = sρ, sT, sg, slogρ, sηρ, sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, ddrsηρ, d2dr2sηρ, d3dr3sηρ, sηT
     (; splines, rad_terms)
+end
+
+function spline_to_Fun(s::Spline1D, radialspace::Space)
+    k = s.k
+    D = Derivative(k)
+    rsp = rangespace(D)
+    frsp = Fun(s, radialspace)
+    g = D * frsp
+    frsp_int = Integral(k) * g
+    cf0 = coefficients(frsp_int)
+    cf = coefficients(frsp)
+    Fun(radialspace, [cf[1:k]; cf0[k+1:end]])
 end
 
 iszerofun(v) = ncoefficients(v) == 0 || (ncoefficients(v) == 1 && coefficients(v)[] == 0.0)
@@ -313,24 +325,24 @@ function radial_operators(operatorparams...)
     ηρ_by_r3 = ηρ_by_r2 * onebyr
     @checkncoeff ηρ_by_r3 nr
 
-    ddr_ηρ = chop(Fun(ddrsηρ, radialspace), 1e-2)
+    ddr_ηρ = chop(Fun(ddrsηρ, radialspace), 1e-3);
     @checkncoeff ddr_ηρ nr
 
-    ddr_ηρbyr = chop(Fun(ddrsηρ_by_r, radialspace), 1e-2)
+    ddr_ηρbyr = chop(Fun(ddrsηρ_by_r, radialspace), 1e-3);
     @checkncoeff ddr_ηρbyr nr
 
     # ddr_ηρbyr = ddr * ηρ_by_r
-    d2dr2_ηρ = chop!(Fun(d2dr2sηρ, radialspace), 1e-2);
+    d2dr2_ηρ = chop!(Fun(d2dr2sηρ, radialspace), 1e-3);
     @checkncoeff d2dr2_ηρ nr
 
-    d3dr3_ηρ = chop(Fun(d3dr3sηρ, radialspace), 1e-2)
+    d3dr3_ηρ = chop(Fun(d3dr3sηρ, radialspace), 1e-3);
     @checkncoeff d3dr3_ηρ nr
 
-    ddr_ηρbyr2 = chop(Fun(ddrsηρ_by_r2, radialspace), 5e-3)
+    ddr_ηρbyr2 = chop(Fun(ddrsηρ_by_r2, radialspace), 1e-3);
     @checkncoeff ddr_ηρbyr2 nr
 
     # ddr_ηρbyr2 = ddr * ηρ_by_r2
-    ηρ2_by_r2 = ApproxFun.chop(ηρ_by_r2 * ηρ, 1e-3)
+    ηρ2_by_r2 = ApproxFun.chop(ηρ_by_r2 * ηρ, 1e-3);
     @checkncoeff ηρ2_by_r2 nr
 
     ddrηρ_by_r = ddr_ηρ * onebyr

@@ -1,6 +1,6 @@
 name = "SolarModel"
 uuid = "d69e7b64-045a-4877-bf7e-3a34839e1423"
-authors = ["Jishnu Bhattacharya <jishnub.github@gmail.com>"]
+authors = ["Jishnu Bhattacharya <jishnu.bhattacharya@nyu.edu>"]
 version = "0.1.0"
 
 [deps]

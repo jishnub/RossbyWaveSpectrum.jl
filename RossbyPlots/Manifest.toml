@@ -63,15 +63,15 @@ version = "0.8.1"
 
 [[deps.ApproxFunFourier]]
 deps = ["AbstractFFTs", "ApproxFunBase", "BandedMatrices", "DomainSets", "FFTW", "FastTransforms", "InfiniteArrays", "IntervalSets", "LinearAlgebra", "Reexport", "StaticArrays"]
-git-tree-sha1 = "5788c4b795505cecad17b4e5c5d46ce47d7830b4"
+git-tree-sha1 = "d961b8ebf83ca21968cfc233d38ec878b46572ab"
 uuid = "59844689-9c9d-51bf-9583-5b794ec66d30"
-version = "0.3.11"
+version = "0.3.12"
 
 [[deps.ApproxFunOrthogonalPolynomials]]
-deps = ["ApproxFunBase", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "DomainSets", "FastGaussQuadrature", "FastTransforms", "FillArrays", "IntervalSets", "LinearAlgebra", "Reexport", "SpecialFunctions", "Static", "StaticArrays", "Statistics"]
-git-tree-sha1 = "ee3a0e711f38e431f93ada0a1cbc1d4b9a701777"
+deps = ["ApproxFunBase", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "DomainSets", "FFTW", "FastGaussQuadrature", "FastTransforms", "FillArrays", "IntervalSets", "LinearAlgebra", "Reexport", "SpecialFunctions", "Static", "StaticArrays", "Statistics"]
+git-tree-sha1 = "483206d9be4cc5a302618c88f97b9b1cb482075d"
 uuid = "b70543e2-c0d9-56b8-a290-0d4d6d4de211"
-version = "0.6.15"
+version = "0.6.16"
 
 [[deps.ApproxFunSingularities]]
 deps = ["ApproxFunBase", "ApproxFunOrthogonalPolynomials", "DomainSets", "IntervalSets", "LinearAlgebra", "Reexport", "StaticArrays", "Statistics"]
@@ -313,9 +313,9 @@ version = "0.5.0"
 
 [[deps.FastTransforms]]
 deps = ["AbstractFFTs", "FFTW", "FastGaussQuadrature", "FastTransforms_jll", "FillArrays", "GenericFFT", "Libdl", "LinearAlgebra", "Reexport", "SpecialFunctions", "Test", "ToeplitzMatrices"]
-git-tree-sha1 = "1ac5b790101a6c340d41abee862f3c97753f8963"
+git-tree-sha1 = "6fdc77b94edf1339f8a9f612e6695d0b5017f43d"
 uuid = "057dd010-8810-581a-b7be-e3fc3b93f78c"
-version = "0.14.9"
+version = "0.14.10"
 
 [[deps.FastTransforms_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "FFTW_jll", "JLLWrappers", "LLVMOpenMP_jll", "Libdl", "MPFR_jll", "OpenBLAS_jll", "Pkg"]
@@ -660,9 +660,9 @@ version = "1.9.0"
 
 [[deps.Polynomials]]
 deps = ["ChainRulesCore", "LinearAlgebra", "MakieCore", "RecipesBase"]
-git-tree-sha1 = "413b13d6d4acef267b1c64dcb4abe653ec92a24c"
+git-tree-sha1 = "81fbd4a764f580eab174eb7ce410b5ae66cb1336"
 uuid = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
-version = "3.2.6"
+version = "3.2.7"
 
 [[deps.Preferences]]
 deps = ["TOML"]
