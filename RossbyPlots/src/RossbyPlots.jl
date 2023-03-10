@@ -1322,6 +1322,57 @@ function plot_diffrot_radial_derivatives(; operators, kw...)
     f.tight_layout()
 end
 
+function plot_diffrot_solar_derivatives(; operators, kw...)
+    @unpack rpts = operators
+    @unpack nℓ = operators.radial_params
+    @unpack Ω0 = operators.constants
+    ΔΩprofile_deriv = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(; operators, kw...);
+    f, axlist = subplots(2, 3, sharey = true, sharex=true)
+    cosθ = points(Legendre(), nℓ)
+    θ = acos.(cosθ)
+
+    ax = axlist[1,1]
+    p = ax.pcolormesh(θ, rpts/Rsun, ΔΩprofile_deriv.ΔΩ.(rpts, cosθ'), shading="auto");
+    ax.set_ylabel(L"r/R_\odot", fontsize=12);
+    ax.set_title("ΔΩ", fontsize=12)
+    colorbar(mappable = p, ax = ax)
+
+    ax = axlist[1,2]
+    p = ax.pcolormesh(θ, rpts/Rsun, rpts .* ΔΩprofile_deriv.dr_ΔΩ.(rpts, cosθ'), shading="auto");
+    colorbar(mappable = p, ax = ax)
+    ax.set_title(L"r\,d(ΔΩ)/dr", fontsize=12)
+
+    ax = axlist[1,3]
+    p = ax.pcolormesh(θ, rpts/Rsun, rpts.^2 .* ΔΩprofile_deriv.d2r_ΔΩ.(rpts, cosθ'), shading="auto");
+    colorbar(mappable = p, ax = ax)
+    ax.set_title(L"r^2\,d^2(ΔΩ)/dr^2", fontsize=12)
+
+    ΔΩ_fullinterp, dr_ΔΩ_fullinterp, d2r_ΔΩ_fullinterp =
+        SolarModel.solar_rotation_profile_and_derivative_grid(; operators)
+
+    ax = axlist[2,1]
+    p = ax.pcolormesh(θ, rpts/Rsun, ΔΩ_fullinterp/Ω0, shading="auto");
+    ax.set_xlabel("θ [radian]", fontsize=12);
+    ax.set_ylabel(L"r/R_\odot", fontsize=12);
+    ax.set_title("ΔΩ (spline)", fontsize=12)
+    colorbar(mappable = p, ax = ax)
+
+    ax = axlist[2,2]
+    p = ax.pcolormesh(θ, rpts/Rsun, rpts .* dr_ΔΩ_fullinterp/Ω0, shading="auto");
+    ax.set_xlabel("θ [radian]", fontsize=12);
+    ax.set_title(L"r\,d(ΔΩ)/dr" * " (spline)", fontsize=12)
+    colorbar(mappable = p, ax = ax)
+
+    ax = axlist[2,3]
+    p = ax.pcolormesh(θ, rpts/Rsun, rpts.^2 .* d2r_ΔΩ_fullinterp/Ω0, shading="auto");
+    ax.set_xlabel("θ [radian]", fontsize=12);
+    ax.set_title(L"r^2\,d^2(ΔΩ)/dr^2" * " (spline)", fontsize=12)
+    colorbar(mappable = p, ax = ax)
+
+    f.set_size_inches(9,8)
+    f.tight_layout()
+end
+
 function compare_terms(@nospecialize(terms); x = nothing, y = nothing,
         titles = ["" for _ in terms], nrows = 1, cmap = "RdBu",
         xlabel = "", ylabel = "")

@@ -541,7 +541,6 @@ function equatorial_rotation_angular_velocity_radial_profile(Ω_raw = solar_rota
 end
 
 function solar_rotation_profile_spline(; operators, smoothing_param = 1e-5, kw...)
-    @unpack r_out = operators.radial_params;
     @unpack Ω0 = operators.constants;
 
     r_ΔΩ_raw = solar_rotation_profile_radii(SOLARMODELDIR[])
