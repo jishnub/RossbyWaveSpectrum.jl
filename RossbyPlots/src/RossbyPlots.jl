@@ -1327,7 +1327,8 @@ function plot_diffrot_solar_derivatives(; operators, kw...)
     @unpack nℓ = operators.radial_params
     @unpack Ω0 = operators.constants
     ΔΩprofile_deriv = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(; operators, kw...);
-    f, axlist = subplots(2, 3, sharey = true, sharex=true)
+    compare_splines = get(kw, :compare_splines, false)
+    f, axlist = subplots(1 + compare_splines, 3, sharey = true, sharex=true, squeeze = false)
     cosθ = points(Legendre(), nℓ)
     θ = acos.(cosθ)
 
@@ -1347,29 +1348,32 @@ function plot_diffrot_solar_derivatives(; operators, kw...)
     colorbar(mappable = p, ax = ax)
     ax.set_title(L"r^2\,d^2(ΔΩ)/dr^2", fontsize=12)
 
-    ΔΩ_fullinterp, dr_ΔΩ_fullinterp, d2r_ΔΩ_fullinterp =
-        SolarModel.solar_rotation_profile_and_derivative_grid(; operators)
+    if compare_splines
+        ΔΩ_fullinterp, dr_ΔΩ_fullinterp, d2r_ΔΩ_fullinterp =
+            SolarModel.solar_rotation_profile_and_derivative_grid(; operators, kw...)
 
-    ax = axlist[2,1]
-    p = ax.pcolormesh(θ, rpts/Rsun, ΔΩ_fullinterp/Ω0, shading="auto");
-    ax.set_xlabel("θ [radian]", fontsize=12);
-    ax.set_ylabel(L"r/R_\odot", fontsize=12);
-    ax.set_title("ΔΩ (spline)", fontsize=12)
-    colorbar(mappable = p, ax = ax)
+        ax = axlist[2,1]
+        p = ax.pcolormesh(θ, rpts/Rsun, ΔΩ_fullinterp/Ω0, shading="auto");
+        ax.set_ylabel(L"r/R_\odot", fontsize=12);
+        ax.set_title("ΔΩ (spline)", fontsize=12)
+        colorbar(mappable = p, ax = ax)
 
-    ax = axlist[2,2]
-    p = ax.pcolormesh(θ, rpts/Rsun, rpts .* dr_ΔΩ_fullinterp/Ω0, shading="auto");
-    ax.set_xlabel("θ [radian]", fontsize=12);
-    ax.set_title(L"r\,d(ΔΩ)/dr" * " (spline)", fontsize=12)
-    colorbar(mappable = p, ax = ax)
+        ax = axlist[2,2]
+        p = ax.pcolormesh(θ, rpts/Rsun, rpts .* dr_ΔΩ_fullinterp/Ω0, shading="auto");
+        ax.set_title(L"r\,d(ΔΩ)/dr" * " (spline)", fontsize=12)
+        colorbar(mappable = p, ax = ax)
 
-    ax = axlist[2,3]
-    p = ax.pcolormesh(θ, rpts/Rsun, rpts.^2 .* d2r_ΔΩ_fullinterp/Ω0, shading="auto");
-    ax.set_xlabel("θ [radian]", fontsize=12);
-    ax.set_title(L"r^2\,d^2(ΔΩ)/dr^2" * " (spline)", fontsize=12)
-    colorbar(mappable = p, ax = ax)
+        ax = axlist[2,3]
+        p = ax.pcolormesh(θ, rpts/Rsun, rpts.^2 .* d2r_ΔΩ_fullinterp/Ω0, shading="auto");
+        ax.set_title(L"r^2\,d^2(ΔΩ)/dr^2" * " (spline)", fontsize=12)
+        colorbar(mappable = p, ax = ax)
+    end
 
-    f.set_size_inches(9,8)
+    for ax in @view axlist[1 + compare_splines, :]
+        ax.set_xlabel("θ [radian]", fontsize=12);
+    end
+
+    f.set_size_inches(9, 3*(1 + compare_splines))
     f.tight_layout()
 end
 

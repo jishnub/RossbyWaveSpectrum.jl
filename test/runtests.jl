@@ -5,7 +5,6 @@ using Test
 using LinearAlgebra
 using OffsetArrays
 using Aqua
-using FastTransforms
 using FillArrays
 using Dierckx
 using ApproxFun

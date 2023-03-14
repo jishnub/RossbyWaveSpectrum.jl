@@ -510,6 +510,11 @@ function interp2d(xin, yin, z, xout = xin, yout = yin; s = 0.0)
     spline.(xout, yout')
 end
 
+function solar_rotation_profile_angles(Ω_raw, maxcolatitude = pi)
+    nθ = size(Ω_raw, 2)
+    lats_raw = range(0, maxcolatitude, length=nθ)
+end
+
 function solar_rotation_profile_radii(dir = SOLARMODELDIR[])
     r_ΔΩ_raw = vec(readdlm(joinpath(dir, "rmesh.orig")))::Vector{Float64}
     r_ΔΩ_raw[1:4:end]
@@ -525,30 +530,29 @@ function solar_rotation_profile_raw(dir = SOLARMODELDIR[])
     2pi * 1e-9 * ν_raw
 end
 
+findnearest(haystack, needle) = findmin(abs, haystack .- needle)[2]
 
 function equatorial_rotation_angular_velocity_surface(r_frac::Number = 1.0,
         r_ΔΩ_raw = solar_rotation_profile_radii(), Ω_raw = solar_rotation_profile_raw())
     Ω_raw_r_eq = equatorial_rotation_angular_velocity_radial_profile(Ω_raw)
-    r_frac_ind = findmin(abs, r_ΔΩ_raw .- r_frac)[2]
+    r_frac_ind = findnearest(r_ΔΩ_raw, r_frac)
     Ω_raw_r_eq[r_frac_ind]
 end
 
 function equatorial_rotation_angular_velocity_radial_profile(Ω_raw = solar_rotation_profile_raw())
-    nθ = size(Ω_raw, 2)
-    lats_raw = range(0, pi, length=nθ)
-    θind_equator = findmin(abs, lats_raw .- pi/2)[2]
-    @view Ω_raw[:, θind_equator]
+    lats_raw = solar_rotation_profile_angles(Ω_raw)
+    θind_equator = findnearest(lats_raw, pi/2)
+    Ω_raw[:, θind_equator]
 end
 
-function solar_rotation_profile_spline(; operators, smoothing_param = 1e-5, kw...)
+function solar_rotation_profile_spline(; operators, smoothing_param = 1e-4, kw...)
     @unpack Ω0 = operators.constants;
 
     r_ΔΩ_raw = solar_rotation_profile_radii(SOLARMODELDIR[])
     Ω_raw = solar_rotation_profile_raw(SOLARMODELDIR[])
     ΔΩ_raw = Ω_raw .- Ω0
 
-    nθ = size(ΔΩ_raw, 2)
-    lats_raw = LinRange(0, pi, nθ)
+    lats_raw = solar_rotation_profile_angles(Ω_raw)
     cos_lats_raw = cos.(lats_raw) # decreasing order, must be flipped in Spline2D
 
     Spline2D(r_ΔΩ_raw * Rsun, reverse(cos_lats_raw), reverse(ΔΩ_raw, dims=2); s = sum(abs2, ΔΩ_raw)*smoothing_param)
