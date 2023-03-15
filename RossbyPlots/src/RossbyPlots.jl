@@ -1322,58 +1322,78 @@ function plot_diffrot_radial_derivatives(; operators, kw...)
     f.tight_layout()
 end
 
-function plot_diffrot_solar_derivatives(; operators, kw...)
+function plot_diffrot_solar_derivatives(; operators, ΔΩprofile_deriv, kw...)
     @unpack rpts = operators
     @unpack nℓ = operators.radial_params
     @unpack Ω0 = operators.constants
-    ΔΩprofile_deriv = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(; operators, kw...);
-    compare_splines = get(kw, :compare_splines, false)
-    f, axlist = subplots(1 + compare_splines, 3, sharey = true, sharex=true, squeeze = false)
+    f, axlist = subplots(1, 3, sharey = true, sharex=true, squeeze=false)
+    cosθ = points(Legendre(), nℓ)
+    θ = acos.(cosθ)
+    titles = ("ΔΩ", L"r\,∂_r(ΔΩ)", L"r^2\,∂^2_r(ΔΩ)")
+    mulrpow_terms = (0, 1, 2)
+
+    for (term, title, ind, mulr_pow) in zip(ΔΩprofile_deriv, titles, CartesianIndices(axlist), mulrpow_terms)
+        ax = axlist[ind]
+        term_plot = term.(rpts, cosθ') .* rpts.^mulr_pow
+        vmax = maximum(abs, term_plot)
+        norm0 = matplotlib.colors.TwoSlopeNorm(vcenter=0, vmin=-vmax, vmax=vmax)
+        p = ax.pcolormesh(θ, rpts/Rsun, term_plot, shading="auto", cmap="RdBu", norm=norm0);
+        ax.set_title(title, fontsize=12)
+        colorbar(mappable = p, ax = ax)
+    end
+
+    for ax in @view axlist[1, :]
+        ax.set_xlabel("θ [radian]", fontsize=12);
+    end
+    for ax in @view axlist[:, 1]
+        ax.set_xlabel(L"r/R_\odot", fontsize=12);
+    end
+
+    f.set_size_inches(3*size(axlist,2), 3*size(axlist,1))
+    f.tight_layout()
+end
+
+function plot_diffrot_solar_vorticity(; operators, ωΩ_deriv, kw...)
+    (; raw, coriolis) = ωΩ_deriv
+    raw_vorticity = get(kw, :coriolis, false)
+    _plot_diffrot_solar_vorticity(raw_vorticity ? raw : coriolis; operators, ωΩ_deriv, kw...)
+end
+
+function _plot_diffrot_solar_vorticity(ωΩ_deriv; operators, kw...)
+    (; ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_rsinθ_ωΩθ,
+        inv_sinθ_∂r∂θωΩr, ∂r_inv_rsinθ_ωΩθ) = ωΩ_deriv
+
+    mulrpow_terms = (0, 1, 0, 1, 1, 2)
+    titles = (L"ω_{Ωr}", L"r ∂_r\left(ω_{Ωr}\right)", L"∂_θ\left(ω_{Ωr}\right)/sinθ",
+        L"ω_{Ωθ}/sinθ", L"r ∂_r ∂_θ(ω_{Ωr})/sinθ", L"r^2 ∂_r\left(ω_{Ωθ}/rsinθ\right)")
+
+    @unpack rpts = operators
+    @unpack nℓ = operators.radial_params
+    @unpack Ω0 = operators.constants
     cosθ = points(Legendre(), nℓ)
     θ = acos.(cosθ)
 
-    ax = axlist[1,1]
-    p = ax.pcolormesh(θ, rpts/Rsun, ΔΩprofile_deriv.ΔΩ.(rpts, cosθ'), shading="auto");
-    ax.set_ylabel(L"r/R_\odot", fontsize=12);
-    ax.set_title("ΔΩ", fontsize=12)
-    colorbar(mappable = p, ax = ax)
+    f, axlist = subplots(2,3, sharex = true, sharey = true, squeeze=false)
 
-    ax = axlist[1,2]
-    p = ax.pcolormesh(θ, rpts/Rsun, rpts .* ΔΩprofile_deriv.dr_ΔΩ.(rpts, cosθ'), shading="auto");
-    colorbar(mappable = p, ax = ax)
-    ax.set_title(L"r\,d(ΔΩ)/dr", fontsize=12)
-
-    ax = axlist[1,3]
-    p = ax.pcolormesh(θ, rpts/Rsun, rpts.^2 .* ΔΩprofile_deriv.d2r_ΔΩ.(rpts, cosθ'), shading="auto");
-    colorbar(mappable = p, ax = ax)
-    ax.set_title(L"r^2\,d^2(ΔΩ)/dr^2", fontsize=12)
-
-    if compare_splines
-        ΔΩ_fullinterp, dr_ΔΩ_fullinterp, d2r_ΔΩ_fullinterp =
-            SolarModel.solar_rotation_profile_and_derivative_grid(; operators, kw...)
-
-        ax = axlist[2,1]
-        p = ax.pcolormesh(θ, rpts/Rsun, ΔΩ_fullinterp/Ω0, shading="auto");
-        ax.set_ylabel(L"r/R_\odot", fontsize=12);
-        ax.set_title("ΔΩ (spline)", fontsize=12)
-        colorbar(mappable = p, ax = ax)
-
-        ax = axlist[2,2]
-        p = ax.pcolormesh(θ, rpts/Rsun, rpts .* dr_ΔΩ_fullinterp/Ω0, shading="auto");
-        ax.set_title(L"r\,d(ΔΩ)/dr" * " (spline)", fontsize=12)
-        colorbar(mappable = p, ax = ax)
-
-        ax = axlist[2,3]
-        p = ax.pcolormesh(θ, rpts/Rsun, rpts.^2 .* d2r_ΔΩ_fullinterp/Ω0, shading="auto");
-        ax.set_title(L"r^2\,d^2(ΔΩ)/dr^2" * " (spline)", fontsize=12)
+    for (term, title, ind, mulr_pow) in zip(ωΩ_deriv, titles, CartesianIndices(axlist), mulrpow_terms)
+        ax = axlist[ind]
+        term_plot = term.(rpts, cosθ') .* rpts.^mulr_pow
+        vmax = maximum(abs, term_plot)
+        norm0 = matplotlib.colors.TwoSlopeNorm(vcenter=0, vmin=-vmax, vmax=vmax)
+        p = ax.pcolormesh(θ, rpts/Rsun, term_plot, shading="auto", cmap="RdBu", norm=norm0);
+        ax.set_title(title, fontsize=12)
         colorbar(mappable = p, ax = ax)
     end
 
-    for ax in @view axlist[1 + compare_splines, :]
+    for ax in @view axlist[:, 1]
+        ax.set_ylabel(L"r/R_\odot", fontsize=12);
+    end
+
+    for ax in @view axlist[2, :]
         ax.set_xlabel("θ [radian]", fontsize=12);
     end
 
-    f.set_size_inches(9, 3*(1 + compare_splines))
+    f.set_size_inches(3*size(axlist,2), 3*size(axlist,1))
     f.tight_layout()
 end
 
