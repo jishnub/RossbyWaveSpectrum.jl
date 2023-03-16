@@ -339,7 +339,6 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     ℓℓp1op = -∇²;
     inv_ℓℓp1 = inv(ℓℓp1op)
     two_by_ℓℓp1 = 2inv_ℓℓp1
-    two_by_ℓℓp1_min_1 = two_by_ℓℓp1 - 1
 
     V_ℓinds = ℓrange(1, nℓ, V_symmetric)
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
@@ -358,9 +357,9 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     VW_ = kronmatrix!(temp, VWop, nr, V_ℓinds, W_ℓinds)
     VW .+= (Rsun / Wscaling) .* real.(VW_)
 
-    WVop_ = -ΔΩ_frac * (Ir ⊗ inv_ℓℓp1) * (ddr ⊗ (6cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 4)) +
+    WVop_ = -ΔΩ_frac * (Ir ⊗ inv_ℓℓp1) * (ddr ⊗ (8cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 4)) +
         (ddr + 4onebyr) ⊗ (∇² * sinθdθop))
-    WWop_ = m * (-ΔΩ_frac) * (4ηρ_by_r ⊗ Iℓ - ddrDDr ⊗ (2two_by_ℓℓp1 - 1) + onebyr2 ⊗ (4 - ℓℓp1op))
+    WWop_ = m * (-ΔΩ_frac) * (4ηρ_by_r ⊗ Iℓ - ddrDDr ⊗ (4inv_ℓℓp1 - 1) + onebyr2 ⊗ (4 - ℓℓp1op))
 
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     WVop = (WVop_ : space2d → space2d_D4) |> expand
@@ -540,7 +539,7 @@ function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deri
     ∂r_inv_rsinθ_ωΩθ = Fun(-(d2r_ΔΩ + (twobyr ⊗ Iℓ) * dr_ΔΩ - (2onebyr2 ⊗ Iℓ) * ΔΩ), space2d);
 
     ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_sinθ_∂r∂θωΩr, inv_rsinθ_ωΩθ, ∂r_inv_rsinθ_ωΩθ =
-        promote(map(replaceemptywitheps,
+        promote(map(replaceemptywitheps ∘ chop,
             (ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_sinθ_∂r∂θωΩr, inv_rsinθ_ωΩθ, ∂r_inv_rsinθ_ωΩθ))...)
 
     # Add the Coriolis force terms, that is ωΩ -> ωΩ + 2ΔΩ
@@ -553,7 +552,7 @@ function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deri
 
     ωΩr_plus_2ΔΩr, ∂r_ωΩr_plus_2ΔΩr, inv_sinθ_∂θ_ωΩr_plus_2ΔΩr,
             inv_sinθ_∂r∂θ_ωΩr_plus_2ΔΩr, inv_rsinθ_ωΩθ_plus_2ΔΩθ, ∂r_inv_rsinθ_ωΩθ_plus_2ΔΩθ =
-        map(replaceemptywitheps,
+        map(replaceemptywitheps ∘ chop,
             (ωΩr_plus_2ΔΩr, ∂r_ωΩr_plus_2ΔΩr, inv_sinθ_∂θ_ωΩr_plus_2ΔΩr,
                 inv_sinθ_∂r∂θ_ωΩr_plus_2ΔΩr, inv_rsinθ_ωΩθ_plus_2ΔΩθ, ∂r_inv_rsinθ_ωΩθ_plus_2ΔΩθ))
 
@@ -597,8 +596,8 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     I2d_unset = I : unsetspace2d;
 
     sinθdθop = sinθdθ_Operator(latitudinal_space);
-    ∇² = HorizontalLaplacian(latitudinal_space);
-    ℓℓp1op = -∇²;
+    ∇h² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇h²;
 
     (; ΔΩ, dr_ΔΩ, dz_ΔΩ) = ΔΩprofile_deriv;
     (; ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_rsinθ_ωΩθ, inv_sinθ_∂r∂θωΩr,
@@ -649,9 +648,9 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     uf_x_ωΩ_r = -inv_rsinθ_ωΩθ * rsinθufϕ;
     uΩ_x_ωf_r = -ΔΩ * rsinθωfθ;
     u_x_ω_r = uf_x_ωΩ_r + uΩ_x_ωf_r;
-    ∇²_u_x_ω_r = (Ir ⊗ ∇²) * u_x_ω_r;
+    ∇h²_u_x_ω_r = (Ir ⊗ ∇h²) * u_x_ω_r;
 
-    scaled_curl_curl_u_x_ω_r_tmp = (Ir ⊗ inv(ℓℓp1op)) * (-ddr_rdiv_ucrossω_h + ∇²_u_x_ω_r);
+    scaled_curl_curl_u_x_ω_r_tmp = (Ir ⊗ inv(ℓℓp1op)) * (-ddr_rdiv_ucrossω_h + ∇h²_u_x_ω_r);
     space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
     scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
 
