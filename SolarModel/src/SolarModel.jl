@@ -545,17 +545,69 @@ function equatorial_rotation_angular_velocity_radial_profile(Ω_raw = solar_rota
     Ω_raw[:, θind_equator]
 end
 
-function solar_rotation_profile_spline(; operators, smoothing_param = 1e-4, kw...)
-    @unpack Ω0 = operators.constants;
+function smooth_poles_latitude(Ω_raw, r_ΔΩ_raw, lats_raw, lat_cutoff_deg = 20, lat_cutoff_scale_deg = 4)
+    lat_cutoff_rad = deg2rad(lat_cutoff_deg)
+    lat_cutoff_rad_southpole = deg2rad(180 - lat_cutoff_deg)
+    lat_cutoff_ind = findfirst(>=(lat_cutoff_rad), lats_raw)
+    lat_cutoff_scale_rad = deg2rad(lat_cutoff_scale_deg)
+    smoothing_profile = (1 .+ tanh.((lats_raw .- lat_cutoff_rad)./lat_cutoff_scale_rad))./2 .*
+                            (1 .+ tanh.((lat_cutoff_rad_southpole .- lats_raw)./lat_cutoff_scale_rad))./2
 
+    Ω_smoothed = similar(Ω_raw)
+    for (Ω_lat_profile_smoothed, Ω_lat_profile) in zip(eachrow(Ω_smoothed), eachrow(Ω_raw))
+        Ω_cutoff_lat = Ω_lat_profile[lat_cutoff_ind]
+        Ω_lat_profile_smoothed .= Ω_cutoff_lat .+ (Ω_lat_profile .- Ω_cutoff_lat).*smoothing_profile
+    end
+    Ω_smoothed
+end
+
+function smooth_poles_radius(Ω_raw, r_ΔΩ_raw, lats_raw, lat_cutoff_deg = 20)
+    nr = size(Ω_raw, 1)
+    Ω_smoothed = copy(Ω_raw)
+    lat_cutoff_rad_northpole = deg2rad(lat_cutoff_deg)
+    lat_cutoff_rad_southpole = deg2rad(180 - lat_cutoff_deg)
+    lat_cutoff_ind_northpole = findfirst(>=(lat_cutoff_rad_northpole), lats_raw)
+    lat_cutoff_ind_southpole = findlast(<(lat_cutoff_rad_southpole), lats_raw)
+    lat_cutoff_inds_northpole = 1:lat_cutoff_ind_northpole-1
+    lat_cutoff_inds_southpole = lat_cutoff_ind_southpole+1:size(Ω_raw,2)
+    r_flatind = findfirst(>(0.8), r_ΔΩ_raw)
+    rad_smoothing_inds = r_flatind:nr
+    Ω_ref_profile = @view Ω_raw[rad_smoothing_inds, lat_cutoff_ind_northpole+1]
+    Ω_ref = Ω_ref_profile[1]
+    for lat_inds in (lat_cutoff_inds_northpole, lat_cutoff_inds_southpole)
+        Ω_smoothed_section = view(Ω_smoothed, rad_smoothing_inds, lat_inds)
+        Ω_section = view(Ω_raw, rad_smoothing_inds, lat_inds)
+        for (col_smoothed, col) in zip(eachcol(Ω_smoothed_section), eachcol(Ω_section))
+            Ω_smoothed_section .= (col[1]/Ω_ref) .* Ω_ref_profile
+        end
+    end
+    return Ω_smoothed
+end
+
+function solar_rotation_profile_smoothed(Ω_raw = solar_rotation_profile_raw(SOLARMODELDIR[]); operators, kw...)
     r_ΔΩ_raw = solar_rotation_profile_radii(SOLARMODELDIR[])
-    Ω_raw = solar_rotation_profile_raw(SOLARMODELDIR[])
-    ΔΩ_raw = Ω_raw .- Ω0
-
     lats_raw = solar_rotation_profile_angles(Ω_raw)
+    if get(kw, :smooth_poles, true)
+        Ω_raw = smooth_poles_latitude(Ω_raw, r_ΔΩ_raw, lats_raw)
+        Ω_raw = smooth_poles_radius(Ω_raw, r_ΔΩ_raw, lats_raw)
+    end
+    Ω_raw
+end
+
+function solar_diffrot_profile_smoothed(; operators, kw...)
+    Ω_raw = solar_rotation_profile_smoothed(; operators, kw...)
+    @unpack Ω0 = operators.constants;
+    Ω_raw .- Ω0
+end
+
+function solar_diffrot_profile_spline(; operators, smoothing_param = 1e-4, kw...)
+    r_ΔΩ_raw = solar_rotation_profile_radii(SOLARMODELDIR[])
+    ΔΩ = solar_diffrot_profile_smoothed(; operators, kw...)
+    lats_raw = solar_rotation_profile_angles(ΔΩ)
+
     cos_lats_raw = cos.(lats_raw) # decreasing order, must be flipped in Spline2D
 
-    Spline2D(r_ΔΩ_raw * Rsun, reverse(cos_lats_raw), reverse(ΔΩ_raw, dims=2); s = sum(abs2, ΔΩ_raw)*smoothing_param)
+    Spline2D(r_ΔΩ_raw * Rsun, reverse(cos_lats_raw), reverse(ΔΩ, dims=2); s = sum(abs2, ΔΩ)*smoothing_param)
 end
 
 function solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts, θpts)
@@ -576,7 +628,7 @@ end
 function solar_rotation_profile_and_derivative_grid(; squished = false, operators, kw...)
     @unpack nℓ = operators.radial_params
     θpts = points(ChebyshevInterval(), nℓ)
-    splΔΩ2D = solar_rotation_profile_spline(; operators, kw...)
+    splΔΩ2D = solar_diffrot_profile_spline(; operators, kw...)
     rpts_maybestretched = maybe_stretched_radius(; operators, squished)
     solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts_maybestretched, θpts)
 end
@@ -590,7 +642,7 @@ function _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts)
 end
 function equatorial_rotation_profile_and_derivative_grid(; squished = false, operators, kw...)
     @unpack rpts = operators
-    splΔΩ2D = solar_rotation_profile_spline(; operators, kw...)
+    splΔΩ2D = solar_diffrot_profile_spline(; operators, kw...)
     rpts_maybestretched = maybe_stretched_radius(; operators, squished)
     _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts_maybestretched)
 end
@@ -641,7 +693,7 @@ function radial_differential_rotation_profile_derivatives_grid(;
         perminds_out = sortperm(r_out)
         r_new = [r_in[perminds_in]; r_out[perminds_out]]
         ΔΩ_r_new = [ΔΩ_r_core[r_in_inds][perminds_in]; ΔΩ_r_sun[r_out_inds][perminds_out]]
-        ΔΩ_spl = smoothed_spline(r_new, ΔΩ_r_new; s = get(kw, :smoothing_param, 1e-5))
+        ΔΩ_spl = smoothed_spline(r_new, ΔΩ_r_new; s = get(kw, :smoothing_param, 1e-4))
         ΔΩ_r = ΔΩ_spl(rpts)
         ddrΔΩ_r = derivative.((ΔΩ_spl,), rpts)
         d2dr2ΔΩ_r = derivative.((ΔΩ_spl,), rpts, nu=2)
@@ -657,20 +709,25 @@ end
 function radial_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     @unpack rpts, radialspaces = operators;
     @unpack radialspace = radialspaces
+    @unpack ddr, d2dr2 = operators.diff_operators;
     ΔΩ_terms = radial_differential_rotation_profile_derivatives_grid(; operators, kw...);
     ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = ΔΩ_terms
     nr = length(ΔΩ_r)
 
-    ΔΩ = chop(grid_to_fun(ΔΩ_r, radialspace), 1e-3);
+    ΔΩ = chop(grid_to_fun(ΔΩ_r, radialspace), 1e-2);
     @checkncoeff ΔΩ nr
 
-    ddrΔΩ = chop(grid_to_fun(interp1d(rpts, ddrΔΩ_r, s = 1e-3), radialspace), 1e-3);
+    # ddrΔΩ = chop(grid_to_fun(interp1d(rpts, ddrΔΩ_r, s = 1e-3), radialspace), 1e-3);
+    ddrΔΩ_ = ddr * ΔΩ
+    ddrΔΩ = Fun(ddrΔΩ_, radialspace)
     @checkncoeff ddrΔΩ nr
 
-    d2dr2ΔΩ = chop(grid_to_fun(interp1d(rpts, d2dr2ΔΩ_r, s = 1e-3), radialspace), 1e-3);
+    # d2dr2ΔΩ = chop(grid_to_fun(interp1d(rpts, d2dr2ΔΩ_r, s = 1e-3), radialspace), 1e-3);
+    d2dr2ΔΩ_ = d2dr2 * ΔΩ
+    d2dr2ΔΩ = Fun(d2dr2ΔΩ_, radialspace)
     @checkncoeff d2dr2ΔΩ nr
 
-    ΔΩ, ddrΔΩ, d2dr2ΔΩ = map(replaceemptywitheps, (ΔΩ, ddrΔΩ, d2dr2ΔΩ))
+    ΔΩ, ddrΔΩ, d2dr2ΔΩ = map(replaceemptywitheps, promote(ΔΩ, ddrΔΩ, d2dr2ΔΩ))
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ)
 end
 
@@ -716,7 +773,8 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     @unpack rpts, radialspaces = operators;
     @unpack radialspace = radialspaces
     @unpack onebyr = operators.rad_terms;
-    @unpack nℓ = operators.radial_params
+    @unpack nℓ = operators.radial_params;
+    @unpack ddr, d2dr2 = operators.diff_operators;
     θpts = points(ChebyshevInterval(), nℓ);
 
     ΔΩ_terms = solar_differential_rotation_profile_derivatives_grid(; operators, kw...);
@@ -727,38 +785,42 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     dr_ΔΩ_rθ = (reverse(dr_ΔΩ_rθ, dims=2) .+ dr_ΔΩ_rθ) ./ 2
     d2r_ΔΩ_rθ = (reverse(d2r_ΔΩ_rθ, dims=2) .+ d2r_ΔΩ_rθ) ./ 2
 
-    space = radialspace ⊗ Legendre()
+    space2d = radialspace ⊗ Legendre()
 
     cosθ = Fun(Legendre());
     Ir = I : radialspace;
     dcosθ = Derivative(Legendre())
     sinθdθop = -(1-cosθ^2)*dcosθ
 
-    s = get(kw, :smoothing_param, 1e-5)
+    # s = get(kw, :smoothing_param, 1e-5)
 
-    ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space), s);
+    ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space2d), 1e-2);
 
-    dr_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, dr_ΔΩ_rθ, s = s), space), s);
+    # dr_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, dr_ΔΩ_rθ, s = s), space2d), 1e-2);
+    dr_ΔΩ_ = (ddr ⊗ I) * ΔΩ;
+    dr_ΔΩ = Fun(dr_ΔΩ_, space2d)
     if ncoefficients(dr_ΔΩ) > 0
         c = coefficients(ProductFun(dr_ΔΩ))
         c[:, 2:2:end] .= 0 # odd terms
-        dr_ΔΩ = Fun(ProductFun(c, factors(space)...))
+        dr_ΔΩ = Fun(ProductFun(c, factors(space2d)...))
     end
 
     onebyr_sinθdθ = KroneckerOperator(Multiplication(onebyr, radialspace), sinθdθop,
                 radialspace ⊗ domainspace(dcosθ), radialspace ⊗ rangespace(dcosθ))
     dz_ΔΩ_ = (Ir ⊗ cosθ) * dr_ΔΩ - onebyr_sinθdθ * ΔΩ;
-    dz_ΔΩ = chop(Fun(dz_ΔΩ_, space));
+    dz_ΔΩ = chop(Fun(dz_ΔΩ_, space2d));
 
-    d2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, d2r_ΔΩ_rθ, s = s), space), s);
+    # d2r_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, d2r_ΔΩ_rθ, s = s), space2d), 1e-2);
+    d2r_ΔΩ_ = (d2dr2 ⊗ I) * ΔΩ
+    d2r_ΔΩ = Fun(d2r_ΔΩ_, space2d);
     if ncoefficients(d2r_ΔΩ) > 0
         c = coefficients(ProductFun(d2r_ΔΩ))
         c[:, 2:2:end] .= 0 # odd terms
-        d2r_ΔΩ = Fun(ProductFun(c, factors(space)...))
+        d2r_ΔΩ = Fun(ProductFun(c, factors(space2d)...))
     end
 
     ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ =
-        map(replaceemptywitheps, (ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ))
+        map(replaceemptywitheps, promote(ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ))
 
     (; ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ)
 end

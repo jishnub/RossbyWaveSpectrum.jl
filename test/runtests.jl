@@ -591,7 +591,7 @@ end
             @testset for m in [1, 4, 10], V_symmetric in [true, false]
                 Mc.re .= 0; Mc.im .= 0;
                 Ms.re .= 0; Ms.im .= 0;
-                @testset "radial constant and constant" begin
+                @testset "solar constant and constant" begin
                     RossbyWaveSpectrum.constant_differential_rotation_terms!(Mc, m;
                         operators, ΔΩ_frac, V_symmetric);
                     RossbyWaveSpectrum.solar_differential_rotation_terms!(Ms, m;
@@ -613,7 +613,7 @@ end
     end
     @testset "compare with radial" begin
         ΔΩprofile_deriv = @inferred RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
-            operators, rotation_profile = :radial_equator, smoothing_param=1e-5);
+            operators, rotation_profile = :radial_equator, smoothing_param=1e-4);
         (; ΔΩ, dr_ΔΩ, d2r_ΔΩ) = ΔΩprofile_deriv;
 
         ωΩ_deriv = @inferred RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
@@ -723,7 +723,7 @@ end
 
         @testset "compare with matrix" begin
             ΔΩprofile_deriv_rad = RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_Fun(;
-                            operators, rotation_profile = :solar_equator, smoothing_param=1e-5);
+                            operators, rotation_profile = :solar_equator, smoothing_param=1e-4);
 
             @testset for m in [1, 4, 10], V_symmetric in [true, false]
                 Mr.re .= 0; Mr.im .= 0;

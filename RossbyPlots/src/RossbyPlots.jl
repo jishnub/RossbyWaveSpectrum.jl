@@ -1322,17 +1322,18 @@ function plot_diffrot_radial_derivatives(; operators, kw...)
     f.tight_layout()
 end
 
-function plot_diffrot_solar_derivatives(; operators, ΔΩprofile_deriv, kw...)
+function plot_diffrot_solar_derivatives(; operators, ΔΩprofile_deriv, ΔΩ_ongrid_splines = nothing, kw...)
     @unpack rpts = operators
     @unpack nℓ = operators.radial_params
     @unpack Ω0 = operators.constants
-    f, axlist = subplots(1, 3, sharey = true, sharex=true, squeeze=false)
+    compare_splines = !isnothing(ΔΩ_ongrid_splines)
+    f, axlist = subplots(1 + compare_splines, 3, sharey = true, sharex=true, squeeze=false)
     cosθ = points(Legendre(), nℓ)
     θ = acos.(cosθ)
     titles = ("ΔΩ", L"r\,∂_r(ΔΩ)", L"r^2\,∂^2_r(ΔΩ)")
     mulrpow_terms = (0, 1, 2)
 
-    for (term, title, ind, mulr_pow) in zip(ΔΩprofile_deriv, titles, CartesianIndices(axlist), mulrpow_terms)
+    for (term, title, ind, mulr_pow) in zip(ΔΩprofile_deriv, titles, CartesianIndices((1:1, axes(axlist,2))), mulrpow_terms)
         ax = axlist[ind]
         term_plot = term.(rpts, cosθ') .* rpts.^mulr_pow
         vmax = maximum(abs, term_plot)
@@ -1342,7 +1343,20 @@ function plot_diffrot_solar_derivatives(; operators, ΔΩprofile_deriv, kw...)
         colorbar(mappable = p, ax = ax)
     end
 
-    for ax in @view axlist[1, :]
+    if compare_splines
+        for (term, title, ind, mulr_pow) in zip(ΔΩ_ongrid_splines, titles,
+                CartesianIndices((2:2, axes(axlist,2))), mulrpow_terms)
+            ax = axlist[ind]
+            term_plot = term .* rpts.^mulr_pow
+            vmax = maximum(abs, term_plot)
+            norm0 = matplotlib.colors.TwoSlopeNorm(vcenter=0, vmin=-vmax, vmax=vmax)
+            p = ax.pcolormesh(θ, rpts/Rsun, term_plot, shading="auto", cmap="RdBu", norm=norm0);
+            ax.set_title(title * " (spline)", fontsize=12)
+            colorbar(mappable = p, ax = ax)
+        end
+    end
+
+    for ax in @view axlist[end, :]
         ax.set_xlabel("θ [radian]", fontsize=12);
     end
     for ax in @view axlist[:, 1]
