@@ -825,9 +825,4 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     (; ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ)
 end
 
-@precompile_all_calls begin
-    operators = radial_operators(20, 10)
-    solar_differential_rotation_profile_derivatives_Fun(; operators)
-end
-
 end # module SolarModel
