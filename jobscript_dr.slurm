@@ -23,17 +23,18 @@ srun $julia --project=$project --startup-file=no -t 20 -e \
 using RossbyWaveSpectrum
 using RossbyWaveSpectrum.Filters
 V_symmetric = !parse(Bool, ENV["SLURM_PROCID"]); # 0=>true, 1=>false
-r_in_frac, r_out_frac = 0.65, 0.99
-nr, nℓ = 60, 30
+r_in_frac, r_out_frac = 0.65, 0.985
+nr, nℓ = 55, 30
 mrange = 1:20
-viscosity = 5e11
-trackingrate = :cutoff # :carrington, :cutoff or :surface
+viscosity = 3e11
+trackingrate = :hanson2020 # :carrington, :hanson2020, :cutoff or :surface
 ΔΩ_scale = 1.0
 Δl_cutoff = 20
 n_cutoff = 20
 diffrot=true
-rotation_profile=:solar_latrad
+rotation_profile=:solar_latrad_squished
 modeltag = "nu$(viscosity)_rin$(round(r_in_frac, digits=3))_rout$(round(r_out_frac, digits=3))_track$(trackingrate)"
+modeltag *= "_rotprof$(rotation_profile)"
 modeltag *= diffrot && !isone(ΔΩ_scale) ? "_rotscale$(round(ΔΩ_scale, digits=2))" : ""
 eig_imag_to_real_ratio_cutoff = 3
 eigvec_spectrum_power_cutoff = 0.4

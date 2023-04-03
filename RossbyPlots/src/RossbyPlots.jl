@@ -15,6 +15,7 @@ using OrderedCollections
 using Printf
 using StructArrays
 using UnPack
+using Roots
 
 const StructMatrix{T} = StructArray{T,2}
 
@@ -294,6 +295,7 @@ function spectrum(lams::AbstractArray, mr;
     vecs = nothing,
     scale_freq = true,
     Δl_filter = nothing,
+    ylim = nothing,
     kw...)
 
     ax.set_xlabel("m", fontsize = 12)
@@ -306,7 +308,11 @@ function spectrum(lams::AbstractArray, mr;
     V_symmetric = kw[:V_symmetric]
 
     νnHzunit = scale_freq ? freqnHzunit(Ω0)  #= around 453 =# : 1.0
-    ax.set_ylim((-600/453) * νnHzunit, (150/453) * νnHzunit)
+    if isnothing(ylim)
+        ax.set_ylim((-600/453) * νnHzunit, (150/453) * νnHzunit)
+    else
+        ax.set_ylim((ylim[1]/453) * νnHzunit, (ylim[2]/453) * νnHzunit)
+    end
 
     lams, vecs = update_cutoffs(lams, vecs, mr; operators, V_symmetric,
         Δl_filter, nodes_cutoff)
@@ -471,13 +477,15 @@ end
 function rossbyridge_mode_indices(lams, mr; operators, kw...)
     @unpack Ω0, ν = operators.constants
     νnHzunit = -freqnHzunit(Ω0)
-    map(zip(mr, lams)) do (m, λ)
-        isempty(λ) && return eltype(λ)[NaN + im*NaN]
-        λ0 = if haskey(HansonHighmfit, m)
+    νtarget = map(mr) do m
+        if haskey(HansonHighmfit, m)
             value(HansonHighmfit[m].ν)/νnHzunit
         else
             RossbyWaveSpectrum.rossby_ridge(m)
         end
+    end
+    map(zip(mr, lams, νtarget)) do (m, λ, λ0)
+        isempty(λ) && return eltype(λ)[NaN + im*NaN]
         argmin(abs.(real.(λ) .- λ0))
     end
 end

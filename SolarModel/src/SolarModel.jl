@@ -364,8 +364,10 @@ function radial_operators(operatorparams...)
             equatorial_rotation_angular_velocity_surface(1.0)
         elseif trackingrate === :carrington
             456e-9 * 2pi
+        elseif trackingrate === :hanson2020
+            453.1e-9 * 2pi
         else
-            throw(ArgumentError("trackingrate must be a nHz value, or one of :carrington, :cutoff or :surface"))
+            throw(ArgumentError("trackingrate must be a nHz value, or one of :carrington, :cutoff, :hanson2020 or :surface"))
         end
 
     Ω0 *= trackingratescaling
