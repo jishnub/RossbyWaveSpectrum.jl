@@ -48,19 +48,15 @@ export interp2d
 export smoothed_spline
 export solar_structure_parameter_splines
 export read_solar_model
-export Tmul, Tplusinf, TplusInt
+export Tmul, Tplusinf
 export replaceemptywitheps
 export equatorial_rotation_angular_velocity_surface
 export listncoefficients
 
 const Tmul = typeof(Multiplication(Fun()) * Derivative())
 const Tplusinf = typeof(Multiplication(Fun()) + Derivative())
-const TplusInt = typeof(Multiplication(Fun(), Chebyshev()) + Derivative(Chebyshev()))
 
-
-# const BlockMatrixType = BlockMatrix{Float64, Matrix{BlockBandedMatrix{Float64}},
-#     Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
-const BandedMatrixType = BandedMatrices.BandedMatrix{Float64, Matrix{Float64}, Base.OneTo{Int64}}
+const BandedMatrixType = typeof(BandedMatrix(0=>Float64[]))
 
 grid_to_fun(v::AbstractVector, space) = Fun(space, transform(space, v))
 grid_to_fun(v::AbstractMatrix, space) = Fun(ProductFun(transform(space, v), space))
@@ -75,7 +71,7 @@ function operatormatrix(A, nr, spaceconversion::Pair)::Matrix{Float64}
     C[1:nr, 1:nr]
 end
 
-function V_boundary_op(operators)::TplusInt
+function V_boundary_op(operators)
     @unpack r = operators.rad_terms;
     @unpack ddr = operators.diff_operators;
     @unpack radialspace = operators.radialspaces

@@ -15,7 +15,6 @@ using OrderedCollections
 using Printf
 using StructArrays
 using UnPack
-using Roots
 
 const StructMatrix{T} = StructArray{T,2}
 
@@ -272,9 +271,7 @@ end
 
 function update_cutoffs(F::RossbyWaveSpectrum.FilteredEigen;
     nodes_cutoff::Union{Nothing,Int} = nothing,
-    Δl_filter::Union{Nothing,Int} = nothing,
-    kw...
-    )
+    Δl_filter::Union{Nothing,Int} = nothing)
 
     isnothing(nodes_cutoff) && isnothing(Δl_filter) && return F
 
@@ -511,7 +508,7 @@ function damping_rossbyridge(lams, mr; operators, f = figure(), ax = subplot(), 
             mec="black", ms=5, label="this work", zorder = 4)
 
     # observations
-    plot_dispersion(ProxaufFit; var=:γ, ax, color= "grey", label="P20", zorder = 1)
+    plot_dispersion(ProxaufFit; operators, var=:γ, ax, color= "grey", label="P20", zorder = 1)
     ax.set_ylabel("linewidth [nHz]", fontsize = 12)
     ax.set_xlabel("m", fontsize = 12)
     ax.legend(loc="best")
@@ -526,20 +523,30 @@ function damping_rossbyridge(lams, mr; operators, f = figure(), ax = subplot(), 
     return f, ax
 end
 
-function HFR_mode_frequencies(lams, mr; operators, kw...)
+function HFR_mode_indices(lams, mr; operators, kw...)
     @unpack Ω0 = operators.constants
     νnHzunit = freqnHzunit(Ω0)
     map(zip(mr, lams)) do (m, λ)
-        (isempty(λ) || m < 5) && return eltype(λ)(NaN + im*NaN)
+        (isempty(λ) || m < 5) && return missing
         if haskey(HansonHFFit, m)
             λ0 = value(HansonHFFit[m].ν)/(-νnHzunit)
-            λ[argmin(abs.(real.(λ) .- λ0))]
+            findmin(x -> abs(real(x) - λ0), λ)[2]
         else
             lower_cutoff = RossbyWaveSpectrum.rossby_ridge(m)
             upper_cutoff = RossbyWaveSpectrum.rossby_ridge(m) + 180/νnHzunit
             λ_inrange = λ[lower_cutoff .< real.(λ) .< upper_cutoff]
-            isempty(λ_inrange) ? eltype(λ)(NaN + im*NaN) : argmin(imag, λ_inrange)
+            isempty(λ_inrange) ? missing : findmin(imag, λ_inrange)[2]
         end
+    end
+end
+
+function HFR_mode_frequencies(lams, mr; operators, kw...)
+    @unpack Ω0 = operators.constants
+    νnHzunit = freqnHzunit(Ω0)
+    inds = HFR_mode_indices(lams, mr; operators, kw...)
+    map(zip(mr, lams, inds)) do (m, λ, ind)
+        ismissing(ind) && return eltype(λ)(NaN + im*NaN)
+        return λ[argmin(abs.(real.(λ) .- λ0))]
     end
 end
 
@@ -552,7 +559,7 @@ function damping_highfreqridge(lams, mr; operators, f = figure(), ax = subplot()
     νnHzunit = freqnHzunit(Ω0)
 
     # observations
-    plot_dispersion(HansonHFFit; var=:γ, ax, color= "grey", label="H22", zorder = 1)
+    plot_dispersion(HansonHFFit; operators, var=:γ, ax, color= "grey", label="H22", zorder = 1)
 
     # model
     λs_HFRridge = HFR_mode_frequencies(lams, mr; operators)
@@ -576,9 +583,9 @@ function damping_highfreqridge(lams, mr; operators, f = figure(), ax = subplot()
     return f, ax
 end
 
-function rossby_ridge_data(lams, mr; f = figure(), ax = subplot(), kw...)
+function rossby_ridge_data(lams, mr; operators, f = figure(), ax = subplot(), kw...)
     # observations
-    plot_dispersion(HansonHighmfit; ax, color= "0.3", ls="dashed", label="Hanson")
+    plot_dispersion(HansonHighmfit; operators, ax, color= "0.3", ls="dashed", label="Hanson")
     ax.legend(loc="best")
     ax.set_xlim(extrema(mr) .+ (-0.5, 0.5))
 
@@ -588,9 +595,9 @@ function rossby_ridge_data(lams, mr; f = figure(), ax = subplot(), kw...)
     return f, ax
 end
 
-function high_frequency_ridge_data(lams, mr; f = figure(), ax = subplot(), kw...)
+function high_frequency_ridge_data(lams, mr; operators, f = figure(), ax = subplot(), kw...)
     # observations
-    plot_dispersion(HansonHFFit; ax, color= "0.3", ls="dashed", label="H22")
+    plot_dispersion(HansonHFFit; operators, ax, color= "0.3", ls="dashed", label="H22")
 
     ax.legend(loc="best")
     ax.set_xlim(extrema(mr) .+ (-0.5, 0.5))
@@ -604,7 +611,7 @@ end
 for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge,
         :high_frequency_ridge_data, :rossby_ridge_data,
         :rossbyridge_mode_indices, :rossbyridge_mode_frequencies,
-        :HFR_mode_frequencies]
+        :HFR_mode_frequencies, :HFR_mode_indices]
     @eval function $f(feig::FilteredEigen; kw...)
         $f(feig.lams, feig.mr; feig.operators, vecs = feig.vs, feig.kw..., kw...)
     end
@@ -713,27 +720,32 @@ function diffrot_rossby_ridge(Fsym,
     end
 end
 
-function plot_dispersion(dataset; var = :ν, ax, kw...)
+function plot_dispersion(dataset; operators, var = :ν, ax, scale_freq = true, kw...)
+    @unpack Ω0 = operators.constants
+    νnHzunit = scale_freq ? 1.0 : 1/freqnHzunit(Ω0)
+
     mr_Hanson = collect(keys(dataset))
     ν_H = [getproperty(dataset[m], var) for m in mr_Hanson]
-    ax.errorbar(mr_Hanson, value.(ν_H);
-        yerr = errorbars_pyplot(ν_H),
+    ax.errorbar(mr_Hanson, value.(ν_H) .* νnHzunit;
+        yerr = errorbars_pyplot(ν_H) .* νnHzunit,
         ls="None", capsize = 3,
         zorder = 2, marker = ".", ms = 5,
         mfc = "k", kw...)
 end
 
 function spectrum_with_datadispersion(Fsym; kw...)
-    @assert Fsym.kw[:V_symmetric] "only symmetric solutions supported"
-    f, ax = spectrum(Fsym; zorder=3, fillmarker = false, Δl_filter = 0, nodes_cutoff = 2, kw...)
+    V_symmetric = Fsym.kw[:V_symmetric]
+    f, ax = spectrum(Fsym; zorder=3, fillmarker = false, Δl_filter = Int(!V_symmetric), nodes_cutoff = 2, kw...)
 
-    mr_Hanson = collect(keys(HansonGONGfit))
-    ν_H = [HansonGONGfit[m].ν for m in mr_Hanson]
-
-    plot_dispersion(HansonGONGfit; ax, color= "darkkhaki", label="Hanson 2020 [GONG]")
-    plot_dispersion(Liang2019MDIHMI; ax, color= "sandybrown", label="Liang 2019 [MDI & HMI]")
-    plot_dispersion(ProxaufFit; ax, color= "cornflowerblue", label="Proxauf 2020 [HMI]")
-    plot_dispersion(HansonHighmfit; ax, color= "cornflowerblue", label="Hanson")
+    @unpack operators = Fsym
+    if V_symmetric
+        plot_dispersion(HansonGONGfit; operators, ax, color= "darkkhaki", label="Hanson 2020 [GONG]", kw...)
+        plot_dispersion(Liang2019MDIHMI; operators, ax, color= "sandybrown", label="Liang 2019 [MDI & HMI]", kw...)
+        plot_dispersion(ProxaufFit; operators, ax, color= "cornflowerblue", label="Proxauf 2020 [HMI]", kw...)
+        plot_dispersion(HansonHighmfit; operators, ax, color= "cornflowerblue", label="Hanson", kw...)
+    else
+        plot_dispersion(HansonHFFit; operators, ax, color= "brown", label="Hanson 2022 [HMI]", kw...)
+    end
 
     ax.legend()
     f.tight_layout()
@@ -806,7 +818,7 @@ end
 
 function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         operators, field = :V, f = figure(), component = real,
-        angular_profile = :max,
+        angular_profile = :surface,
         kw...)
 
     V = getproperty(VWSinv, field)::Matrix{ComplexF64}
@@ -823,8 +835,7 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
     equator_ind = argmin(abs.(θ .- pi/2))
     ind_max = RossbyWaveSpectrum.angularindex_maximum(Vr, θ)
     V_peak_depthprofile = @view Vr[:, ind_max]
-    r_max_ind = argmax(abs.(V_peak_depthprofile))
-    r_out_ind = argmax(abs.(rpts .- r_out))
+    r_out_ind = argmin(abs.(rpts .- r_out))
     Vr .*= sign(Vr[r_out_ind, equator_ind])
 
     cmap = get(kw, :cmap, "Greys")
@@ -857,16 +868,18 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
 
     if !polar
         r_plot_ind = if angular_profile == :max
-            r_max_ind
+            argmax(abs.(V_peak_depthprofile))
         elseif angular_profile == :surface
             r_out_ind
         end
-        axsurf.plot(θ, (@view Vr[r_plot_ind, :]), color = "black")
+        latidudes = 90 .- rad2deg.(θ)
+        axsurf.plot(latidudes, (@view Vr[r_plot_ind, :]), color = "black")
         if get(kw, :setylabel, true)
             axsurf.set_ylabel("Angular\nprofile", fontsize = 11)
         end
-        axsurf.set_xticks(pi * (1/4:1/4:1))
-        axsurf.xaxis.set_major_formatter(ticker.FuncFormatter(piformatter))
+        # axsurf.set_xticks(pi * (1/4:1/4:1))
+        axsurf.axhline(0, ls="dotted", color="black")
+        # axsurf.xaxis.set_major_formatter(ticker.FuncFormatter(piformatter))
         yfmt = ticker.ScalarFormatter(useMathText = true)
         yfmt.set_powerlimits((-1,1))
         axsurf.yaxis.set_major_formatter(yfmt)
@@ -884,9 +897,12 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         axdepth.xaxis.set_major_formatter(xfmt)
         axdepth.xaxis.tick_top()
 
-        axprofile.pcolormesh(θ, r_frac, Vr; cmap, norm=norm0, rasterized = true, shading = "auto")
-        xlabel = get(kw, :longxlabel, true) ? "colatitude (θ) [radians]" : "θ [radians]"
+        axprofile.pcolormesh(latidudes, r_frac, Vr; cmap, norm=norm0, rasterized = true, shading = "auto")
+        xlabel = get(kw, :longxlabel, true) ? "Latitude [degrees]" : "Lat [deg]"
+        axprofile.axhline(r_frac[r_plot_ind], ls="dotted", color="black")
+        axprofile.axvline(latidudes[equator_ind], ls="dotted", color="black")
         axprofile.set_xlabel(xlabel, fontsize = 11)
+        axprofile.invert_xaxis()
     else
         x = r_frac .* sin.(θ)'
         z = r_frac .* cos.(θ)'
