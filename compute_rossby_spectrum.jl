@@ -5,12 +5,12 @@ using TimerOutputs
 
 function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile;
             smoothing_param = 1e-4,
-            r_in_frac = 0.7, r_out_frac = 0.995,
+            r_in_frac = 0.65, r_out_frac = 0.985,
             trackingratescaling = 1.0, Seqglobalscaling = 1.0,
             ΔΩ_scale = 1.0,
             Δl_cutoff = 15,
             n_cutoff = 15,
-            viscosity = 2e12,
+            viscosity = 5e11,
             trackingrate = :cutoff,
             extrakw...
             )

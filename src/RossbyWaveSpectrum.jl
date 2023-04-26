@@ -1273,6 +1273,13 @@ function scale_eigenvectors!(VWSinv::NamedTuple; operators)
     return VWSinv
 end
 
+function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix, m::Integer, matrixfn = differential_rotation_matrix; operators, kw...)
+    A = matrixfn(m; operators, kw...);
+    B = mass_matrix(m; operators, kw...);
+    M = (A,B)
+    filter_eigenvalues(λ, v, M, m; operators, kw...);
+end
+
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     M, m::Integer;
     operators,
@@ -1520,7 +1527,7 @@ function filteredeigen(filename::String; kw...)
     diffrot::Bool = fkw[:diffrot]
     V_symmetric::Bool = fkw[:V_symmetric]
     rotation_profile::Union{Symbol, Nothing} = fkw[:rotation_profile]
-    smoothing_param::Float64 = get(fkw, :smoothing_param, 1e-5)
+    smoothing_param::Float64 = get(fkw, :smoothing_param, 1e-4)
 
     matrixfn! = RotMatrix(Val(:matrix), V_symmetric, diffrot, rotation_profile;
                     operators, smoothing_param)

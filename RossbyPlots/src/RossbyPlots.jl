@@ -306,7 +306,7 @@ function spectrum(lams::AbstractArray, mr;
 
     νnHzunit = scale_freq ? freqnHzunit(Ω0)  #= around 453 =# : 1.0
     if isnothing(ylim)
-        ax.set_ylim((-600/453) * νnHzunit, (150/453) * νnHzunit)
+        ax.set_ylim((-400/453) * νnHzunit, (200/453) * νnHzunit)
     else
         ax.set_ylim((ylim[1]/453) * νnHzunit, (ylim[2]/453) * νnHzunit)
     end
@@ -415,7 +415,7 @@ function spectrum(lams::AbstractArray, mr;
 
     ΔΩ_scale = get(kw, :ΔΩ_scale, 1.0)
 
-    titlestr = V_symmetric ? "Symmetric" : "Antisymmetric"
+    titlestr = V_symmetric ? "Spectrum : symmetric modes" : "Spectrum : antisymmetric modes"
     if ΔΩ_scale != 1
         titlestr *= " ΔΩ_scale = $(round(ΔΩ_scale, digits=2))"
     end
@@ -735,20 +735,36 @@ end
 
 function spectrum_with_datadispersion(Fsym; kw...)
     V_symmetric = Fsym.kw[:V_symmetric]
-    f, ax = spectrum(Fsym; zorder=3, fillmarker = false, Δl_filter = Int(!V_symmetric), nodes_cutoff = 2, kw...)
+    kwd = Dict(kw)
+    if haskey(kwd, :xlim)
+        delete!(kwd, :xlim)
+    end
+    if haskey(kwd, :save)
+        delete!(kwd, :save)
+    end
+    f, ax = spectrum(Fsym; zorder=3, fillmarker = false, Δl_filter = Int(!V_symmetric), nodes_cutoff = 2, kwd...)
 
     @unpack operators = Fsym
     if V_symmetric
-        plot_dispersion(HansonGONGfit; operators, ax, color= "darkkhaki", label="Hanson 2020 [GONG]", kw...)
-        plot_dispersion(Liang2019MDIHMI; operators, ax, color= "sandybrown", label="Liang 2019 [MDI & HMI]", kw...)
-        plot_dispersion(ProxaufFit; operators, ax, color= "cornflowerblue", label="Proxauf 2020 [HMI]", kw...)
-        plot_dispersion(HansonHighmfit; operators, ax, color= "cornflowerblue", label="Hanson", kw...)
+        plot_dispersion(HansonGONGfit; operators, ax, color= "0.6", label="Hanson 2020 [GONG]", kwd...)
+        plot_dispersion(Liang2019MDIHMI; operators, ax, color= "0.4", label="Liang 2019 [MDI & HMI]", kwd...)
+        plot_dispersion(ProxaufFit; operators, ax, color= "0.7", ls="dashed", label="Proxauf 2020 [HMI]", kwd...)
+        plot_dispersion(HansonHighmfit; operators, ax, color= "black", label="Hanson", kwd...)
     else
-        plot_dispersion(HansonHFFit; operators, ax, color= "brown", label="Hanson 2022 [HMI]", kw...)
+        plot_dispersion(HansonHFFit; operators, ax, color= "brown", label="Hanson 2022 [HMI]", kwd...)
+    end
+
+    if haskey(kw, :xlim)
+        ax.set_xlim(kw[:xlim])
     end
 
     ax.legend()
     f.tight_layout()
+    if get(kw, :save, false)
+        filename = joinpath(plotdir, "spectrum_$(!V_symmetric ? "a" : "")sym.eps")
+        @info "saving to $filename"
+        f.savefig(filename)
+    end
 end
 
 function piformatter(x, _)
@@ -819,6 +835,7 @@ end
 function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         operators, field = :V, f = figure(), component = real,
         angular_profile = :surface,
+        λ = nothing,
         kw...)
 
     V = getproperty(VWSinv, field)::Matrix{ComplexF64}
@@ -917,11 +934,17 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         # cb.ax.yaxis.set_major_locator(ticker.MultipleLocator(0.2))
     end
 
-    if get(kw, :suptitle, true)
-        fieldname = field == :V ? "Toroidal" :
-                    field == :W ? "Poloidal" :
-                    field == :S ? "Entropy" : nothing
-        axprofile.set_title("$fieldname streamfunction m = $m")
+    if get(kw, :title, true)
+        if get(kw, :title_fieldtype, !(get(kw, :title_eigval, false)))
+            fieldname = field == :V ? "Toroidal" :
+                        field == :W ? "Poloidal" :
+                        field == :S ? "Entropy" : nothing
+            axprofile.set_title("$fieldname streamfunction m = $m")
+        elseif get(kw, :title_eigval, false)
+            @unpack Ω0 = operators.constants
+            νnHzunit = get(kw, :scale_freq, true) ? freqnHzunit(Ω0)  #= around 453 =# : 1.0
+            axprofile.set_title(L"\Re[\nu]" * " = " * string(round(-real(λ)*νnHzunit, sigdigits=3)) * " nHz")
+        end
     end
 
     if !get(kw, :constrained_layout, false)
@@ -935,12 +958,29 @@ end
 function eigenfunction(feig::FilteredEigen, m::Integer, ind::Integer; kw...)
     @unpack operators = feig
     mind = findfirst(==(m), feig.mr)
-    eigenfunction(feig.vs[mind][:, ind], m; operators, feig.kw..., kw...)
+    eigenfunction(feig.vs[mind][:, ind], m; operators, λ = feig.lams[mind][ind], feig.kw..., kw...)
 end
 
 function eigenfunction(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
     (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
     eigenfunction(VWSinv, θ, m; operators, kw...)
+end
+
+function eigenfunctions(F::FilteredEigen, m::Integer, inds; layout=(2,length(inds)÷2), kw...)
+    fig = plt.figure(constrained_layout = true, figsize = (4.5*layout[2], 4*layout[1]))
+    subfigs = fig.subfigures(layout...)
+    kwd = Dict(kw)
+    if haskey(kw, :save)
+        delete!(kwd, :save)
+    end
+    for (ind, sf) in zip(inds, subfigs)
+        eigenfunction(F, m, ind; f = sf, constrained_layout=true, title_eigval=true, kwd...)
+    end
+    if get(kw, :save, false)
+        filename = joinpath(plotdir, "eigenfn_m$m.eps")
+        @info "saving to $filename"
+        fig.savefig(filename)
+    end
 end
 
 function eigenfunctions_allstreamfn(f::FilteredEigen, m::Integer, vind::Integer; kw...)
