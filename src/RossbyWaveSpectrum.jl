@@ -900,7 +900,10 @@ function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
     mul!(λBv.im, B, v.im)
     λBv .*= λ
 
-    isapprox(Av, λBv; rtol)
+    normAv = norm(Av)
+    normλBv = norm(λBv)
+    Av .-= λBv
+    norm(Av) <= rtol*max(normAv, normλBv)
 end
 
 function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff])
@@ -1053,54 +1056,63 @@ end
 angularindex_equator(Vr, θ) = findmin(x -> abs(x - pi/2), θ)[2]
 indexof_equator(θ) = angularindex_equator(nothing, θ)
 
-function sign_changes(radprof)
-    count(Bool.(sign.(abs.(diff(sign.(real(radprof)))))))
+function sign_changes(v)
+    isempty(v) && return 0
+    n = Int(iszero(v[1]))
+    for i in eachindex(v)[1:end-1]
+        if sign(v[i]) != sign(v[i+1]) && v[i] != 0
+            n += 1
+        end
+    end
+    return n
 end
 
-function count_num_nodes(radprof::AbstractVector{<:Real}, rpts, radialspace; smallcutoff = 0.1)
-    rpts2, radprof = if issorted(rpts, rev=true)
-        reverse(rpts), reverse(radprof)
-    else
-        rpts, radprof
-    end
-    radprof *= argmax(abs.(extrema(radprof))) == 2 ? 1 : -1
+function count_num_nodes!(radprof::AbstractVector{<:Real}, rpts; smallcutoff = 0.1)
+    rpts2, radprof = reverse(rpts), reverse!(radprof)
+    radprof .*= argmax(abs.(extrema(radprof))) == 2 ? 1 : -1
     zerocrossings = sign_changes(radprof)
     iszero(zerocrossings) && return 0
     s = smoothed_spline(rpts2, radprof)
     radroots = Dierckx.roots(s, maxn = 2zerocrossings)
     isempty(radroots) && return 0
-    radialdomain = domain(radialspace)
 
     # Discount nodes that appear spurious
-    sa = smoothed_spline(rpts2, abs.(radprof))
+    radprof .= abs.(radprof)
+    sa = smoothed_spline(rpts2, radprof)
     unsignedarea = Dierckx.integrate(sa, rpts2[1], rpts2[end])
 
     signed_areas = zeros(Float64, length(radroots)+1)
-    for (ind, (spt, ept)) in enumerate(zip([rpts2[1]; radroots], [radroots; rpts2[end]]))
-        signed_areas[ind] = Dierckx.integrate(s, spt, ept)
+    signed_areas[1] = Dierckx.integrate(s, rpts2[1], radroots[1])
+    for (ind, (spt, ept)) in enumerate(zip(@view(radroots[1:end-1]), @view(radroots[2:end])))
+        signed_areas[ind+1] = Dierckx.integrate(s, spt, ept)
     end
+    signed_areas[end] = Dierckx.integrate(s, radroots[end], rpts2[end])
 
-    smallcrossings = abs.(signed_areas ./ unsignedarea) .< smallcutoff
-    signed_areas = signed_areas[.!smallcrossings]
+    largecrossings = abs.(signed_areas ./ unsignedarea) .> smallcutoff
+    signed_areas = signed_areas[largecrossings]
     ncross = sign_changes(signed_areas)
 
     min(ncross, zerocrossings)
 end
-function count_radial_nodes_equator(V::AbstractMatrix{<:Complex}, angularindex, rpts, radialspace)
+function count_radial_nodes_equator(V::AbstractMatrix{<:Complex},
+        angularindex, rpts,
+        temp = similar(V, real(eltype(V)), size(V,1)))
+
     radprof = @view V[:, angularindex]
-    nnodes_real = count_num_nodes(real(radprof), rpts, radialspace)
-    nnodes_imag = count_num_nodes(imag(radprof), rpts, radialspace)
+    temp .= real.(radprof)
+    nnodes_real = count_num_nodes!(temp, rpts)
+    temp .= imag.(radprof)
+    nnodes_imag = count_num_nodes!(temp, rpts)
     nnodes_real, nnodes_imag
 end
 function count_V_radial_nodes(v::AbstractVector{<:Complex}, m; operators,
         angularindex_fn = angularindex_equator,
         kw...)
-    @unpack radialspace = operators.radialspaces
     @unpack rpts = operators
     (; VWSinv, θ) = eigenfunction_realspace(v, m; operators, kw...)
     (; V) = VWSinv
     eqind = angularindex_fn(real(V), θ)
-    count_radial_nodes_equator(V, eqind, rpts, radialspace)
+    count_radial_nodes_equator(V, eqind, rpts)
 end
 
 function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
@@ -1109,6 +1121,7 @@ function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
     filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff],
     nnodesmax = DefaultFilterParams[:nnodesmax],
     compute_invtransform = true,
+    radproftemp = similar(VWSinv.V, real(eltype(VWSinv.V)), size(VWSinv.V,1)),
     kw...)
 
     nodesfilter = true
@@ -1116,7 +1129,6 @@ function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
     @unpack nparams = operators.radial_params
     @unpack nvariables = operators
     @unpack rpts = operators
-    @unpack radialspace = operators.radialspaces
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     (; θ) = spharm_θ_grid_uniform(m, nℓ)
@@ -1129,7 +1141,7 @@ function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
     for _X in fields
         f, X = first(_X), last(_X)
         radprof = @view X[:, eqind]
-        nnodes_real, nnodes_imag = count_radial_nodes_equator(X, eqind, rpts, radialspace)
+        nnodes_real, nnodes_imag = count_radial_nodes_equator(X, eqind, rpts, radproftemp)
         nodesfilter &= nnodes_real <= nnodesmax && nnodes_imag <= nnodesmax
         nodesfilter || break
     end
@@ -1209,7 +1221,7 @@ function filterfn(λ, v, m, M, filterparams;
     @unpack nnodesmax = filterparams
     @unpack V_symmetric = filterparams
 
-    (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache;
+    (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F, radproftemp) = filtercache;
 
     allfilters = Filters.FilterFlag(filterflags)
     compute_invtransform = true
@@ -1259,7 +1271,7 @@ function filterfn(λ, v, m, M, filterparams;
     if Filters.NODES in allfilters
         f = nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
                 nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax, V_symmetric,
-                compute_invtransform)
+                compute_invtransform, radproftemp)
         if !f
             @debug "NODES" filterfieldpowercutoff, nnodesmax
             return false
@@ -1282,7 +1294,8 @@ function allocate_field_caches(nr, nℓ, nθ)
     VWSinv = (; V = zeros(ComplexF64, nr, nθ), W = zeros(ComplexF64, nr, nθ), S = zeros(ComplexF64, nr, nθ))
     VWSinvsh = (; V = zeros(ComplexF64, nr, nℓ), W = zeros(ComplexF64, nr, nℓ), S = zeros(ComplexF64, nr, nℓ))
     F = (; V = zeros(ComplexF64, nr * nℓ), W = zeros(ComplexF64, nr * nℓ), S = zeros(ComplexF64, nr * nℓ))
-    (; VWSinv, VWSinvsh, F)
+    radproftemp = zeros(real(eltype(VWSinv.V)), size(VWSinv.V,1))
+    (; VWSinv, VWSinvsh, F, radproftemp)
 end
 
 function allocate_MVcache(nrows)
@@ -1306,11 +1319,11 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
 
     nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
 
-    @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nℓ, nθ)
+    fieldcaches = allocate_field_caches(nr, nℓ, nθ)
 
     Plcosθ = allocate_Pl(m, nℓ)
 
-    return (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F)
+    return (; MVcache, BCVcache, Plcosθ, fieldcaches...)
 end
 
 function scale_eigenvectors!(v::AbstractMatrix; operators)
