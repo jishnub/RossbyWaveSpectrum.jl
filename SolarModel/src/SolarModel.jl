@@ -267,6 +267,7 @@ function radial_operators(operatorparams...)
     radial_params = parameters(nr, nℓ; r_in, r_out);
     @unpack Δr, nchebyr, r_mid = radial_params;
     rpts = points(radialspace, nr);
+    rptsrev = reverse(rpts);
 
     r = Fun(radialspace);
     r2 = r^2;
@@ -417,6 +418,7 @@ function radial_operators(operatorparams...)
         splines,
         diff_operators,
         rpts,
+        rptsrev,
         radial_params,
         operatorparams,
     )

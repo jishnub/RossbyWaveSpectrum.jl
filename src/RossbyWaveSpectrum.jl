@@ -1067,52 +1067,51 @@ function sign_changes(v)
     return n
 end
 
-function count_num_nodes!(radprof::AbstractVector{<:Real}, rpts; smallcutoff = 0.1)
-    rpts2, radprof = reverse(rpts), reverse!(radprof)
+function count_num_nodes!(radprof::AbstractVector{<:Real}, rptsrev; smallcutoff = 0.1)
+    reverse!(radprof)
     radprof .*= argmax(abs.(extrema(radprof))) == 2 ? 1 : -1
     zerocrossings = sign_changes(radprof)
     iszero(zerocrossings) && return 0
-    s = smoothed_spline(rpts2, radprof)
-    radroots = Dierckx.roots(s, maxn = 2zerocrossings)
+    s = smoothed_spline(rptsrev, radprof)
+    radroots = Dierckx.roots(s, maxn = 4zerocrossings)
     isempty(radroots) && return 0
 
     # Discount nodes that appear spurious
     radprof .= abs.(radprof)
-    sa = smoothed_spline(rpts2, radprof)
-    unsignedarea = Dierckx.integrate(sa, rpts2[1], rpts2[end])
+    sa = smoothed_spline(rptsrev, radprof)
+    unsignedarea = Dierckx.integrate(sa, rptsrev[1], rptsrev[end])
 
     signed_areas = zeros(Float64, length(radroots)+1)
-    signed_areas[1] = Dierckx.integrate(s, rpts2[1], radroots[1])
+    signed_areas[1] = Dierckx.integrate(s, rptsrev[1], radroots[1])
     for (ind, (spt, ept)) in enumerate(zip(@view(radroots[1:end-1]), @view(radroots[2:end])))
         signed_areas[ind+1] = Dierckx.integrate(s, spt, ept)
     end
-    signed_areas[end] = Dierckx.integrate(s, radroots[end], rpts2[end])
+    signed_areas[end] = Dierckx.integrate(s, radroots[end], rptsrev[end])
 
-    largecrossings = abs.(signed_areas ./ unsignedarea) .> smallcutoff
-    signed_areas = signed_areas[largecrossings]
+    signed_areas = filter(area -> abs(area / unsignedarea) > smallcutoff, signed_areas)
     ncross = sign_changes(signed_areas)
 
     min(ncross, zerocrossings)
 end
 function count_radial_nodes_equator(V::AbstractMatrix{<:Complex},
-        angularindex, rpts,
+        angularindex, rptsrev,
         temp = similar(V, real(eltype(V)), size(V,1)))
 
     radprof = @view V[:, angularindex]
     temp .= real.(radprof)
-    nnodes_real = count_num_nodes!(temp, rpts)
+    nnodes_real = count_num_nodes!(temp, rptsrev)
     temp .= imag.(radprof)
-    nnodes_imag = count_num_nodes!(temp, rpts)
+    nnodes_imag = count_num_nodes!(temp, rptsrev)
     nnodes_real, nnodes_imag
 end
 function count_V_radial_nodes(v::AbstractVector{<:Complex}, m; operators,
         angularindex_fn = angularindex_equator,
         kw...)
-    @unpack rpts = operators
+    @unpack rptsrev = operators
     (; VWSinv, θ) = eigenfunction_realspace(v, m; operators, kw...)
     (; V) = VWSinv
     eqind = angularindex_fn(real(V), θ)
-    count_radial_nodes_equator(V, eqind, rpts)
+    count_radial_nodes_equator(V, eqind, rptsrev)
 end
 
 function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
@@ -1128,7 +1127,7 @@ function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
 
     @unpack nparams = operators.radial_params
     @unpack nvariables = operators
-    @unpack rpts = operators
+    @unpack rptsrev = operators
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     (; θ) = spharm_θ_grid_uniform(m, nℓ)
@@ -1141,7 +1140,7 @@ function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
     for _X in fields
         f, X = first(_X), last(_X)
         radprof = @view X[:, eqind]
-        nnodes_real, nnodes_imag = count_radial_nodes_equator(X, eqind, rpts, radproftemp)
+        nnodes_real, nnodes_imag = count_radial_nodes_equator(X, eqind, rptsrev, radproftemp)
         nodesfilter &= nnodes_real <= nnodesmax && nnodes_imag <= nnodesmax
         nodesfilter || break
     end
