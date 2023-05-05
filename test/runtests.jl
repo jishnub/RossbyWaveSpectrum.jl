@@ -209,7 +209,7 @@ end
 @testset "uniform rotation solution" begin
     nr, nℓ = 40, 8
     nparams = nr * nℓ
-    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, ν=1e10);
     constraints = RossbyWaveSpectrum.constraintmatrix(operators);
     @unpack r_in, r_out, Δr = operators.radial_params
     @unpack BCmatrices = constraints;

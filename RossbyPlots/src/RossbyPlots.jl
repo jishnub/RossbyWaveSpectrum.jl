@@ -293,6 +293,7 @@ function spectrum(lams::AbstractArray, mr;
     scale_freq = true,
     Δl_filter = nothing,
     ylim = nothing,
+    encircle_m = nothing,
     kw...)
 
     ax.set_xlabel("m", fontsize = 12)
@@ -412,6 +413,19 @@ function spectrum(lams::AbstractArray, mr;
     end
 
     ax.axhline(0, ls="dotted", color="0.2", zorder = 0, lw=0.5)
+
+    if !isnothing(encircle_m)
+        m_encircle, eigvalinds = encircle_m
+        λenc = .- real.(lams[m_encircle][eigvalinds]).* νnHzunit
+        λencmin, λencmax = extrema(λenc)
+        pad_height = 0.12*νnHzunit
+        height = λencmax - λencmin + pad_height
+        width = 0.8
+        p = matplotlib.patches.Rectangle((m_encircle-width/2, λencmin - 0.08*νnHzunit), width, height,
+            ec="darkgreen", fc="None" ,ls="dashed", lw=1.5,
+            )
+        ax.add_artist(p)
+    end
 
     ΔΩ_scale = get(kw, :ΔΩ_scale, 1.0)
 
@@ -728,30 +742,48 @@ function plot_dispersion(dataset; operators, var = :ν, ax, scale_freq = true, k
     ν_H = [getproperty(dataset[m], var) for m in mr_Hanson]
     ax.errorbar(mr_Hanson, value.(ν_H) .* νnHzunit;
         yerr = errorbars_pyplot(ν_H) .* νnHzunit,
-        ls="None", capsize = 3,
+        xerr=nothing,
+        ls="None",
         zorder = 2, marker = ".", ms = 5,
-        mfc = "k", kw...)
+        mfc = "k",
+        color=get(kw, :color, nothing),
+        fmt=get(kw, :fmt, ""),
+        ecolor=get(kw, :ecolor, nothing),
+        elinewidth=get(kw, :elinewidth, nothing),
+        capsize=get(kw, :capsize, 3),
+        barsabove=get(kw, :barsabove, false),
+        lolims=get(kw, :lolims, false),
+        uplims=get(kw, :uplims, false),
+        xlolims=get(kw, :xlolims, false),
+        xuplims=get(kw, :xuplims, false),
+        errorevery=get(kw, :errorevery, 1),
+        capthick=get(kw, :capthick, nothing),
+        label=get(kw, :label, nothing),
+        )
 end
 
 function spectrum_with_datadispersion(Fsym; kw...)
     V_symmetric = Fsym.kw[:V_symmetric]
-    kwd = Dict(kw)
-    if haskey(kwd, :xlim)
-        delete!(kwd, :xlim)
-    end
-    if haskey(kwd, :save)
-        delete!(kwd, :save)
-    end
-    f, ax = spectrum(Fsym; zorder=3, fillmarker = false, Δl_filter = Int(!V_symmetric), nodes_cutoff = 2, kwd...)
+    nodes_cutoff = get(kw, :nodes_cutoff, 2)
+    Δl_filter = get(kw, :Δl_filter, Int(!V_symmetric))
+    f, ax = spectrum(Fsym; zorder=3, fillmarker = false,
+        Δl_filter, nodes_cutoff, Fsym.kw..., kw...)
 
     @unpack operators = Fsym
     if V_symmetric
-        plot_dispersion(HansonGONGfit; operators, ax, color= "0.6", label="Hanson 2020 [GONG]", kwd...)
-        plot_dispersion(Liang2019MDIHMI; operators, ax, color= "0.4", label="Liang 2019 [MDI & HMI]", kwd...)
-        plot_dispersion(ProxaufFit; operators, ax, color= "0.7", ls="dashed", label="Proxauf 2020 [HMI]", kwd...)
-        plot_dispersion(HansonHighmfit; operators, ax, color= "black", label="Hanson", kwd...)
+        colorederrorbars = get(kw, :colorederrorbars, false)
+        hansoncolor, liangcolor, proxaufcolor = if colorederrorbars
+            "red", "blue", "green"
+        else
+            "0.6", "0.4", "0.7"
+        end
+        plot_dispersion(HansonGONGfit; operators, ax, color= hansoncolor, label="Hanson 2020 [GONG]", kw...)
+        plot_dispersion(Liang2019MDIHMI; operators, ax, color= liangcolor, label="Liang 2019 [MDI & HMI]", kw...)
+        plot_dispersion(ProxaufFit; operators, ax, color= proxaufcolor, ls="dashed", label="Proxauf 2020 [HMI]", kw...)
+        plot_dispersion(HansonHighmfit; operators, ax, color= "black", label="Hanson", kw...)
     else
-        plot_dispersion(HansonHFFit; operators, ax, color= "brown", label="Hanson 2022 [HMI]", kwd...)
+        color = colorederrorbars ? "brows" : "0.6"
+        plot_dispersion(HansonHFFit; operators, ax, color, label="Hanson 2022 [HMI]", kw...)
     end
 
     if haskey(kw, :xlim)
@@ -881,7 +913,8 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         end
     end
 
-    norm0 = matplotlib.colors.TwoSlopeNorm(vcenter=0)
+    vmax = maximum(abs, Vr)
+    norm0 = matplotlib.colors.CenteredNorm()
 
     if !polar
         r_plot_ind = if angular_profile == :max
@@ -916,8 +949,6 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
 
         axprofile.pcolormesh(latidudes, r_frac, Vr; cmap, norm=norm0, rasterized = true, shading = "auto")
         xlabel = get(kw, :longxlabel, true) ? "Latitude [degrees]" : "Lat [deg]"
-        axprofile.axhline(r_frac[r_plot_ind], ls="dotted", color="black")
-        axprofile.axvline(latidudes[equator_ind], ls="dotted", color="black")
         axprofile.set_xlabel(xlabel, fontsize = 11)
         axprofile.invert_xaxis()
     else
@@ -985,7 +1016,7 @@ end
 
 function eigenfunctions_allstreamfn(f::FilteredEigen, m::Integer, vind::Integer; kw...)
     @unpack operators = f
-    mind = findfirst(==(m), feig.mr)
+    mind = findfirst(==(m), f.mr)
     (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(f.vs[mind][:, vind], m;
             operators, f.kw..., kw...)
     if get(kw, :scale_eigenvectors, false)
@@ -1384,6 +1415,37 @@ function plot_diffrot_radial_derivatives(; operators, kw...)
 
     f.set_size_inches(8, 4)
     f.tight_layout()
+end
+
+function plot_diffrot_solar(; operators, ΔΩprofile_deriv, kw...)
+    @unpack rpts = operators
+    @unpack Ω0 = operators.constants
+    @unpack r_in, r_out = operators.radial_params
+    (; ΔΩ) = ΔΩprofile_deriv
+    Ω = (1 + ΔΩ) * Ω0
+
+    f = figure()
+    ax = f.add_subplot(projection="polar")
+    Nθ = 100
+    θ = range(0, pi, Nθ)
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+    ax.set_thetamin(0)
+    ax.set_thetamax(180)
+    ax.set_axis_off()
+    Ωgrid = Ω.(rpts, cos.(θ)')./2pi .* 1e9
+    p = ax.pcolormesh(θ, rpts, Ωgrid, shading="auto", cmap="GnBu", rasterized=true)
+    cb = colorbar(mappable=p, ax=ax, shrink=0.6)
+    cb.ax.set_title("Ω/2π [nHz]")
+    ax.contour(θ, rpts, Ωgrid, 10, colors="black")
+    ax.set_rmin(0)
+    ax.set_rmax(r_out)
+
+    if get(kw, :save, false)
+        filename = joinpath(plotdir, "rotprof.eps")
+        @info "saving to $filename"
+        f.savefig(filename, dpi=get(kw, :dpi, 200))
+    end
 end
 
 function plot_diffrot_solar_derivatives(; operators, ΔΩprofile_deriv, ΔΩ_ongrid_splines = nothing, kw...)

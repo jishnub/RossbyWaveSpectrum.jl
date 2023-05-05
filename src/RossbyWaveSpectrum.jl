@@ -862,9 +862,9 @@ updaterotatationprofile(d, _) = d
 rossby_ridge(m; ΔΩ_frac = 0) = 2 / (m + 1) * (1 + ΔΩ_frac) - m * ΔΩ_frac
 
 function eigenvalue_filter(λ, m;
-    eig_imag_unstable_cutoff = -1e-6,
-    eig_imag_to_real_ratio_cutoff = 3,
-    eig_imag_stable_cutoff = Inf)
+    eig_imag_unstable_cutoff = DefaultFilterParams[:eig_imag_unstable_cutoff],
+    eig_imag_to_real_ratio_cutoff = DefaultFilterParams[:eig_imag_to_real_ratio_cutoff],
+    eig_imag_stable_cutoff = DefaultFilterParams[:eig_imag_stable_cutoff])
 
     freq_sectoral = 2 / (m + 1)
     eig_imag_unstable_cutoff <= imag(λ) < min(freq_sectoral * eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
@@ -885,7 +885,8 @@ end
 const TStructSparseComplexMat{T} = @NamedTuple{re::SparseMatrixCSC{T, Int64}, im::SparseMatrixCSC{T, Int64}}
 function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
         AB::Tuple{StructArray{Complex{T},2,TStructSparseComplexMat{T}}, SparseMatrixCSC{T, Int64}},
-        MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1)); rtol = 1e-2) where {T<:Real}
+        MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1));
+        rtol = DefaultFilterParams[:eigen_rtol]) where {T<:Real}
 
     A, B = AB;
     Av, λBv = MVcache;
@@ -902,7 +903,7 @@ function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
     isapprox(Av, λBv; rtol)
 end
 
-function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = 1e-4)
+function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff])
     Vpow = sum(abs2, @view v[1:nparams])
     Wpow = sum(abs2, @view v[nparams .+ (1:nparams)])
     Spow = sum(abs2, @view(v[2nparams .+ (1:nparams)]))
@@ -925,8 +926,10 @@ end
 
 function eigvec_spectrum_filter!(F, v, m;
     operators,
-    n_cutoff = 7, Δl_cutoff = 7, eigvec_spectrum_power_cutoff = 0.5,
-    filterfieldpowercutoff = 1e-4,
+    n_cutoff = DefaultFilterParams[:n_cutoff],
+    Δl_cutoff = DefaultFilterParams[:Δl_cutoff],
+    eigvec_spectrum_power_cutoff = DefaultFilterParams[:eigvec_spectrum_power_cutoff],
+    filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff],
     kw...)
 
     VW = eigenfunction_spectrum_2D!(F, v; operators, kw...)
@@ -955,37 +958,85 @@ function peakindabs1(X)
     findmax(v -> sum(abs2, v), eachrow(X))[2]
 end
 
-function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
-    θ_cutoff = deg2rad(60), equator_power_cutoff_frac = 0.3;
+function spatial_filter!(VWSinv, VWSinvsh, F, v, m;
+    operators,
+    V_symmetric,
+    θ_cutoff = DefaultFilterParams[:θ_cutoff],
+    equator_power_cutoff_frac = DefaultFilterParams[:equator_power_cutoff_frac],
+    filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff],
     nℓ = operators.radial_params.nℓ,
     Plcosθ = allocate_Pl(m, nℓ),
-    filterfieldpowercutoff = 1e-4,
-    V_symmetric,
+    angular_filter = true,
+    radial_filter = true,
+    compute_invtransform = true,
+    kw...
     )
 
-    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m;
+    (; θ) = spharm_θ_grid_uniform(m, nℓ)
+    eqind = indexof_equator(θ)
+
+    if compute_invtransform
+        eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m;
             operators, nℓ, Plcosθ, V_symmetric)
+    end
 
     eqfilter = true
 
-    @unpack nparams = operators.radial_params
+    radfilter = true
+
+    @unpack nparams, r_out, r_in = operators.radial_params
     @unpack nvariables = operators
+    @unpack rpts = operators
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     for _X in fields
         f, X = first(_X), last(_X)
-        r_ind_peak = peakindabs1(X)
-        peak_latprofile = @view X[r_ind_peak, :]
-        θlowind = searchsortedfirst(θ, θ_cutoff)
-        θhighind = searchsortedlast(θ, pi - θ_cutoff)
-        powfrac = sum(abs2, @view peak_latprofile[θlowind:θhighind]) / sum(abs2, peak_latprofile)
-        powflag = powfrac > equator_power_cutoff_frac
-        peakflag = maximum(abs2, @view peak_latprofile[θlowind:θhighind]) == maximum(abs2, peak_latprofile)
-        eqfilter &= powflag & peakflag
-        eqfilter || break
+        if angular_filter
+            r_ind_peak = peakindabs1(X)
+            peak_latprofile = @view X[r_ind_peak, :]
+            θlowind = searchsortedfirst(θ, θ_cutoff)
+            θhighind = searchsortedlast(θ, pi - θ_cutoff)
+            powfrac = sum(abs2, @view peak_latprofile[θlowind:θhighind]) / sum(abs2, peak_latprofile)
+            powflag = powfrac > equator_power_cutoff_frac
+            peak_latprofile_max = maximum(abs2, peak_latprofile)
+            peak_latprofile_max_inrange = maximum(abs2, @view peak_latprofile[θlowind:θhighind])
+            peakflag = peak_latprofile_max_inrange == peak_latprofile_max
+            eqfilter &= powflag & peakflag
+            eqfilter || break
+        end
+
+        if radial_filter
+            # ensure that the radial peak isn't at the bottom of the domain
+            maxradpowind = findmax(y -> sum(abs, y), eachslice(X, dims=1))[2]
+            radfilter = rpts[maxradpowind] > r_in + (r_out - r_in)/10 # 10% above the lower boundary
+            radfilter || break
+
+            # ensure that most of the power isn't concentrated in the top and bottom surface layers
+            r_top_cutoff = r_out - (r_out - r_in)*5/100
+            r_out_ind = findmin(r -> abs(r - r_out), rpts)[2]
+            r_top_ind = findmin(r -> abs(r - r_top_cutoff), rpts)[2]
+            r_bot_cutoff = r_in + (r_out - r_in)*5/100
+            r_bot_ind = findmin(r -> abs(r - r_bot_cutoff), rpts)[2]
+            r_in_ind = findmin(r -> abs(r - r_in), rpts)[2]
+            top_power = sum(abs, view(X, :, r_out_ind:r_top_ind))
+            bot_power = sum(abs, view(X, :, r_bot_ind:r_in_ind))
+            tot_power = sum(abs, X)
+            radfilter = (top_power + bot_power)/tot_power < 0.95
+            radfilter || break
+        end
     end
 
-    return eqfilter
+    return eqfilter & radfilter
+end
+
+function spatial_filter(v, m;
+    operators,
+    filtercache = allocate_filter_caches(m; operators),
+    kw...
+    )
+
+    (; VWSinv, VWSinvsh, F) = filtercache
+    spatial_filter!(VWSinv, VWSinvsh, F, v, m; operators, kw...)
 end
 
 function angularindex_maximum(Vr::AbstractMatrix{<:Real}, θ)
@@ -999,46 +1050,37 @@ function angularindex_maximum(Vr::AbstractMatrix{<:Real}, θ)
     ind_max += first(rangescan) - 1
 end
 
-angularindex_equator(Vr, θ) = argmin(abs.(θ .- pi/2))
+angularindex_equator(Vr, θ) = findmin(x -> abs(x - pi/2), θ)[2]
+indexof_equator(θ) = angularindex_equator(nothing, θ)
 
 function sign_changes(radprof)
     count(Bool.(sign.(abs.(diff(sign.(real(radprof)))))))
 end
 
-function count_num_nodes(radprof::AbstractVector{<:Real}, rpts, radialspace)
-    if issorted(rpts, rev=true)
-        rpts = reverse(rpts)
-        radprof = reverse(radprof)
+function count_num_nodes(radprof::AbstractVector{<:Real}, rpts, radialspace; smallcutoff = 0.1)
+    rpts2, radprof = if issorted(rpts, rev=true)
+        reverse(rpts), reverse(radprof)
+    else
+        rpts, radprof
     end
     radprof *= argmax(abs.(extrema(radprof))) == 2 ? 1 : -1
     zerocrossings = sign_changes(radprof)
-    isempty(zerocrossings) && return 0
-    s = smoothed_spline(rpts, radprof)
-    f = Fun(s, radialspace, 20)
-    roots = ApproxFun.roots(f)
-    isempty(roots) && return 0
+    iszero(zerocrossings) && return 0
+    s = smoothed_spline(rpts2, radprof)
+    radroots = Dierckx.roots(s, maxn = 2zerocrossings)
+    isempty(radroots) && return 0
     radialdomain = domain(radialspace)
 
-    # Strip extremeties
-    if ≈(roots[1], leftendpoint(radialdomain), rtol=1e-4, atol=1e-10) && !≈(f(roots[1]), 0, atol=1e-10)
-        deleteat!(roots, 1)
-    end
-    isempty(roots) && return 0
-    if ≈(roots[end], rightendpoint(radialdomain), rtol=1e-4, atol=1e-10) && !≈(f(roots[end]), 0, atol=1e-10)
-        deleteat!(roots, lastindex(roots))
-    end
-    isempty(roots) && return 0
-
     # Discount nodes that appear spurious
-    sa = smoothed_spline(rpts, abs.(radprof))
-    unsignedarea = Dierckx.integrate(sa, rpts[1], rpts[end])
+    sa = smoothed_spline(rpts2, abs.(radprof))
+    unsignedarea = Dierckx.integrate(sa, rpts2[1], rpts2[end])
 
-    signed_areas = zeros(Float64, length(roots)+1)
-    for (ind, (spt, ept)) in enumerate(zip([rpts[1]; roots], [roots; rpts[end]]))
+    signed_areas = zeros(Float64, length(radroots)+1)
+    for (ind, (spt, ept)) in enumerate(zip([rpts2[1]; radroots], [radroots; rpts2[end]]))
         signed_areas[ind] = Dierckx.integrate(s, spt, ept)
     end
 
-    smallcrossings = abs.(signed_areas ./ unsignedarea) .< 0.05
+    smallcrossings = abs.(signed_areas ./ unsignedarea) .< smallcutoff
     signed_areas = signed_areas[.!smallcrossings]
     ncross = sign_changes(signed_areas)
 
@@ -1051,7 +1093,8 @@ function count_radial_nodes_equator(V::AbstractMatrix{<:Complex}, angularindex, 
     nnodes_real, nnodes_imag
 end
 function count_V_radial_nodes(v::AbstractVector{<:Complex}, m; operators,
-        angularindex_fn = angularindex_equator, kw...)
+        angularindex_fn = angularindex_equator,
+        kw...)
     @unpack radialspace = operators.radialspaces
     @unpack rpts = operators
     (; VWSinv, θ) = eigenfunction_realspace(v, m; operators, kw...)
@@ -1060,11 +1103,12 @@ function count_V_radial_nodes(v::AbstractVector{<:Complex}, m; operators,
     count_radial_nodes_equator(V, eqind, rpts, radialspace)
 end
 
-function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
+function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
     nℓ = operators.radial_params.nℓ,
     Plcosθ = allocate_Pl(m, nℓ),
-    filterfieldpowercutoff = 1e-4,
-    nnodesmax = 7,
+    filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff],
+    nnodesmax = DefaultFilterParams[:nnodesmax],
+    compute_invtransform = true,
     kw...)
 
     nodesfilter = true
@@ -1075,8 +1119,12 @@ function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
     @unpack radialspace = operators.radialspaces
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
-    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, nℓ, Plcosθ, kw...)
-    eqind = argmin(abs.(θ .- pi/2))
+    (; θ) = spharm_θ_grid_uniform(m, nℓ)
+    eqind = indexof_equator(θ)
+
+    if compute_invtransform
+        eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, nℓ, Plcosθ, kw...)
+    end
 
     for _X in fields
         f, X = first(_X), last(_X)
@@ -1097,7 +1145,8 @@ module Filters
         EIGVAL # Imaginary to real ratio
         EIGVEC # spectrum power cutoff in n and l
         BC # boundary conditions
-        SPATIAL # peak near the equator
+        SPATIAL_EQUATOR # peak near the equator
+        SPATIAL_RADIAL # power not concentrated at the top/bottom surface layers
         NODES # number of radial nodes
     end
     FilterFlag(F::FilterFlag) = F
@@ -1108,33 +1157,62 @@ module Filters
     Base.in(t::FilterFlag, F::FilterFlag) = (t & F) != NONE
     Base.broadcastable(x::FilterFlag) = Ref(x)
 
-    const DefaultFilter = EIGEN | EIGVAL | EIGVEC | BC | SPATIAL | NODES
+    const DefaultFilter = EIGEN | EIGVAL | EIGVEC | BC | SPATIAL_RADIAL | NODES
+    const SPATIAL = SPATIAL_EQUATOR | SPATIAL_RADIAL
 end
 using .Filters
 
-function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any},
+const DefaultFilterParams = Dict(
+    # boundary condition filter
+    :bc_atol => 1e-5,
+    # eigval filter
+    :eig_imag_unstable_cutoff => -1e-6,
+    :eig_imag_to_real_ratio_cutoff => 3,
+    :eig_imag_stable_cutoff => 0.5,
+    # eigensystem satisfy filter
+    :eigen_rtol => 0.01,
+    # smooth eigenvector filter
+    :Δl_cutoff => 7,
+    :n_cutoff => 10,
+    :eigvec_spectrum_power_cutoff => 0.5,
+    # spatial localization filter
+    :θ_cutoff => deg2rad(45),
+    :equator_power_cutoff_frac => 0.4,
+    # radial nodes filter
+    :nnodesmax => 10,
+    # exclude a field from a filter if relative power is below a cutoff
+    :filterfieldpowercutoff => 1e-4,
+)
+
+function filterfn(λ, v, m, M, filterparams;
+        operators,
+        constraints = constraintmatrix(operators),
+        filtercache = allocate_filter_caches(m; operators, constraints),
         filterflags = DefaultFilter)
 
     @unpack BC = constraints
     @unpack nℓ = operators.radial_params;
 
-    @unpack eig_imag_unstable_cutoff = kw
-    @unpack eig_imag_to_real_ratio_cutoff = kw
-    @unpack eig_imag_stable_cutoff = kw
-    @unpack eigvec_spectrum_power_cutoff = kw
-    @unpack bc_atol = kw
-    @unpack Δl_cutoff = kw
-    @unpack n_cutoff = kw
-    @unpack θ_cutoff = kw
-    @unpack equator_power_cutoff_frac = kw
-    @unpack eigen_rtol = kw
-    @unpack filterfieldpowercutoff = kw
-    @unpack nnodesmax = kw
-    @unpack V_symmetric = kw
+    filterparams = merge(DefaultFilterParams, filterparams);
+
+    @unpack eig_imag_unstable_cutoff = filterparams
+    @unpack eig_imag_to_real_ratio_cutoff = filterparams
+    @unpack eig_imag_stable_cutoff = filterparams
+    @unpack eigvec_spectrum_power_cutoff = filterparams
+    @unpack bc_atol = filterparams
+    @unpack Δl_cutoff = filterparams
+    @unpack n_cutoff = filterparams
+    @unpack θ_cutoff = filterparams
+    @unpack equator_power_cutoff_frac = filterparams
+    @unpack eigen_rtol = filterparams
+    @unpack filterfieldpowercutoff = filterparams
+    @unpack nnodesmax = filterparams
+    @unpack V_symmetric = filterparams
 
     (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache;
 
     allfilters = Filters.FilterFlag(filterflags)
+    compute_invtransform = true
 
     if Filters.EIGVAL in allfilters
         f = eigenvalue_filter(λ, m;
@@ -1164,28 +1242,35 @@ function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple
     end
 
     if Filters.SPATIAL in allfilters
-        f = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
-            θ_cutoff, equator_power_cutoff_frac; nℓ, Plcosθ,
-            filterfieldpowercutoff, V_symmetric)
+        f = spatial_filter!(VWSinv, VWSinvsh, F, v, m;
+            θ_cutoff, equator_power_cutoff_frac, operators, nℓ, Plcosθ,
+            filterfieldpowercutoff, V_symmetric,
+            angular_filter = Filters.SPATIAL_EQUATOR in allfilters,
+            radial_filter = Filters.SPATIAL_RADIAL in allfilters,
+            compute_invtransform,
+            )
         if !f
             @debug "SPATIAL" θ_cutoff, equator_power_cutoff_frac, filterfieldpowercutoff
             return false
         end
+        compute_invtransform = false
+    end
+
+    if Filters.NODES in allfilters
+        f = nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
+                nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax, V_symmetric,
+                compute_invtransform)
+        if !f
+            @debug "NODES" filterfieldpowercutoff, nnodesmax
+            return false
+        end
+        compute_invtransform = false
     end
 
     if Filters.EIGEN in allfilters
         f = eigensystem_satisfy_filter(λ, v, M, MVcache; rtol = eigen_rtol)
         if !f
             @debug "EIGEN" λ eigen_rtol
-            return false
-        end
-    end
-
-    if Filters.NODES in allfilters
-        f = nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
-                nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax, V_symmetric)
-        if !f
-            @debug "NODES" filterfieldpowercutoff, nnodesmax
             return false
         end
     end
@@ -1228,28 +1313,6 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
     return (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F)
 end
 
-const DefaultFilterParams = Dict(
-    # boundary condition filter
-    :bc_atol => 1e-5,
-    # eigval filter
-    :eig_imag_unstable_cutoff => -1e-6,
-    :eig_imag_to_real_ratio_cutoff => 3,
-    :eig_imag_stable_cutoff => Inf,
-    # eigensystem satisfy filter
-    :eigen_rtol => 0.01,
-    # smooth eigenvector filter
-    :Δl_cutoff => 7,
-    :n_cutoff => 10,
-    :eigvec_spectrum_power_cutoff => 0.5,
-    # spatial localization filter
-    :θ_cutoff => deg2rad(60),
-    :equator_power_cutoff_frac => 0.3,
-    # radial nodes filter
-    :nnodesmax => 10,
-    # exclude a field from a filter if relative power is below a cutoff
-    :filterfieldpowercutoff => 1e-4,
-)
-
 function scale_eigenvectors!(v::AbstractMatrix; operators)
     # re-apply scalings
     @unpack nparams = operators.radial_params;
@@ -1273,11 +1336,20 @@ function scale_eigenvectors!(VWSinv::NamedTuple; operators)
     return VWSinv
 end
 
-function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix, m::Integer, matrixfn = differential_rotation_matrix; operators, kw...)
-    A = matrixfn(m; operators, kw...);
+function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix, m::Integer;
+        operators,
+        V_symmetric,
+        rotation_profile,
+        matrixfn = differential_rotation_matrix,
+        kw...)
+
+    matrixfn2 = updaterotatationprofile(
+            RotMatrix(V_symmetric, rotation_profile, nothing, nothing, matrixfn),
+            operators)
+    A = matrixfn2(m; operators, kw...);
     B = mass_matrix(m; operators, kw...);
     M = (A,B)
-    filter_eigenvalues(λ, v, M, m; operators, kw...);
+    filter_eigenvalues(λ, v, M, m; operators, V_symmetric, kw...);
 end
 
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
@@ -1286,18 +1358,18 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     constraints = constraintmatrix(operators),
     filtercache = allocate_filter_caches(m; operators, constraints),
     filterflags = DefaultFilter,
-    kw...)
+    filterparams...)
 
     @unpack nparams = operators.radial_params;
-    kw2 = merge(DefaultFilterParams, kw);
-    additional_params = (operators, constraints, filtercache, kw2);
+    additional_params = (; operators, constraints, filtercache);
+    Ms = map(computesparse, M)
 
-    inds_bool = filterfn.(λ, eachcol(v), m, (map(computesparse, M),), (additional_params,), filterflags)
+    inds_bool = filterfn.(λ, eachcol(v), m, Ref(Ms), Ref(filterparams); operators, additional_params..., filterflags)
     filtinds = axes(λ, 1)[inds_bool]
     λ, v = λ[filtinds], v[:, filtinds]
 
     # re-apply scalings
-    if get(kw, :scale_eigenvectors, false)
+    if get(filterparams, :scale_eigenvectors, false)
         scale_eigenvectors!(v; operators)
     end
 
@@ -1445,13 +1517,6 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
     end
     get(kw, :print_timer, true) && println(timer)
     λs, vs
-end
-function filter_eigenvalues(filename::String; kw...)
-    λs, vs, mr, nr, nℓ, kwold = load(filename, "lam", "vec", "mr", "nr", "nℓ", "kw");
-    kw = merge(kwold, kw)
-    operators = radial_operators(nr, nℓ)
-    constraints = constraintmatrix(operators)
-    filter_eigenvalues(λs, vs, mr; operators, constraints, kw...)
 end
 
 filenamerottag(isdiffrot, rotation_profile) = isdiffrot ? "dr_$rotation_profile" : "ur"

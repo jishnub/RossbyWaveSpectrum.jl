@@ -248,8 +248,8 @@ Base.show(io::IO, o::OperatorWrap) = print(io, "Operators")
 Base.getproperty(y::OperatorWrap, name::Symbol) = getproperty(getfield(y, :x), name)
 Base.propertynames(y::OperatorWrap) = Base.propertynames(getfield(y, :x))
 
-const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
-function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
+const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e3, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
+function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 5e11,
     trackingrate = :cutoff,
     scalings = DefaultScalings)
     scalings = merge(DefaultScalings, scalings)
@@ -773,7 +773,7 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     @unpack onebyr = operators.rad_terms;
     @unpack nℓ = operators.radial_params;
     @unpack ddr, d2dr2 = operators.diff_operators;
-    θpts = points(ChebyshevInterval(), nℓ);
+    # θpts = points(ChebyshevInterval(), nℓ);
 
     ΔΩ_terms = solar_differential_rotation_profile_derivatives_grid(; operators, kw...);
     ΔΩ_rθ, dr_ΔΩ_rθ, d2r_ΔΩ_rθ = ΔΩ_terms;
