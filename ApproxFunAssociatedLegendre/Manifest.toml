@@ -18,9 +18,9 @@ version = "1.3.1"
 
 [[deps.ApproxFunBase]]
 deps = ["AbstractFFTs", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "Calculus", "Combinatorics", "DSP", "DomainSets", "DualNumbers", "FFTW", "FillArrays", "InfiniteArrays", "InfiniteLinearAlgebra", "IntervalSets", "LazyArrays", "LinearAlgebra", "LowRankApprox", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "Test"]
-git-tree-sha1 = "23d3154d553ac4ba600baaa4d38abdab444ba4c5"
+git-tree-sha1 = "207ed79842707dccab6701b9e913a473db4c3067"
 uuid = "fbd15aa5-315a-5a7d-a8a4-24992e37be05"
-version = "0.8.24"
+version = "0.8.25"
 
 [[deps.ApproxFunOrthogonalPolynomials]]
 deps = ["ApproxFunBase", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "DomainSets", "FastGaussQuadrature", "FastTransforms", "FillArrays", "IntervalSets", "LinearAlgebra", "Reexport", "SpecialFunctions", "Static", "StaticArrays", "Statistics"]

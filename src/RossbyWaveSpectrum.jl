@@ -22,6 +22,7 @@ using TimerOutputs
 @reexport using UnPack
 using ZChop
 
+export rossby_ridge
 export datadir
 export rossbyeigenfilename
 export Filters
@@ -39,6 +40,75 @@ function __init__()
     if !ispath(RossbyWaveSpectrum.DATADIR[])
         mkdir(RossbyWaveSpectrum.DATADIR[])
     end
+end
+
+struct FilteredEigen
+    lams :: Vector{Vector{ComplexF64}}
+    vs :: Vector{StructArray{ComplexF64, 2, NamedTuple{(:re, :im), NTuple{2,Matrix{Float64}}}, Int64}}
+    mr :: UnitRange{Int}
+    kw :: Dict{Symbol, Any}
+    operators
+end
+
+function FilteredEigen(fname::String)
+    lam, vec, mr, kw, operatorparams =
+        load(fname, "lam", "vec", "mr", "kw", "operatorparams");
+    operators = radial_operators(operatorparams...)
+    FilteredEigen(lam, vec, mr, kw, operators)
+end
+
+function Base.getindex(F::FilteredEigen, r::AbstractUnitRange{Int})
+    lams = F.lams[r]
+    vs = F.vs[r]
+    FilteredEigen(lams, vs, r, F.kw, F.operators)
+end
+
+struct RotMatrix{TV,TW,F}
+    V_symmetric :: Bool
+    rotation_profile :: Symbol
+    ΔΩprofile_deriv :: TV
+    ωΩ_deriv :: TW
+    f :: F
+end
+function updaterotatationprofile(d::RotMatrix; operators, timer = TimerOutput(), kw...)
+    if String(d.rotation_profile) == "constant"
+        ΔΩprofile_deriv = @timeit timer "velocity" begin nothing end
+        ωΩ_deriv = @timeit timer "vorticity" begin nothing end
+    elseif startswith(String(d.rotation_profile), "radial")
+        ΔΩprofile_deriv = @timeit timer "velocity" begin
+            radial_differential_rotation_profile_derivatives_Fun(; operators,
+            rotation_profile = rotationtag(d.rotation_profile), kw...)
+        end
+        ωΩ_deriv = @timeit timer "vorticity" begin nothing end
+    elseif startswith(String(d.rotation_profile), "solar")
+        rotation_profile = rotationtag(d.rotation_profile)
+        ΔΩprofile_deriv = @timeit timer "velocity" begin
+            solar_differential_rotation_profile_derivatives_Fun(;
+                operators, rotation_profile, kw...)
+        end
+        ωΩ_deriv = @timeit timer "vorticity" begin
+            solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
+        end
+    else
+        error("unknown rotation profile, must be one of :constant, :radial_* or solar_*")
+    end
+    return RotMatrix(d.V_symmetric, d.rotation_profile, ΔΩprofile_deriv, ωΩ_deriv, d.f)
+end
+updaterotatationprofile(d; kw...) = d
+
+(d::RotMatrix)(args...; kw...) = d.f(args...;
+    rotation_profile = d.rotation_profile,
+    ΔΩprofile_deriv = d.ΔΩprofile_deriv,
+    V_symmetric = d.V_symmetric,
+    ωΩ_deriv = d.ωΩ_deriv,
+    kw...)
+
+function updaterotatationprofile(F::FilteredEigen; kw...)
+    @unpack operators = F
+    @unpack V_symmetric, rotation_profile = F.kw
+    matrixfn! = F.kw[:diffrot] ? uniform_rotation_matrix! : differential_rotation_matrix!
+    R = RotMatrix(V_symmetric, rotation_profile, nothing, nothing, matrixfn!)
+    updaterotatationprofile(R; operators, kw...)
 end
 
 datadir(f) = joinpath(DATADIR[], f)
@@ -820,45 +890,6 @@ function differential_rotation_spectrum!((A, B)::Tuple{StructMatrix{<:Complex}, 
     constrained_eigensystem_timed((A, B); operators, timer, kw...)
 end
 
-struct RotMatrix{TV,TW,F}
-    V_symmetric :: Bool
-    rotation_profile :: Symbol
-    ΔΩprofile_deriv :: TV
-    ωΩ_deriv :: TW
-    f :: F
-end
-function updaterotatationprofile(d::RotMatrix, operators; timer = TimerOutput(), kw...)
-    if String(d.rotation_profile) == "constant"
-        ΔΩprofile_deriv = @timeit timer "velocity" begin nothing end
-        ωΩ_deriv = @timeit timer "vorticity" begin nothing end
-    elseif startswith(String(d.rotation_profile), "radial")
-        ΔΩprofile_deriv = @timeit timer "velocity" begin
-            radial_differential_rotation_profile_derivatives_Fun(; operators,
-            rotation_profile = rotationtag(d.rotation_profile), kw...)
-        end
-        ωΩ_deriv = @timeit timer "vorticity" begin nothing end
-    elseif startswith(String(d.rotation_profile), "solar")
-        ΔΩprofile_deriv = @timeit timer "velocity" begin
-            solar_differential_rotation_profile_derivatives_Fun(; operators,
-            rotation_profile = rotationtag(d.rotation_profile), kw...)
-        end
-        ωΩ_deriv = @timeit timer "vorticity" begin
-            solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
-        end
-    else
-        error("unknown rotation profile, must be one of :constant, :radial_* or solar_*")
-    end
-    return RotMatrix(d.V_symmetric, d.rotation_profile, ΔΩprofile_deriv, ωΩ_deriv, d.f)
-end
-updaterotatationprofile(d, _) = d
-
-(d::RotMatrix)(args...; kw...) = d.f(args...;
-    rotation_profile = d.rotation_profile,
-    ΔΩprofile_deriv = d.ΔΩprofile_deriv,
-    V_symmetric = d.V_symmetric,
-    ωΩ_deriv = d.ωΩ_deriv,
-    kw...)
-
 rossby_ridge(m; ΔΩ_frac = 0) = 2 / (m + 1) * (1 + ΔΩ_frac) - m * ΔΩ_frac
 
 function eigenvalue_filter(λ, m;
@@ -1095,23 +1126,32 @@ function count_num_nodes!(radprof::AbstractVector{<:Real}, rptsrev; smallcutoff 
 end
 function count_radial_nodes_equator(V::AbstractMatrix{<:Complex},
         angularindex, rptsrev,
-        temp = similar(V, real(eltype(V)), size(V,1)))
+        radproftemp = similar(V, real(eltype(V)), size(V,1)),
+        )
 
     radprof = @view V[:, angularindex]
-    temp .= real.(radprof)
-    nnodes_real = count_num_nodes!(temp, rptsrev)
-    temp .= imag.(radprof)
-    nnodes_imag = count_num_nodes!(temp, rptsrev)
+    radproftemp .= real.(radprof)
+    nnodes_real = count_num_nodes!(radproftemp, rptsrev)
+    radproftemp .= imag.(radprof)
+    nnodes_imag = count_num_nodes!(radproftemp, rptsrev)
     nnodes_real, nnodes_imag
 end
 function count_V_radial_nodes(v::AbstractVector{<:Complex}, m; operators,
         angularindex_fn = angularindex_equator,
+        nr = operators.radial_params[:nr],
+        nℓ = operators.radial_params[:nℓ],
+        θ = spharm_θ_grid_uniform(m, nℓ).θ,
+        fieldcaches = allocate_field_caches(nr, nℓ, length(θ)),
+        realcache = similar(fieldcaches.VWSinv.V, real(eltype(fieldcaches.VWSinv.V))),
         kw...)
+
     @unpack rptsrev = operators
-    (; VWSinv, θ) = eigenfunction_realspace(v, m; operators, kw...)
+    @unpack VWSinv, VWSinvsh, F, radproftemp = fieldcaches
+    eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, kw...)
     (; V) = VWSinv
-    eqind = angularindex_fn(real(V), θ)
-    count_radial_nodes_equator(V, eqind, rptsrev)
+    realcache .= real.(V)
+    eqind = angularindex_fn(realcache, θ)
+    count_radial_nodes_equator(V, eqind, rptsrev, radproftemp)
 end
 
 function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
@@ -1352,15 +1392,23 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix, m::Integer;
         operators,
         V_symmetric,
         rotation_profile,
-        matrixfn = differential_rotation_matrix,
+        matrixfn!,
         kw...)
 
-    matrixfn2 = updaterotatationprofile(
-            RotMatrix(V_symmetric, rotation_profile, nothing, nothing, matrixfn),
+    matrixfn2! = updaterotatationprofile(
+            RotMatrix(V_symmetric, rotation_profile, nothing, nothing, matrixfn!);
             operators)
-    A = matrixfn2(m; operators, kw...);
-    B = mass_matrix(m; operators, kw...);
-    M = (A,B)
+
+    @unpack nℓ = operators.radial_params
+    bw = getbw(rotation_profile, nℓ) : nℓ
+    if Filters.EIGEN in get(kw, :filterflags, DefaultFilter)
+        M = allocate_operator_mass_matrix(operators, bw)
+        A, B = M
+        matrixfn2!(A, m; operators, kw...)
+        mass_matrix!(B, m; operators, kw...)
+    else
+        M = nothing
+    end
     filter_eigenvalues(λ, v, M, m; operators, V_symmetric, kw...);
 end
 
@@ -1374,7 +1422,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
 
     @unpack nparams = operators.radial_params;
     additional_params = (; operators, constraints, filtercache);
-    Ms = map(computesparse, M)
+    Ms = M isa NTuple{2,AbstractMatrix} ? map(computesparse, M) : M
 
     inds_bool = filterfn.(λ, eachcol(v), m, Ref(Ms), Ref(filterparams); operators, additional_params..., filterflags)
     filtinds = axes(λ, 1)[inds_bool]
@@ -1388,11 +1436,12 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     λ, v
 end
 
-function filter_map(λm::AbstractVector, vm::AbstractMatrix,
-        AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}}, m::Int, matrixfn!::F; kw...) where {F}
-    A, B = AB
-    matrixfn!(A, m; kw...)
-    mass_matrix!(B, m; kw...)
+function filter_map(λm::AbstractVector, vm::AbstractMatrix, AB, m::Int, matrixfn!::F; kw...) where {F}
+    if AB isa NTuple{2,AbstractMatrix} # standard case, where Filters.EIGEN in kw[:filterflags]
+        A, B = AB
+        matrixfn!(A, m; kw...)
+        mass_matrix!(B, m; kw...)
+    end
     filter_eigenvalues(λm, vm, AB, m; kw...)
 end
 function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:AbstractVector},
@@ -1426,7 +1475,11 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     @unpack nr, nℓ, nparams = operators.radial_params
     nthreads = Threads.nthreads();
     bw = matrixfn! isa RotMatrix ? getbw(matrixfn!.rotation_profile, nℓ) : nℓ
-    ABs = [allocate_operator_mass_matrix(operators, bw) for _ in 1:nthreads]
+    ABs = if Filters.EIGEN in get(kw, :filterflags, DefaultFilter)
+        [allocate_operator_mass_matrix(operators, bw) for _ in 1:nthreads]
+    else
+        fill(nothing, nthreads)
+    end
     c = Channel{eltype(ABs)}(nthreads);
     for el in ABs
         put!(c, el)
@@ -1531,6 +1584,15 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
     λs, vs
 end
 
+function filter_eigenvalues(f::FilteredEigen; kw...)
+    @unpack operators = f
+    kw2 = merge(f.kw, kw)
+    matrixfn! = f.kw[:diffrot] ? differential_rotation_matrix! : uniform_rotation_matrix!
+    λfs, vfs =
+        filter_eigenvalues(f.lams, f.vs, f.mr; operators, matrixfn!, kw2...);
+    FilteredEigen(λfs, vfs, f.mr, kw2, operators)
+end
+
 filenamerottag(isdiffrot, rotation_profile) = isdiffrot ? "dr_$rotation_profile" : "ur"
 filenamesymtag(Vsym) = Vsym ? "sym" : "asym"
 rossbyeigenfilename(nr, nℓ, rottag, symtag, modeltag = "") =
@@ -1556,35 +1618,6 @@ function save_eigenvalues(f, mr; operators, save=true, kw...)
     end
 end
 
-struct FilteredEigen
-    lams :: Vector{Vector{ComplexF64}}
-    vs :: Vector{StructArray{ComplexF64, 2, NamedTuple{(:re, :im), NTuple{2,Matrix{Float64}}}, Int64}}
-    mr :: UnitRange{Int}
-    kw :: Dict{Symbol, Any}
-    operators
-end
-
-function FilteredEigen(fname::String)
-    lam, vec, mr, kw, operatorparams =
-        load(fname, "lam", "vec", "mr", "kw", "operatorparams");
-    operators = radial_operators(operatorparams...)
-    FilteredEigen(lam, vec, mr, kw, operators)
-end
-
-function Base.getindex(F::FilteredEigen, r::AbstractUnitRange{Int})
-    lams = F.lams[r]
-    vs = F.vs[r]
-    FilteredEigen(lams, vs, r, F.kw, F.operators)
-end
-
-function filter_eigenvalues(f::FilteredEigen; kw...)
-    @unpack operators = f
-    kw2 = merge(f.kw, kw)
-    λfs, vfs =
-        filter_eigenvalues(f.lams, f.vs, f.mr; operators, kw2...);
-    FilteredEigen(λfs, vfs, f.mr, kw2, operators)
-end
-
 function RotMatrix(::Val{T}, V_symmetric, diffrot, rotation_profile; operators, kw...) where {T}
     T ∈ (:spectrum, :matrix) || error("unknown code ", T)
     if !diffrot
@@ -1593,7 +1626,7 @@ function RotMatrix(::Val{T}, V_symmetric, diffrot, rotation_profile; operators, 
     else
         d = RotMatrix(V_symmetric, rotation_profile, nothing, nothing,
             T == :matrix ? differential_rotation_matrix! : differential_rotation_spectrum!)
-        updaterotatationprofile(d, operators; kw...)
+        updaterotatationprofile(d; operators, kw...)
     end
 end
 
@@ -1624,9 +1657,13 @@ function mass_matrix(feig::FilteredEigen, m; kw...)
 end
 
 function operator_matrices(feig::FilteredEigen, m, kw...)
-    A = differential_rotation_matrix(feig, m; kw...)
+    A = if feig.kw[:diffrot]
+        differential_rotation_matrix(feig, m; kw...)
+    else
+        uniform_rotation_matrix(feig, m; kw...)
+    end
     B = mass_matrix(feig, m; kw...)
-    A, B
+    map(computesparse, (A, B))
 end
 
 function eigenfunction_spectrum_2D!(F, v; operators, kw...)

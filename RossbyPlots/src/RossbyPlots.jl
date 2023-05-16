@@ -47,16 +47,23 @@ function __init__()
 	copy!(axes_grid1, pyimport("mpl_toolkits.axes_grid1"))
 end
 
-realview(M::StructMatrix{<:Complex}) = M.re
-function realview(M::AbstractMatrix{Complex{T}}) where {T}
-    @view reinterpret(reshape, T, M)[1, :, :]
+_real(M::StructArray{<:Complex}) = M.re
+_real(M::AbstractArray) = real(M)
+
+_imag(M::StructArray{<:Complex}) = M.im
+_imag(M::AbstractArray) = imag(M)
+
+function realview(M::AbstractArray{Complex{T}}) where {T}
+    @view reinterpret(reshape, T, M)[1, ntuple(_->:, ndims(M))...]
 end
-realview(M::AbstractMatrix{<:Real}) = M
-function imagview(M::AbstractMatrix{Complex{T}}) where {T}
-    @view reinterpret(reshape, T, M)[2, :, :]
+realview(M::StructArray{<:Complex}) = M.re
+realview(M::AbstractArray{<:Real}) = M
+
+function imagview(M::AbstractArray{Complex{T}}) where {T}
+    @view reinterpret(reshape, T, M)[2, ntuple(_->:, ndims(M))...]
 end
-imagview(M::StructMatrix{<:Complex}) = M.im
-imagview(M::AbstractMatrix{<:Real}) = M
+imagview(M::StructArray{<:Complex}) = M.im
+imagview(M::AbstractArray{<:Real}) = M
 
 axlistvector(_axlist) = reshape([_axlist;], Val(1))
 
@@ -68,7 +75,7 @@ end
 
 function rossby_ridge_datas(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
-        ax.plot(mr, -RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
+        ax.plot(mr, -rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
             label = ΔΩ_frac == 0 ? L"\frac{2(Ω/2π)}{m+1}" : "Doppler\nshifted",
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "black"),
@@ -78,7 +85,7 @@ function rossby_ridge_datas(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridges
     end
 
     if !isnothing(ridgescalefactor)
-        ax.plot(mr, -ridgescalefactor .* RossbyWaveSpectrum.rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit ,
+        ax.plot(mr, -ridgescalefactor .* rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit ,
             label = ΔΩ_frac == 0 ? "high-frequency" :
                     L"\Delta\Omega/\Omega_0 = " * string(round(ΔΩ_frac, sigdigits = 1)),
             lw = 1,
@@ -89,7 +96,7 @@ function rossby_ridge_datas(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridges
     end
 
     if get(kw, :uniform_rotation_ridge, false)
-        ax.plot(mr, -RossbyWaveSpectrum.rossby_ridge.(mr) .* νnHzunit,
+        ax.plot(mr, -rossby_ridge.(mr) .* νnHzunit,
             label = "2/(m+1)",
             lw = 0.5,
             color = "black",
@@ -207,66 +214,89 @@ const ScatterParams = Dict(
 # ν0 at r = r_out in nHz, effectively an unit
 freqnHzunit(Ω0) = Ω0 * 1e9/2pi
 
-function Vreal_peak_l(v, m; operators, V_symmetric)
-    @unpack nr, nℓ = operators.radial_params;
-    Vre = compute_eigenfunction_spectra(v, m; operators, V_symmetric)[1]
-    ℓrange = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
-    ℓrange_full = axes(Vre,2)
-    pow_ℓ = dropdims(sum(abs2, Vre, dims=1), dims=1)
+function Vreal_peak_l(v, m; operators, V_symmetric,
+        Vrf = begin
+            nr = operators.radial_params[:nr]
+            nℓ = operators.radial_params[:nℓ]
+            Vℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
+            Vℓ_full = first(Vℓ):last(Vℓ)
+            zeros(nr, Vℓ_full)
+        end,
+        pow_ℓ = similar(Vrf, axes(Vrf,2)),
+    )
+
+    compute_eigenfunction_spectra(v, m; operators, V_symmetric, fields="Vr", Vrf)
+    for (i, col) in pairs(eachcol(Vrf))
+        pow_ℓ[i] = sum(abs2, col)
+    end
     pow = sum(pow_ℓ)
-    ℓmaxind = findfirst(p -> p/pow > 0.25, pow_ℓ)
-    isnothing(ℓmaxind) ? nothing : ℓrange_full[ℓmaxind]
+    findfirst(p -> p/pow > 0.25, pow_ℓ)
 end
 
-function spectrum_peak_ℓ_mask(vecs, mr, Δl_filter; operators, V_symmetric)
+function spectrum_peak_ℓ_mask(vecs, mr, Δl_filter; operators, V_symmetric, kw...)
+    nr = operators.radial_params[:nr]
+    nℓ = operators.radial_params[:nℓ]
     map(zip(vecs, mr)) do (vsm, m)
+        Vℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
+        Vℓ_full = first(Vℓ):last(Vℓ)
+        Vrf = zeros(nr, Vℓ_full)
         peak_ls = map(eachcol(vsm)) do v
-            Vreal_peak_l(v, m; operators, V_symmetric)
+            Vreal_peak_l(v, m; operators, V_symmetric, Vrf)
         end
         peak_ls .== m + Δl_filter
     end
 end
 
-function nodes_cutoff_mask(vecs, mr, n_cutoff; operators, V_symmetric)
+function nodes_cutoff_mask(vecs, mr, nodes_cutoff; operators, V_symmetric, kw...)
+    nr = operators.radial_params[:nr]
+    nℓ = operators.radial_params[:nℓ]
     ns = map(zip(vecs, mr)) do (vm, m)
+        θ = RossbyWaveSpectrum.spharm_θ_grid_uniform(m, nℓ).θ
+        fieldcaches = RossbyWaveSpectrum.allocate_field_caches(nr, nℓ, length(θ))
+        realcache = similar(fieldcaches.VWSinv.V, real(eltype(fieldcaches.VWSinv.V)))
         map(eachcol(vm)) do v
-            RossbyWaveSpectrum.count_V_radial_nodes(v, m; operators, V_symmetric)[1]
+            RossbyWaveSpectrum.count_V_radial_nodes(v, m; operators, fieldcaches, realcache, V_symmetric)[1]
         end
     end
     ns_mask = map(ns) do ns_m
-        ns_m .<= n_cutoff
+        ns_m .<= nodes_cutoff
     end
 end
 
+function update_cutoffs_nodes(lams, vecs, mr; operators,
+        V_symmetric::Bool, nodes_cutoff::Int)
+
+    ns_mask = nodes_cutoff_mask(vecs, mr, nodes_cutoff; operators, V_symmetric)
+    x = map(zip(lams, vecs, ns_mask)) do (lam_m, v_m, nodes_mask_m)
+        lam_m[nodes_mask_m], v_m[:, nodes_mask_m]
+    end
+    first.(x), last.(x)
+end
+
+function update_cutoffs_ℓ(lams, vecs, mr; operators,
+        V_symmetric::Bool, Δl_filter::Int)
+
+    Δl_mask = spectrum_peak_ℓ_mask(vecs, mr, Δl_filter; operators, V_symmetric)
+    x = map(zip(lams, vecs, Δl_mask)) do (lam_m, v_m, lmask_m)
+        lam_m[lmask_m], v_m[:, lmask_m]
+    end
+    first.(x), last.(x)
+end
+
 function update_cutoffs(lams, vecs, mr; operators,
-        V_symmetric::Union{Bool,Nothing} = nothing,
+        V_symmetric::Bool,
         nodes_cutoff::Union{Nothing,Int} = nothing,
-        Δl_filter::Union{Nothing,Int} = nothing
+        Δl_filter::Union{Nothing,Int} = nothing,
         )
 
-    if !isnothing(nodes_cutoff) && !isnothing(Δl_filter)
-        ns_mask = nodes_cutoff_mask(vecs, mr, nodes_cutoff; operators, V_symmetric)
-        Δl_mask = spectrum_peak_ℓ_mask(vecs, mr, Δl_filter; operators, V_symmetric)
-        x = map(zip(lams, vecs, ns_mask, Δl_mask)) do (lam, v, nmask, lmask)
-            mask = nmask .& lmask
-            lam[mask], v[:, mask]
-        end
-        first.(x), last.(x)
-    elseif !isnothing(nodes_cutoff)
-        ns_mask = nodes_cutoff_mask(vecs, mr, nodes_cutoff; operators, V_symmetric)
-        x = map(zip(lams, vecs, ns_mask)) do (lam, v, mask)
-            lam[mask], v[:, mask]
-        end
-        first.(x), last.(x)
-    elseif !isnothing(Δl_filter)
-        Δl_mask = spectrum_peak_ℓ_mask(vecs, mr, Δl_filter; operators, V_symmetric)
-        x = map(zip(lams, vecs, Δl_mask)) do (lam, v, mask)
-            lam[mask], v[:, mask]
-        end
-        first.(x), last.(x)
-    else
-        lams, vecs
+    if !isnothing(Δl_filter)
+        lams, vecs = update_cutoffs_ℓ(lams, vecs, mr; operators, V_symmetric, Δl_filter)
     end
+    if !isnothing(nodes_cutoff)
+        lams, vecs = update_cutoffs_nodes(lams, vecs, mr; operators, V_symmetric, nodes_cutoff)
+    end
+
+    lams, vecs
 end
 
 function update_cutoffs(F::RossbyWaveSpectrum.FilteredEigen;
@@ -286,7 +316,8 @@ function spectrum(lams::AbstractArray, mr;
     f = figure(),
     ax = subplot(),
     m_zoom = mr[max(begin, end - 6):end],
-    rossbyridges = true,
+    subtract_sectoral = false,
+    rossbyridges = !subtract_sectoral,
     highlight_nodes = false,
     nodes_cutoff = nothing,
     vecs = nothing,
@@ -297,7 +328,7 @@ function spectrum(lams::AbstractArray, mr;
     kw...)
 
     ax.set_xlabel("m", fontsize = 12)
-    ax.set_ylabel(L"\Re[\nu]" * "[nHz]", fontsize = 12)
+    ax.set_ylabel(L"\Re[\nu]" * (subtract_sectoral ? L"\,-\,\frac{2Ω_0}{m+1}" : "") * " [nHz]", fontsize = 12)
     ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
     ax.xaxis.set_major_locator(ticker.MaxNLocator(5, integer = true))
 
@@ -306,11 +337,8 @@ function spectrum(lams::AbstractArray, mr;
     V_symmetric = kw[:V_symmetric]
 
     νnHzunit = scale_freq ? freqnHzunit(Ω0)  #= around 453 =# : 1.0
-    if isnothing(ylim)
-        ax.set_ylim((-400/453) * νnHzunit, (200/453) * νnHzunit)
-    else
-        ax.set_ylim((ylim[1]/453) * νnHzunit, (ylim[2]/453) * νnHzunit)
-    end
+    ylim2 = isnothing(ylim) ? (-400, 200) : ylim
+    ax.set_ylim((ylim2[1]/453) * νnHzunit, (ylim2[2]/453) * νnHzunit)
 
     lams, vecs = update_cutoffs(lams, vecs, mr; operators, V_symmetric,
         Δl_filter, nodes_cutoff)
@@ -327,7 +355,7 @@ function spectrum(lams::AbstractArray, mr;
         ns_cat = reduce(vcat, ns)
     end
 
-    lamscat = mapreduce(real, vcat, lams) .* νnHzunit
+    lamscat = mapreduce(real, vcat, [λs_m .- subtract_sectoral * rossby_ridge(m) for (λs_m,m) in zip(lams,mr)]) .* νnHzunit
     mcat = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr, lams)])
     fillmarker = get(kw, :fillmarker, true) | highlight_nodes
     c = if highlight_nodes
@@ -376,8 +404,10 @@ function spectrum(lams::AbstractArray, mr;
 
     if zoom
         zoom_inds = in(m_zoom).(mr)
-        lamscat_inset = mapreduce(real, vcat, lams[zoom_inds]) .* νnHzunit
-        mcat_inset = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr[zoom_inds], lams[zoom_inds])])
+        mr_zoom = mr[zoom_inds]
+        lamscat_inset = mapreduce(real, vcat,
+            [λs_m .- subtract_sectoral * rossby_ridge(m) for (λs_m) in zip(lams[zoom_inds], mr_zoom)]) .* νnHzunit
+        mcat_inset = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr_zoom, lams[zoom_inds])])
 
         c = if fillmarker && highlight_nodes
             ns_cat_inset = reduce(vcat, ns[zoom_inds])
@@ -388,8 +418,8 @@ function spectrum(lams::AbstractArray, mr;
         end
 
         axins = ax.inset_axes([0.3, 0.1, 0.4, 0.4])
-        ymax = (RossbyWaveSpectrum.rossby_ridge(minimum(m_zoom)) + 0.005) * νnHzunit
-        ymin = (RossbyWaveSpectrum.rossby_ridge(maximum(m_zoom)) - 0.02) * νnHzunit
+        ymax = (subtract_sectoral * RossbyWaveSpectrum.rossby_ridge(minimum(m_zoom)) + 0.005) * νnHzunit
+        ymin = (subtract_sectoral * RossbyWaveSpectrum.rossby_ridge(maximum(m_zoom)) - 0.02) * νnHzunit
         axins.set_ylim(minmax(-ymin, -ymax)...)
         axins.xaxis.set_major_locator(ticker.NullLocator())
         axins.yaxis.set_major_locator(ticker.NullLocator())
@@ -429,9 +459,15 @@ function spectrum(lams::AbstractArray, mr;
 
     ΔΩ_scale = get(kw, :ΔΩ_scale, 1.0)
 
-    titlestr = V_symmetric ? "Spectrum : symmetric modes" : "Spectrum : antisymmetric modes"
+    titlestr = ""
+    if get(kw, :showtitle, true)
+        titlestr *= "Spectrum : " * (V_symmetric ? "" : "anti") * "symmetric modes"
+    end
     if ΔΩ_scale != 1
-        titlestr *= " ΔΩ_scale = $(round(ΔΩ_scale, digits=2))"
+        if !isempty(titlestr)
+            titlestr *= "\n"
+        end
+        titlestr *= "$(round(ΔΩ_scale, digits=2)) ΔΩ"
     end
     ax.set_title(titlestr, fontsize = 12)
 
@@ -767,7 +803,7 @@ function spectrum_with_datadispersion(Fsym; kw...)
     nodes_cutoff = get(kw, :nodes_cutoff, 2)
     Δl_filter = get(kw, :Δl_filter, Int(!V_symmetric))
     f, ax = spectrum(Fsym; zorder=3, fillmarker = false,
-        Δl_filter, nodes_cutoff, Fsym.kw..., kw...)
+        Δl_filter, nodes_cutoff, Fsym.kw..., kw..., save=false)
 
     @unpack operators = Fsym
     if V_symmetric
@@ -1228,37 +1264,53 @@ function eigenfunctions_polar(fsym::FilteredEigen, fasym::FilteredEigen, m; kw..
     f.tight_layout()
 end
 
-function compute_eigenfunction_spectra(v, m; operators, V_symmetric)
-    @unpack nr, nℓ = operators.radial_params
-    nvariables = length(v) ÷ (nr*nℓ)
-    Vℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric)
-    Vℓ_full = first(Vℓ):last(Vℓ)
-    Wℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, !V_symmetric)
-    Wℓ_full = first(Wℓ):last(Wℓ)
-    Sℓ = Wℓ
-    Sℓ_full = Wℓ_full
+function compute_eigenfunction_spectra(v, m; operators, V_symmetric,
+        realv = _real(v),
+        imagv = _imag(v),
+        fields = "VrViWrWiSrSi",
+        nr = operators.radial_params[:nr],
+        nℓ = operators.radial_params[:nℓ],
+        Vℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, V_symmetric),
+        Vℓ_full = first(Vℓ):last(Vℓ),
+        Wℓ = RossbyWaveSpectrum.ℓrange(m, nℓ, !V_symmetric),
+        Wℓ_full = first(Wℓ):last(Wℓ),
+        Sℓ = Wℓ,
+        Sℓ_full = Wℓ_full,
+        Vrf = occursin("Vr", fields) ? zeros(nr, Vℓ_full) : nothing,
+        Vif = occursin("Vi", fields) ? zeros(nr, Vℓ_full) : nothing,
+        Wrf = occursin("Wr", fields) ? zeros(nr, Wℓ_full) : nothing,
+        Wif = occursin("Wi", fields) ? zeros(nr, Wℓ_full) : nothing,
+        Srf = occursin("Sr", fields) ? zeros(nr, Sℓ_full) : nothing,
+        Sif = occursin("Si", fields) ? zeros(nr, Sℓ_full) : nothing,
+        )
 
-    Vr = reshape(@view(v.re[1:nr*nℓ]), nr, nℓ);
-    Vi = reshape(@view(v.im[1:nr*nℓ]), nr, nℓ);
-    Wr = reshape(@view(v.re[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ);
-    Wi = reshape(@view(v.im[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ);
 
-    Vrf = zeros(size(Vr,1), Vℓ_full);
-    @views @. Vrf[:, Vℓ] = Vr
-    Vif = zeros(size(Vi,1), Vℓ_full);
-    @views @. Vif[:, Vℓ] = Vi
-    Wrf = zeros(size(Wr,1), Wℓ_full);
-    @views @. Wrf[:, Wℓ] = Wr
-    Wif = zeros(size(Wi,1), Wℓ_full);
-    @views @. Wif[:, Wℓ] = Wi
+    if occursin("Vr", fields)
+        Vr = reshape(@view(realv[1:nr*nℓ]), nr, nℓ);
+        @views @. Vrf[:, Vℓ] = Vr
+    end
+    if occursin("Vi", fields)
+        Vi = reshape(@view(imagv[1:nr*nℓ]), nr, nℓ);
+        @views @. Vif[:, Vℓ] = Vi
+    end
 
-    Sr = reshape(@view(v.re[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
-    Srf = zeros(size(Sr,1), Sℓ_full)
-    @views @. Srf[:, Sℓ] = Sr
+    if occursin("Wr", fields)
+        Wr = reshape(@view(realv[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ);
+        @views @. Wrf[:, Wℓ] = Wr
+    end
+    if occursin("Wi", fields)
+        Wi = reshape(@view(imagv[nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ);
+        @views @. Wif[:, Wℓ] = Wi
+    end
 
-    Si = reshape(@view(v.im[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
-    Sif = zeros(size(Si,1), Sℓ_full)
-    @views @. Sif[:, Sℓ] = Si
+    if occursin("Sr", fields)
+        Sr = reshape(@view(realv[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
+        @views @. Srf[:, Sℓ] = Sr
+    end
+    if occursin("Si", fields)
+        Si = reshape(@view(imagv[2nr*nℓ .+ (1:nr*nℓ)]), nr, nℓ)
+        @views @. Sif[:, Sℓ] = Si
+    end
 
     [Vrf, Wrf, Srf, Vif, Wif, Sif]
 end
@@ -1651,6 +1703,40 @@ function plot_density_scale_heights(; operators, kw...)
 
     f.set_size_inches(4, 6)
     f.tight_layout()
+end
+
+function load_and_filter_output(nr, nℓ, rottag = "dr_solar_latrad_squished", symtag = "sym";
+        r_in = 0.65, r_out = 0.985, nu = 5.0e11,
+        eig_imag_stable_cutoff = 0.2,
+        filterflags=Filters.EIGVAL|Filters.SPATIAL,
+        Δl_filter = 0,
+        nodes_cutoff = 2,
+        )
+
+    map([0.0, 0.25, 0.5, 0.75]) do rotscale
+        Fssym = RossbyWaveSpectrum.FilteredEigen(
+            rossbyeigenfilename(nr, nℓ, rottag, symtag,
+            "nu$(nu)_rin$(r_in)_rout$(r_out)_trackhanson2020_rotscale$(rotscale)"))
+        Fssymf = RossbyPlots.update_cutoffs(Fssym; Δl_filter, nodes_cutoff)
+        RossbyWaveSpectrum.filter_eigenvalues(Fssymf; filterflags, eig_imag_stable_cutoff);
+    end
+end
+
+function spectra_different_rotation(fsyms::Vector{FilteredEigen}; layout = (2,2), kw...)
+    f, axlist = subplots(layout..., sharex=true, sharey=true, squeeze=false)
+    for (ax, fsym) in zip(permutedims(axlist), fsyms)
+        spectrum(fsym; ax, f, showtitle=false, kw..., save=false, subtract_sectoral=true)
+    end
+    if haskey(kw, :xlim)
+        axlist[1,1].set_xlim(kw[:xlim])
+    end
+    f.set_size_inches(layout[1]*5, layout[2]*3.5)
+    f.tight_layout()
+    if get(kw, :save, false)
+        filename = joinpath(plotdir, "spectra_rotscale.eps")
+        @info "saving to $filename"
+        f.savefig(filename)
+    end
 end
 
 end # module plots
