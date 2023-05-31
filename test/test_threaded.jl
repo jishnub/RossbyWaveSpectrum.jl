@@ -17,9 +17,9 @@ using Folds
         @test As[m].im ≈ Am.im
     end
 
-    Bs = Folds.map(m -> RossbyWaveSpectrum.mass_matrix(m; operators), mr)
+    Bs = Folds.map(m -> RossbyWaveSpectrum.mass_matrix(m; operators, V_symmetric = true), mr)
     for (ind, m) in enumerate(mr)
-        @test Bs[m] ≈ RossbyWaveSpectrum.mass_matrix(m; operators)
+        @test Bs[m] ≈ RossbyWaveSpectrum.mass_matrix(m; operators, V_symmetric = true)
     end
 
     λs, vs = RossbyWaveSpectrum.filter_eigenvalues(RossbyWaveSpectrum.uniform_rotation_spectrum!,

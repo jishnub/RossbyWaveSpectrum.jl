@@ -1,6 +1,6 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.9.0-rc3"
+julia_version = "1.9.0"
 manifest_format = "2.0"
 project_hash = "f686766c68bc62c17a3dbba205f9d0e2b4a0de73"
 
@@ -18,9 +18,9 @@ version = "1.3.1"
 
 [[deps.Accessors]]
 deps = ["Compat", "CompositionsBase", "ConstructionBase", "Dates", "InverseFunctions", "LinearAlgebra", "MacroTools", "Requires", "Test"]
-git-tree-sha1 = "a4f8669e46c8cdf68661fe6bb0f7b89f51dd23cf"
+git-tree-sha1 = "2b301c2388067d655fe5e4ca6d4aa53b61f895b4"
 uuid = "7d9f7c33-5ae7-4f3b-8dc6-eff91059b697"
-version = "0.1.30"
+version = "0.1.31"
 
     [deps.Accessors.extensions]
     AccessorsAxisKeysExt = "AxisKeys"
@@ -46,9 +46,9 @@ weakdeps = ["StaticArrays"]
 
 [[deps.ApproxFun]]
 deps = ["AbstractFFTs", "ApproxFunBase", "ApproxFunFourier", "ApproxFunOrthogonalPolynomials", "ApproxFunSingularities", "BandedMatrices", "Calculus", "DomainSets", "DualNumbers", "FFTW", "FastTransforms", "LinearAlgebra", "RecipesBase", "Reexport", "SpecialFunctions", "StaticArrays"]
-git-tree-sha1 = "6b6bb2c713509c47c1820205abb5b228b6ec348f"
+git-tree-sha1 = "9f90d4e12dc6f148dd75048a42fa0fdc52520d4e"
 uuid = "28f2ccd6-bb30-5033-b560-165f7b14dc2f"
-version = "0.13.19"
+version = "0.13.20"
 
 [[deps.ApproxFunAssociatedLegendre]]
 deps = ["ApproxFunBase", "ApproxFunOrthogonalPolynomials", "ApproxFunSingularities", "BandedMatrices", "BlockBandedMatrices", "DomainSets"]
@@ -58,9 +58,9 @@ version = "0.1.0"
 
 [[deps.ApproxFunBase]]
 deps = ["AbstractFFTs", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "Calculus", "Combinatorics", "DSP", "DomainSets", "DualNumbers", "FFTW", "FillArrays", "InfiniteArrays", "InfiniteLinearAlgebra", "IntervalSets", "LazyArrays", "LinearAlgebra", "LowRankApprox", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics", "Test"]
-git-tree-sha1 = "207ed79842707dccab6701b9e913a473db4c3067"
+git-tree-sha1 = "58aaaffe602333355eb337053ddf3a117f70ec61"
 uuid = "fbd15aa5-315a-5a7d-a8a4-24992e37be05"
-version = "0.8.25"
+version = "0.8.26"
 
 [[deps.ApproxFunFourier]]
 deps = ["AbstractFFTs", "ApproxFunBase", "BandedMatrices", "DomainSets", "FFTW", "FastTransforms", "InfiniteArrays", "IntervalSets", "LinearAlgebra", "Reexport", "StaticArrays"]
@@ -75,10 +75,10 @@ uuid = "b70543e2-c0d9-56b8-a290-0d4d6d4de211"
 version = "0.6.28"
 
 [[deps.ApproxFunSingularities]]
-deps = ["ApproxFunBase", "ApproxFunOrthogonalPolynomials", "DomainSets", "IntervalSets", "LinearAlgebra", "Reexport", "StaticArrays", "Statistics"]
-git-tree-sha1 = "e33c9443033a628b56572c5e4ee671c2f9c0ceb4"
+deps = ["ApproxFunBase", "ApproxFunOrthogonalPolynomials", "DomainSets", "IntervalSets", "LinearAlgebra", "Reexport", "SpecialFunctions", "StaticArrays", "Statistics"]
+git-tree-sha1 = "3226b88d70d6a32675d086a33054a37a91bce182"
 uuid = "f8fcb915-6b99-5be2-b79a-d6dbef8e6e7e"
-version = "0.3.9"
+version = "0.3.10"
 
 [[deps.ArgCheck]]
 git-tree-sha1 = "a3a402a35a2f7e0b87828ccabbd5ebfbebe356b4"
@@ -100,9 +100,9 @@ uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 
 [[deps.BandedMatrices]]
 deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra", "PrecompileTools", "SparseArrays"]
-git-tree-sha1 = "a437daa228838e2f71a4d3ec145d059c389356d4"
+git-tree-sha1 = "b18febf0a34ba9192fdcd4fd2c57b535a48d3dd4"
 uuid = "aae01518-5342-5314-be14-df237901396f"
-version = "0.17.22"
+version = "0.17.24"
 
 [[deps.BangBang]]
 deps = ["Compat", "ConstructionBase", "InitialValues", "LinearAlgebra", "Requires", "Setfield", "Tables"]
@@ -139,9 +139,9 @@ version = "0.1.7"
 
 [[deps.BlockArrays]]
 deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra"]
-git-tree-sha1 = "c7d7789c2c6ec98ec78ea5e017485549a95b051e"
+git-tree-sha1 = "14d688a2254ca2242d834176a385cc9b3bceeb02"
 uuid = "8e7c35d0-a365-5155-bbbb-fb81a777f24e"
-version = "0.16.27"
+version = "0.16.28"
 
 [[deps.BlockBandedMatrices]]
 deps = ["ArrayLayouts", "BandedMatrices", "BlockArrays", "FillArrays", "LinearAlgebra", "MatrixFactorizations", "SparseArrays", "Statistics"]
@@ -327,9 +327,9 @@ uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 
 [[deps.FillArrays]]
 deps = ["LinearAlgebra", "Random", "SparseArrays", "Statistics"]
-git-tree-sha1 = "fc86b4fd3eff76c3ce4f5e96e2fdfa6282722885"
+git-tree-sha1 = "ed569cb9e7e3590d5ba884da7edc50216aac5811"
 uuid = "1a297f60-69ca-5386-bcde-b61e274b549b"
-version = "1.0.0"
+version = "1.1.0"
 
 [[deps.Folds]]
 deps = ["Accessors", "BangBang", "Baselet", "DefineSingletons", "Distributed", "ExternalDocstrings", "InitialValues", "MicroCollections", "Referenceables", "Requires", "Test", "ThreadedScans", "Transducers"]
@@ -348,9 +348,9 @@ version = "6.2.1+2"
 
 [[deps.GPUArraysCore]]
 deps = ["Adapt"]
-git-tree-sha1 = "1cd7f0af1aa58abc02ea1d872953a97359cb87fa"
+git-tree-sha1 = "2d6ca471a6c7b536127afccfa7564b5b39227fe0"
 uuid = "46192b85-c4d5-4398-a991-12ede77f4527"
-version = "0.1.4"
+version = "0.1.5"
 
 [[deps.GenericFFT]]
 deps = ["AbstractFFTs", "FFTW", "LinearAlgebra", "Reexport", "Test"]
@@ -619,9 +619,9 @@ version = "1.9.0"
 
 [[deps.Polynomials]]
 deps = ["LinearAlgebra", "RecipesBase"]
-git-tree-sha1 = "2857c96cdd343a13e8d78f77823bacc8266278ed"
+git-tree-sha1 = "3aa2bb4982e575acd7583f01531f241af077b163"
 uuid = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
-version = "3.2.11"
+version = "3.2.13"
 
     [deps.Polynomials.extensions]
     PolynomialsChainRulesCoreExt = "ChainRulesCore"

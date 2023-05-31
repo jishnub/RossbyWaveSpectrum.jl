@@ -13,6 +13,8 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
             n_cutoff = 15,
             viscosity = 5e11,
             trackingrate = :cutoff,
+            ΔΩ_smoothing_param = 5e-2,
+            superadiabaticityparams = (;),
             extrakw...
             )
 
@@ -35,7 +37,9 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
     timer = TimerOutput()
 
     operators = @timeit timer "operators" begin
-        RossbyWaveSpectrum.radial_operators(nr, nℓ; r_in_frac, r_out_frac, ν = viscosity, trackingrate, scalings);
+        RossbyWaveSpectrum.radial_operators(nr, nℓ;
+            r_in_frac, r_out_frac, ν = viscosity, trackingrate, scalings,
+            superadiabaticityparams);
     end
 
     spectrumfn! = @timeit timer "spectrumfn" begin
@@ -49,7 +53,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
 
     kw = Base.pairs((; Δl_cutoff, n_cutoff,
         diffrot, rotation_profile, V_symmetric,
-        smoothing_param, ΔΩ_scale))
+        smoothing_param, ΔΩ_scale, ΔΩ_smoothing_param))
 
     @time RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange;
         operators, kw..., extrakw...)

@@ -79,7 +79,7 @@ function V_boundary_op(operators)
     (r * ddr - 2) : radialspace;
 end
 
-function constraintmatrix(operators)
+function constraintmatrix(operators, ::Val{extramatrices} = Val(false)) where {extramatrices}
     @unpack radial_params = operators;
     @unpack r_in, r_out = radial_params;
     @unpack nr, nℓ, Δr = operators.radial_params;
@@ -140,7 +140,7 @@ function constraintmatrix(operators)
     BC = computesparse(BC_block)
     ZC = computesparse(ZC_block)
 
-    (; BC, ZC, nullspacematrices, BCmatrices)
+    extramatrices ? (; BC, ZC, nullspacematrices, BCmatrices) : (; BC, ZC)
 end
 
 function parameters(nr, nℓ; r_in = 0.7Rsun, r_out = 0.98Rsun)
@@ -151,13 +151,11 @@ function parameters(nr, nℓ; r_in = 0.7Rsun, r_out = 0.98Rsun)
     return (; nchebyr, r_in, r_out, Δr, nr, nparams, nℓ, r_mid)
 end
 
-function superadiabaticity(r::Real; r_out = Rsun)
-    δcz = 3e-6
-    δtop = 3e-5
-    dtrans = dtop = 0.05Rsun
-    r_sub = 0.8 * Rsun
-    r_tran = 0.725 * Rsun
-    δrad = -1e-3
+function superadiabaticity(r::Real;
+        r_out = Rsun, δcz = 3e-6, δtop = 3e-5, δrad = -1e-3,
+        dtrans = 0.05Rsun, dtop = 0.05Rsun,
+        r_sub = 0.8 * Rsun, r_tran = 0.725 * Rsun)
+
     δconv = δtop * exp((r - r_out) / dtop) + δcz * (r - r_sub) / (r_out - r_sub)
     δconv + (δrad - δconv) * 1 / 2 * (1 - tanh((r - r_tran) / dtrans))
 end
@@ -250,13 +248,19 @@ Base.propertynames(y::OperatorWrap) = Base.propertynames(getfield(y, :x))
 
 const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e3, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
 function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 5e11,
-    trackingrate = :cutoff,
-    scalings = DefaultScalings)
+        trackingrate = :cutoff,
+        scalings = DefaultScalings,
+        superadiabaticityparams = (;))
+
     scalings = merge(DefaultScalings, scalings)
-    radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate, Tuple(scalings))
+    radial_operators(nr, nℓ, r_in_frac, r_out_frac,
+        _stratified, nvariables, ν, trackingrate, Tuple(scalings),
+        superadiabaticityparams,
+        )
 end
 function radial_operators(operatorparams...)
-    nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate, _scalings = operatorparams
+    nr, nℓ, r_in_frac, r_out_frac, _stratified,
+        nvariables, ν, trackingrate, _scalings, superadiabaticityparams = operatorparams
 
     Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling = _scalings
 
@@ -373,12 +377,12 @@ function radial_operators(operatorparams...)
     ν /= Ω0 * Rsun^2
     κ = ν
 
-    δ = Fun(superadiabaticity, radialspace);
+    # δ = Fun(r -> superadiabaticity(r; superadiabaticityparams...), radialspace);
     γ = 1.64
     Cp = 1.7e8
 
     # ddr_S0_by_Cp = γ/Cp * δ * ηρ;
-    ddr_S0_by_Cp = chop(Fun(x -> γ / Cp * superadiabaticity(x) * ηρ(x), radialspace), 1e-3);
+    ddr_S0_by_Cp = chop(Fun(x -> γ / Cp * superadiabaticity(x; superadiabaticityparams...) * ηρ(x), radialspace), 1e-3);
     @checkncoeff ddr_S0_by_Cp nr
 
     ddr_S0_by_Cp_by_r2 = onebyr2 * ddr_S0_by_Cp
@@ -399,7 +403,7 @@ function radial_operators(operatorparams...)
         onebyr2, onebyr3, onebyr4,
         ηρT, ρ, g, r, r2,
         ηρ_by_r, ηρ_by_r2, ηρ2_by_r2, ddr_ηρbyr, ddr_ηρbyr2, ηρ_by_r3,
-        ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddr_S0_by_Cp_by_r2,
+        ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddr_S0_by_Cp_by_r2, ddr_S0_by_Cp,
         ddrηρ_by_r, d2dr2ηρ_by_r
 
     diff_operators = (; DDr, DDr_minus_2byr, rDDr, rddr, ddrDDr, d2dr2DDr,
@@ -775,7 +779,6 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     @unpack onebyr = operators.rad_terms;
     @unpack nℓ = operators.radial_params;
     @unpack ddr, d2dr2 = operators.diff_operators;
-    # θpts = points(ChebyshevInterval(), nℓ);
 
     ΔΩ_terms = solar_differential_rotation_profile_derivatives_grid(; operators, kw...);
     ΔΩ_rθ, dr_ΔΩ_rθ, d2r_ΔΩ_rθ = ΔΩ_terms;
@@ -792,11 +795,9 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     dcosθ = Derivative(Legendre())
     sinθdθop = -(1-cosθ^2)*dcosθ
 
-    # s = get(kw, :smoothing_param, 1e-5)
+    ΔΩ_smoothing_param = get(kw, :ΔΩ_smoothing_param, 5e-2)
+    ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space2d), ΔΩ_smoothing_param);
 
-    ΔΩ = chop(grid_to_fun(ΔΩ_rθ, space2d), 1e-2);
-
-    # dr_ΔΩ = chop(grid_to_fun(interp2d(rpts, θpts, dr_ΔΩ_rθ, s = s), space2d), 1e-2);
     dr_ΔΩ_ = (ddr ⊗ I) * ΔΩ;
     dr_ΔΩ = Fun(dr_ΔΩ_, space2d)
     if ncoefficients(dr_ΔΩ) > 0

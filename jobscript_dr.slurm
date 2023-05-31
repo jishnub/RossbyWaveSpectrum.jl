@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --time="4:00:00"
-#SBATCH --job-name=rotsc20
+#SBATCH --time="9:00:00"
+#SBATCH --job-name=asym
 #SBATCH --nodes=1
 #SBATCH -C dalma
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=20
-#SBATCH --mem-per-cpu=8G
+#SBATCH --mem-per-cpu=6G
 
 echo "############"
 hostname
@@ -28,14 +28,15 @@ nr, nℓ = 60, 40
 mrange = 1:20
 viscosity = 5e11
 trackingrate = :hanson2020 # :carrington, :hanson2020, :cutoff or :surface
-ΔΩ_scale = 0.2
+ΔΩ_scale = 1
 Δl_cutoff = 20
 n_cutoff = 15
 diffrot=true
 rotation_profile = :solar_latrad_squished
+superadiabaticityparams = (; δrad = -1e-6)
 modeltag = "nu$(viscosity)_rin$(round(r_in_frac, digits=3))_rout$(round(r_out_frac, digits=3))_track$(trackingrate)"
 modeltag *= diffrot && !isone(ΔΩ_scale) ? "_rotscale$(round(ΔΩ_scale, digits=2))" : ""
-filterflags = Filters.EIGEN | Filters.EIGVAL | Filters.EIGVEC | Filters.BC | Filters.SPATIAL
+filterflags = Filters.EIGEN | Filters.EIGVEC | Filters.BC | Filters.SPATIAL
 
 ComputeRossbySpectrum.main(V_symmetric;
 nr, nℓ, mrange, diffrot, rotation_profile, r_in_frac,

@@ -65,15 +65,21 @@ end
 imagview(M::StructArray{<:Complex}) = M.im
 imagview(M::AbstractArray{<:Real}) = M
 
+function savefiginfo(f, filename; kw...)
+    fpath = joinpath(plotdir, basename(filename))
+    @info "saving to $fpath"
+    f.savefig(fpath; kw...)
+end
+
 axlistvector(_axlist) = reshape([_axlist;], Val(1))
 
-function cbformat(x, _)
+function exppow10fmt(x, _)
     a, b = split((@sprintf "%.1e" x), 'e')
     c = parse(Int, b)
     a * L"\times10^{%$c}"
 end
 
-function rossby_ridge_datas(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
+function rossby_ridge_lines(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
         ax.plot(mr, -rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
             label = ΔΩ_frac == 0 ? L"\frac{2(Ω/2π)}{m+1}" : "Doppler\nshifted",
@@ -255,7 +261,8 @@ function nodes_cutoff_mask(vecs, mr, nodes_cutoff; operators, V_symmetric, kw...
         fieldcaches = RossbyWaveSpectrum.allocate_field_caches(nr, nℓ, length(θ))
         realcache = similar(fieldcaches.VWSinv.V, real(eltype(fieldcaches.VWSinv.V)))
         map(eachcol(vm)) do v
-            RossbyWaveSpectrum.count_V_radial_nodes(v, m; operators, fieldcaches, realcache, V_symmetric)[1]
+            reimnodes = RossbyWaveSpectrum.count_V_radial_nodes(v, m; operators, fieldcaches, realcache, V_symmetric)
+            maximum(reimnodes)
         end
     end
     ns_mask = map(ns) do ns_m
@@ -337,7 +344,7 @@ function spectrum(lams::AbstractArray, mr;
     V_symmetric = kw[:V_symmetric]
 
     νnHzunit = scale_freq ? freqnHzunit(Ω0)  #= around 453 =# : 1.0
-    ylim2 = isnothing(ylim) ? (-400, 200) : ylim
+    ylim2 = isnothing(ylim) ? (-400, 300) : ylim
     ax.set_ylim((ylim2[1]/453) * νnHzunit, (ylim2[2]/453) * νnHzunit)
 
     lams, vecs = update_cutoffs(lams, vecs, mr; operators, V_symmetric,
@@ -397,7 +404,7 @@ function spectrum(lams::AbstractArray, mr;
     end
 
     if rossbyridges
-        rossby_ridge_datas(mr; νnHzunit, ax, kw...)
+        rossby_ridge_lines(mr; νnHzunit, ax, kw...)
     end
 
     zoom = V_symmetric && get(kw, :zoom, !get(kw, :diffrot, false))
@@ -428,13 +435,14 @@ function spectrum(lams::AbstractArray, mr;
             s=get(kw, :s, 25))
 
         if rossbyridges
-            rossby_ridge_datas(m_zoom; νnHzunit, ax = axins, kw...)
+            rossby_ridge_lines(m_zoom; νnHzunit, ax = axins, kw...)
         end
 
         ax.indicate_inset_zoom(axins, edgecolor = "grey", lw = 0.5)
     end
 
-    if rossbyridges
+    showlegend = get(kw, :legend, true)
+    if rossbyridges && showlegend
         ax.legend(loc = "best", fontsize = 12)
     end
 
@@ -446,13 +454,28 @@ function spectrum(lams::AbstractArray, mr;
 
     if !isnothing(encircle_m)
         m_encircle, eigvalinds = encircle_m
-        λenc = .- real.(lams[m_encircle][eigvalinds]).* νnHzunit
+        λm = lams[m_encircle]
+        λenc = .- real.(λm[eigvalinds]).* νnHzunit
         λencmin, λencmax = extrema(λenc)
-        pad_height = 0.12*νnHzunit
+        Δλ = λencmax - λencmin
+        minind, maxind = extrema(eigvalinds)
+        if minind == 1
+            λbelow = minimum(.- real.(λm[minind:maxind+1])).* νnHzunit
+            λabove = Inf
+        elseif maxind == length(λm)
+            λbelow = -Inf
+            λabove = maximum(.- real.(λm[minind-1:maxind])).* νnHzunit
+        else
+            λbelow, λabove = extrema(.- real.(λm[minind-1:maxind+1])).* νnHzunit
+        end
+        pad_below = min(Δλ/4, (λencmin - λbelow)/2)
+        pad_above = min(Δλ/4, (λabove - λencmax)/2)
+        pad_height = pad_below + pad_above
         height = λencmax - λencmin + pad_height
         width = 0.8
-        p = matplotlib.patches.Rectangle((m_encircle-width/2, λencmin - 0.08*νnHzunit), width, height,
-            ec="darkgreen", fc="None" ,ls="dashed", lw=1.5,
+        rectpatchxy = (m_encircle-width/2, λencmin - pad_below + subtract_sectoral * rossby_ridge(m_encircle) * νnHzunit)
+        p = matplotlib.patches.Rectangle(rectpatchxy, width, height,
+            ec="darkorange", fc="None" ,ls="dashed", lw=1.5,
             )
         ax.add_artist(p)
     end
@@ -476,7 +499,8 @@ function spectrum(lams::AbstractArray, mr;
         V_symmetric_str = V_symmetric ? "sym" : "asym"
         filenametag = get(kw, :filenametag, V_symmetric_str)
         rotation = get(kw, :rotation, "uniform")
-        f.savefig(joinpath(plotdir, "$(rotation)_rotation_spectrum_$(filenametag).eps"))
+        filename = "$(rotation)_rotation_spectrum_$(filenametag).eps"
+        savefiginfo(f, filename)
     end
     f, ax
 end
@@ -508,9 +532,8 @@ function uniform_rotation_spectrum(fsym::FilteredEigen, fasym::FilteredEigen;
     f.set_size_inches(4.5 .* (1 + plot_linewidths), 6)
     f.tight_layout()
     if get(kw, :save, false)
-        fpath = joinpath(plotdir, "spectrum_sym_asym.eps")
-        @info "saving to $fpath"
-        f.savefig(fpath)
+        fpath = "spectrum_sym_asym.eps"
+        savefiginfo(f, fpath)
     end
     return f, axlist
 end
@@ -521,12 +544,34 @@ function mantissa_exponent_format(a)
     (a_mantissa == 1 ? "" : L"%$a_mantissa\times") * L"10^{%$a_exponent}"
 end
 
+const RossbyRidgeFreqsUnscaled = Dict(
+    2 => 0.4917,
+    3 => 0.415,
+    4 => 0.352,
+    5 => 0.295,
+    6 => 0.244,
+    7 => 0.1946,
+    8 => 0.158,
+    9 => 0.1279,
+    10 => 0.1006,
+    11 => 0.075,
+    12 => 0.051,
+    13 => 0.0286,
+    14 => 0.0065,
+    15 => -0.01496,
+    16 => -0.0359,
+    17 => -0.0566,
+    18 => -0.0769,
+    19 => -0.097,
+    20 => -0.1168,
+)
+
 function rossbyridge_mode_indices(lams, mr; operators, kw...)
     @unpack Ω0, ν = operators.constants
     νnHzunit = -freqnHzunit(Ω0)
     νtarget = map(mr) do m
-        if haskey(HansonHighmfit, m)
-            value(HansonHighmfit[m].ν)/νnHzunit
+        if haskey(RossbyRidgeFreqsUnscaled, m)
+            RossbyRidgeFreqsUnscaled[m]
         else
             RossbyWaveSpectrum.rossby_ridge(m)
         end
@@ -555,20 +600,24 @@ function damping_rossbyridge(lams, mr; operators, f = figure(), ax = subplot(), 
 
     ax.plot(mr, imag.(λs_rossbyridge) .* 2 #= HWHM to FWHM =# * νnHzunit,
             ls="dotted", color="grey", marker="o", mfc="white",
-            mec="black", ms=5, label="this work", zorder = 4)
+            mec="black", ms=5,
+            label="model, ν = $(@sprintf "%.0f" ν/10^10) " * "km" * L"^2/" * "s",
+            zorder = 4)
 
     # observations
-    plot_dispersion(ProxaufFit; operators, var=:γ, ax, color= "grey", label="P20", zorder = 1)
-    ax.set_ylabel("linewidth [nHz]", fontsize = 12)
+    plot_dispersion(ProxaufFit; operators, var=:γ, ax, color= "grey", label="Proxauf [2020]", zorder = 1)
+    ax.set_ylabel(L"\Im[\nu]"*" [nHz]", fontsize = 12)
     ax.set_xlabel("m", fontsize = 12)
     ax.legend(loc="best")
-    ax.set_title("Rossby ridge", fontsize = 12)
+    ax.set_title("Rossby-ridge linewidths", fontsize = 12)
     ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
 
     ax.xaxis.set_major_locator(ticker.MaxNLocator(5, integer = true))
+    f.set_size_inches(4.8,3.5)
     f.tight_layout()
     if get(kw, :save, false)
-        f.savefig(joinpath(plotdir, "damping_rossby.eps"))
+        filename = "damping_rossby.eps"
+        savefiginfo(f, filename)
     end
     return f, ax
 end
@@ -628,7 +677,8 @@ function damping_highfreqridge(lams, mr; operators, f = figure(), ax = subplot()
 
     f.tight_layout()
     if get(kw, :save, false)
-        f.savefig(joinpath(plotdir, "damping_highfreqridge.eps"))
+        filename =  "damping_highfreqridge.eps"
+        savefiginfo(f, filename)
     end
     return f, ax
 end
@@ -640,7 +690,8 @@ function rossby_ridge_data(lams, mr; operators, f = figure(), ax = subplot(), kw
     ax.set_xlim(extrema(mr) .+ (-0.5, 0.5))
 
     if get(kw, :save, false)
-        f.savefig(joinpath(plotdir, "rossbyridge.eps"))
+        filename = "rossbyridge.eps"
+        savefiginfo(f, filename)
     end
     return f, ax
 end
@@ -653,7 +704,8 @@ function high_frequency_ridge_data(lams, mr; operators, f = figure(), ax = subpl
     ax.set_xlim(extrema(mr) .+ (-0.5, 0.5))
 
     if get(kw, :save, false)
-        f.savefig(joinpath(plotdir, "highfreqridge.eps"))
+        filename = "highfreqridge.eps"
+        savefiginfo(f, filename)
     end
     return f, ax
 end
@@ -764,20 +816,21 @@ function diffrot_rossby_ridge(Fsym,
 
     if get(kw, :save, false)
         rotation_profile = Fsym.kw[:rotation_profile]
-        filename = joinpath(plotdir, "freqdiff_diffrot_$rotation_profile.png")
-        @info "saving to $filename"
-        savefig(filename)
+        filename = "freqdiff_diffrot_$rotation_profile.eps"
+        savefiginfo(f, filename)
     end
 end
 
 function plot_dispersion(dataset; operators, var = :ν, ax, scale_freq = true, kw...)
     @unpack Ω0 = operators.constants
-    νnHzunit = scale_freq ? 1.0 : 1/freqnHzunit(Ω0)
+    νnHzunit = scale_freq ? freqnHzunit(Ω0) : 1.0
+    invνnHzunit = scale_freq ? 1.0 : 1/freqnHzunit(Ω0)
 
     mr_Hanson = collect(keys(dataset))
+    subtract_sectoral = get(kw, :subtract_sectoral, false)
     ν_H = [getproperty(dataset[m], var) for m in mr_Hanson]
-    ax.errorbar(mr_Hanson, value.(ν_H) .* νnHzunit;
-        yerr = errorbars_pyplot(ν_H) .* νnHzunit,
+    ax.errorbar(mr_Hanson, value.(ν_H) .* invνnHzunit .+ subtract_sectoral .* rossby_ridge.(mr_Hanson) .* νnHzunit;
+        yerr = errorbars_pyplot(ν_H) .* invνnHzunit,
         xerr=nothing,
         ls="None",
         zorder = 2, marker = ".", ms = 5,
@@ -802,10 +855,41 @@ function spectrum_with_datadispersion(Fsym; kw...)
     V_symmetric = Fsym.kw[:V_symmetric]
     nodes_cutoff = get(kw, :nodes_cutoff, 2)
     Δl_filter = get(kw, :Δl_filter, Int(!V_symmetric))
-    f, ax = spectrum(Fsym; zorder=3, fillmarker = false,
-        Δl_filter, nodes_cutoff, Fsym.kw..., kw..., save=false)
+    plotfull = get(kw, :plotfull, true)
+    f, axlist = subplots(1, 2 + plotfull, sharex=true,
+        gridspec_kw = Dict("width_ratios" => [2,2,1][(!plotfull + 1):end]))
 
     @unpack operators = Fsym
+
+    if plotfull
+        ax = axlist[1]
+        spectrum(Fsym; zorder=3, fillmarker = get(kw, :fillmarker, false),
+            Δl_filter, nodes_cutoff, Fsym.kw..., kw..., save=false, f, ax,
+            showtitle = false, legend=false)
+
+        if V_symmetric
+            colorederrorbars = get(kw, :colorederrorbars, false)
+            hansoncolor, liangcolor, proxaufcolor = if colorederrorbars
+                "red", "blue", "green"
+            else
+                "0.6", "0.4", "0.7"
+            end
+            plot_dispersion(HansonGONGfit; operators, ax, color= hansoncolor, label="Hanson 2020 [GONG]", kw...)
+            plot_dispersion(Liang2019MDIHMI; operators, ax, color= liangcolor, label="Liang 2019 [MDI & HMI]", kw...)
+            plot_dispersion(ProxaufFit; operators, ax, color= proxaufcolor, ls="dashed", label="Proxauf 2020 [HMI]", kw...)
+            plot_dispersion(HansonHighmfit; operators, ax, color= "black", label="Hanson", kw...)
+        else
+            color = colorederrorbars ? "brown" : "0.6"
+            plot_dispersion(HansonHFFit; operators, ax, color, label="Hanson 2022 [HMI]", kw...)
+        end
+    end
+
+    ax = axlist[plotfull+1]
+    subtract_sectoral = true
+    spectrum(Fsym; zorder=3, fillmarker = get(kw, :fillmarker, false),
+        Δl_filter, nodes_cutoff, Fsym.kw..., kw..., save=false, f, ax,
+        ylim=(0, 250), showtitle = false, subtract_sectoral)
+
     if V_symmetric
         colorederrorbars = get(kw, :colorederrorbars, false)
         hansoncolor, liangcolor, proxaufcolor = if colorederrorbars
@@ -813,25 +897,30 @@ function spectrum_with_datadispersion(Fsym; kw...)
         else
             "0.6", "0.4", "0.7"
         end
-        plot_dispersion(HansonGONGfit; operators, ax, color= hansoncolor, label="Hanson 2020 [GONG]", kw...)
-        plot_dispersion(Liang2019MDIHMI; operators, ax, color= liangcolor, label="Liang 2019 [MDI & HMI]", kw...)
-        plot_dispersion(ProxaufFit; operators, ax, color= proxaufcolor, ls="dashed", label="Proxauf 2020 [HMI]", kw...)
-        plot_dispersion(HansonHighmfit; operators, ax, color= "black", label="Hanson", kw...)
+        plot_dispersion(HansonGONGfit; operators, ax, color= hansoncolor, label="Hanson 2020 [GONG]", subtract_sectoral, kw...)
+        plot_dispersion(Liang2019MDIHMI; operators, ax, color= liangcolor, label="Liang 2019 [MDI & HMI]", subtract_sectoral, kw...)
+        plot_dispersion(ProxaufFit; operators, ax, color= proxaufcolor, ls="dashed", label="Proxauf 2020 [HMI]", subtract_sectoral, kw...)
+        plot_dispersion(HansonHighmfit; operators, ax, color= "black", label="Hanson [HMI]", subtract_sectoral, kw...)
     else
-        color = colorederrorbars ? "brows" : "0.6"
-        plot_dispersion(HansonHFFit; operators, ax, color, label="Hanson 2022 [HMI]", kw...)
+        color = colorederrorbars ? "brown" : "0.6"
+        plot_dispersion(HansonHFFit; operators, ax, color, label="Hanson 2022 [HMI]", subtract_sectoral, kw...)
     end
+
+    leghandles, leglabels = ax.get_legend_handles_labels()
 
     if haskey(kw, :xlim)
         ax.set_xlim(kw[:xlim])
     end
 
-    ax.legend()
+    axlist[end].legend(leghandles, leglabels, loc="best")
+    axlist[end].axis("off")
+
+    f.set_size_inches(length(axlist)*4, 3.5)
     f.tight_layout()
     if get(kw, :save, false)
-        filename = joinpath(plotdir, "spectrum_$(!V_symmetric ? "a" : "")sym.eps")
-        @info "saving to $filename"
-        f.savefig(filename)
+        tag = get(kw, :filenametag, "")
+        filename = "spectrum_$(!V_symmetric ? "a" : "")sym$tag.eps"
+        savefiginfo(f, filename)
     end
 end
 
@@ -893,9 +982,8 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
     f.tight_layout()
     f.tight_layout()
     if get(kw, :save, false)
-        fname = joinpath(plotdir, "diff_rot_spectrum.eps")
-        @info "saving to $fname"
-        f.savefig(fname)
+        filename = "diff_rot_spectrum.eps"
+        savefiginfo(f, filename)
     end
     return nothing
 end
@@ -915,13 +1003,12 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         Vr ./= scale
     end
     @unpack rpts = operators
-    @unpack r_out = operators.radial_params
+    @unpack r_in, r_out = operators.radial_params
     r_frac = rpts ./ Rsun
     equator_ind = argmin(abs.(θ .- pi/2))
     ind_max = RossbyWaveSpectrum.angularindex_maximum(Vr, θ)
     V_peak_depthprofile = @view Vr[:, ind_max]
     r_out_ind = argmin(abs.(rpts .- r_out))
-    Vr .*= sign(Vr[r_out_ind, equator_ind])
 
     cmap = get(kw, :cmap, "Greys")
 
@@ -949,7 +1036,6 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         end
     end
 
-    vmax = maximum(abs, Vr)
     norm0 = matplotlib.colors.CenteredNorm()
 
     if !polar
@@ -994,11 +1080,25 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
             shading = "auto")
         axprofile.yaxis.set_major_locator(ticker.MaxNLocator(3))
         axprofile.xaxis.set_major_locator(ticker.MaxNLocator(3))
-        axprofile.set_xlabel(L"x/R_\odot", fontsize=12)
-        axprofile.set_ylabel(L"z/R_\odot", fontsize=12)
-        f.set_size_inches(3, 3)
-        cb = colorbar(mappable=p, ax=axprofile)
-        # cb.ax.yaxis.set_major_locator(ticker.MultipleLocator(0.2))
+        if get(kw, :showxlabel, true)
+            axprofile.set_xlabel(L"x/R_\odot", fontsize=12)
+        end
+        if get(kw, :showylabel, true)
+            axprofile.set_ylabel(L"z/R_\odot", fontsize=12)
+        end
+        if get(kw, :set_figsize, true)
+            f.set_size_inches(3, 3)
+        end
+        x = r_in/Rsun .* sin.(θ)
+        z = r_in/Rsun .* cos.(θ)
+        axprofile.plot(x, z, color="grey", lw="0.4")
+        x = r_out/Rsun .* sin.(θ)
+        z = r_out/Rsun .* cos.(θ)
+        axprofile.plot(x, z, color="grey", lw="0.4")
+        if get(kw, :colorbar, true)
+            cb = colorbar(mappable=p, ax=axprofile)
+            cb.ax.get_yaxis().set_major_locator(ticker.MaxNLocator(4))
+        end
     end
 
     if get(kw, :title, true)
@@ -1010,7 +1110,17 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         elseif get(kw, :title_eigval, false)
             @unpack Ω0 = operators.constants
             νnHzunit = get(kw, :scale_freq, true) ? freqnHzunit(Ω0)  #= around 453 =# : 1.0
-            axprofile.set_title(L"\Re[\nu]" * " = " * string(round(-real(λ)*νnHzunit, sigdigits=3)) * " nHz")
+            title = ""
+            if get(kw, :titlem, false)
+                title *= "m = $m"
+            end
+            if get(kw, :titlefreq, true)
+                if !isempty(title)
+                    title *= ", "
+                end
+                title *= L"\Re[\nu]" * " = " * string(round(-real(λ)*νnHzunit, sigdigits=3)) * " nHz"
+            end
+            axprofile.set_title(title)
         end
     end
 
@@ -1018,7 +1128,8 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         f.tight_layout()
     end
     if get(kw, :save, false)
-        f.savefig(joinpath(plotdir, "eigenfunction.eps"))
+        filename = "eigenfunction.eps"
+        savefiginfo(f, filename)
     end
 end
 
@@ -1033,20 +1144,31 @@ function eigenfunction(v::AbstractVector{<:Number}, m::Integer; operators, kw...
     eigenfunction(VWSinv, θ, m; operators, kw...)
 end
 
-function eigenfunctions(F::FilteredEigen, m::Integer, inds; layout=(2,length(inds)÷2), kw...)
-    fig = plt.figure(constrained_layout = true, figsize = (4.5*layout[2], 4*layout[1]))
-    subfigs = fig.subfigures(layout...)
+function eigenfunctions(F::FilteredEigen, ms, inds; layout=(2,length(inds)÷2), kw...)
+    fig = plt.figure(constrained_layout = true, figsize = (3*layout[2], 2.5*layout[1]))
+    subfigs = permutedims(fig.subfigures(layout...))
+    CIaxes = CartesianIndices(size(subfigs))
     kwd = Dict(kw)
     if haskey(kw, :save)
         delete!(kwd, :save)
     end
-    for (ind, sf) in zip(inds, subfigs)
-        eigenfunction(F, m, ind; f = sf, constrained_layout=true, title_eigval=true, kwd...)
+    ms2 = ms isa Integer ? fill(ms, length(inds)) : ms
+    titlem = !(ms isa Integer)
+    for (m, ind, sf, CI) in zip(ms2, inds, subfigs, CIaxes)
+        eigenfunction(F, m, ind; f = sf,
+            constrained_layout=true, title_eigval=true,
+            set_figsize = false,
+            colorbar = true,
+            showxlabel = Tuple(CI)[2] == size(CIaxes,1), # last row for transposed axes
+            showylabel = Tuple(CI)[1] == 1, # first col for transposed axes
+            titlem,
+            titlefreq = false,
+            kwd...)
     end
     if get(kw, :save, false)
-        filename = joinpath(plotdir, "eigenfn_m$m.eps")
-        @info "saving to $filename"
-        fig.savefig(filename)
+        tag = get(kw, :filenametag, "")
+        filename = joinpath(plotdir, "eigenfn_m$(join(ms, "_"))$tag.eps")
+        savefiginfo(fig, filename)
     end
 end
 
@@ -1094,9 +1216,8 @@ function eigenfunctions_allstreamfn(VWSinv::NamedTuple, θ, m; operators, kw...)
         subfigs[ind].suptitle(string(component)*"("*title_str[field]*")", x = 0.8)
     end
     if get(kw, :save, false)
-        fname = joinpath(plotdir, "eigenfunctions_allstreamfn_m$(m).eps")
-        @info "saving to $fname"
-        f.savefig(fname)
+        fname = "eigenfunctions_allstreamfn_m$(m).eps"
+        savefiginfo(f, fname)
     end
 end
 
@@ -1228,7 +1349,7 @@ function eigenfunction_rossbyridge_allstreamfn(λs::AbstractVector, vs::Abstract
     multiple_eigenfunctions_radial_m(λs, vs, m; operators, f = subfigs[3],
         kw..., constrained_layout = true, save=false)
     if get(kw, :save, false)
-        savefig(joinpath(plotdir, "eigenfunction_rossby_all.eps"))
+        savefiginfo(fig, "eigenfunction_rossby_all.eps")
     end
 end
 
@@ -1238,12 +1359,13 @@ function eigenfunctions_polar(feig::FilteredEigen, m; mode=nothing,
     f, axlist = get(kw, :faxlist) do
         subplots(1,2, sharey=true)
     end
+    mind = RossbyWaveSpectrum.m_index(feig, m)
     ind = if mode==:asym
-        argmin(abs.(feig.lams[m] .- 2.5*RossbyWaveSpectrum.rossby_ridge(m)))
+        argmin(abs.(feig.lams[mind] .- 2.5*RossbyWaveSpectrum.rossby_ridge(m)))
     elseif mode==:symsectoral
-        argmin(abs.(feig.lams[m] .- RossbyWaveSpectrum.rossby_ridge(m)))
+        argmin(abs.(feig.lams[mind] .- RossbyWaveSpectrum.rossby_ridge(m)))
     elseif mode==:symhighest
-        lastindex(feig.lams[m])
+        lastindex(feig.lams[mind])
     else
         kw[:ind]
     end
@@ -1328,7 +1450,8 @@ end
 
 function eigenfunction_spectrum(f::FilteredEigen, m::Integer, ind::Integer; kw...)
     @unpack operators = f
-    eigenfunction_spectrum(f.vs[m][:, ind], m; operators, f.kw..., kw...)
+    mind = RossbyWaveSpectrum.m_index(f, m)
+    eigenfunction_spectrum(f.vs[mind][:, ind], m; operators, f.kw..., kw...)
 end
 
 function plot_matrix(M, nvariables = 3)
@@ -1494,9 +1617,8 @@ function plot_diffrot_solar(; operators, ΔΩprofile_deriv, kw...)
     ax.set_rmax(r_out)
 
     if get(kw, :save, false)
-        filename = joinpath(plotdir, "rotprof.eps")
-        @info "saving to $filename"
-        f.savefig(filename, dpi=get(kw, :dpi, 200))
+        filename = "rotprof.eps"
+        savefiginfo(f, filename, dpi=get(kw, :dpi, 200))
     end
 end
 
@@ -1650,9 +1772,8 @@ function plot_constraint_basis(; operators, constraints = RossbyWaveSpectrum.con
     f.tight_layout()
 
     if get(kw, :save, false)
-        fname = joinpath(plotdir, "bc_basis.eps")
-        @info "saving to $fname"
-        f.savefig(fname)
+        fname = "bc_basis.eps"
+        savefiginfo(f, fname)
     end
     return nothing
 end
@@ -1683,9 +1804,8 @@ function plot_scale_heights(; operators, kw...)
     f.set_size_inches(5,2.5)
     f.tight_layout()
     if get(kw, :save, false)
-        fname = joinpath(plotdir, "scale_heights.eps")
-        @info "saving to $fname"
-        f.savefig(fname)
+        fname = "scale_heights.eps"
+        savefiginfo(f, fname)
     end
     return nothing
 end
@@ -1733,9 +1853,8 @@ function spectra_different_rotation(fsyms::Vector{FilteredEigen}; layout = (2,2)
     f.set_size_inches(layout[1]*5, layout[2]*3.5)
     f.tight_layout()
     if get(kw, :save, false)
-        filename = joinpath(plotdir, "spectra_rotscale.eps")
-        @info "saving to $filename"
-        f.savefig(filename)
+        filename = "spectra_rotscale.eps"
+        savefiginfo(f, filename)
     end
 end
 

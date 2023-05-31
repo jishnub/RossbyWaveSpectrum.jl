@@ -48,6 +48,12 @@ struct FilteredEigen
     mr :: UnitRange{Int}
     kw :: Dict{Symbol, Any}
     operators
+    constraints::NamedTuple{(:BC, :ZC), NTuple{2,SparseArrays.SparseMatrixCSC{Float64, Int64}}}
+end
+
+function FilteredEigen(lams, vs, mr, kw, operators)
+    constraints = constraintmatrix(operators)
+    FilteredEigen(lams, vs, mr, kw, operators, constraints)
 end
 
 function FilteredEigen(fname::String)
@@ -103,10 +109,22 @@ updaterotatationprofile(d; kw...) = d
     ωΩ_deriv = d.ωΩ_deriv,
     kw...)
 
+function RotMatrix(::Val{T}, V_symmetric, diffrot, rotation_profile; operators, kw...) where {T}
+    T ∈ (:spectrum, :matrix) || error("unknown code ", T)
+    if !diffrot
+        RotMatrix(V_symmetric, :uniform, nothing, nothing,
+            T == :matrix ? uniform_rotation_matrix! : uniform_rotation_spectrum!)
+    else
+        d = RotMatrix(V_symmetric, rotation_profile, nothing, nothing,
+            T == :matrix ? differential_rotation_matrix! : differential_rotation_spectrum!)
+        updaterotatationprofile(d; operators, kw...)
+    end
+end
+
 function updaterotatationprofile(F::FilteredEigen; kw...)
     @unpack operators = F
     @unpack V_symmetric, rotation_profile = F.kw
-    matrixfn! = F.kw[:diffrot] ? uniform_rotation_matrix! : differential_rotation_matrix!
+    matrixfn! = F.kw[:diffrot] ? differential_rotation_matrix! : uniform_rotation_matrix!
     R = RotMatrix(V_symmetric, rotation_profile, nothing, nothing, matrixfn!)
     updaterotatationprofile(R; operators, kw...)
 end
@@ -194,7 +212,7 @@ function mass_matrix(m; operators, kw...)
     mass_matrix!(B, m; operators, kw...)
     return B
 end
-function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
+function mass_matrix!(B, m; operators, V_symmetric, kw...)
     @unpack nr, nℓ = operators.radial_params;
     @unpack Weqglobalscaling = operators.scalings;
 
@@ -334,7 +352,7 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
     return A
 end
 
-function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric = true, kw...)
+function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric, kw...)
     @unpack nr, nℓ = operators.radial_params;
     @unpack ddr, d2dr2, d3dr3, DDr, d2dr2_ηρbyr_op = operators.diff_operators;
     @unpack ηρ, ηρ_by_r, ηρ_by_r2, onebyr2, onebyr, r, ηρ2_by_r2 = operators.rad_terms;
@@ -381,7 +399,7 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric 
 end
 
 function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
-        operators, ΔΩ_frac = 0.01, V_symmetric = true, kw...)
+        operators, ΔΩ_frac = 0.01, V_symmetric, kw...)
 
     @unpack nr, nℓ = operators.radial_params;
     @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
@@ -453,7 +471,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         ΔΩ_scale = 1.0,
         ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives_Fun(;
                             operators, rotation_profile, ΔΩ_frac, ΔΩ_scale),
-        V_symmetric = true, kw...)
+        V_symmetric, kw...)
 
     @unpack nr, nℓ = operators.radial_params;
     @unpack DDr, ddr, ddrDDr = operators.diff_operators;
@@ -639,7 +657,7 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(;
                             operators, rotation_profile, ΔΩ_frac, ΔΩ_scale),
         ωΩ_deriv = solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv),
-        V_symmetric = true, kw...)
+        V_symmetric, kw...)
 
     VV = matrix_block(M.re, 1, 1);
     VW = matrix_block(M.re, 1, 2);
@@ -885,7 +903,7 @@ function differential_rotation_spectrum!((A, B)::Tuple{StructMatrix{<:Complex}, 
         m::Integer; rotation_profile, operators, timer = TimerOutput(), kw...)
     @timeit timer "matrix" begin
         differential_rotation_matrix!(A, m; operators, rotation_profile, kw...)
-        mass_matrix!(B, m; operators)
+        mass_matrix!(B, m; operators, kw...)
     end
     constrained_eigensystem_timed((A, B); operators, timer, kw...)
 end
@@ -964,6 +982,7 @@ function eigvec_spectrum_filter!(F, v, m;
     Δl_cutoff = DefaultFilterParams[:Δl_cutoff],
     eigvec_spectrum_power_cutoff = DefaultFilterParams[:eigvec_spectrum_power_cutoff],
     filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff],
+    low_n_power_lowercutoff = DefaultFilterParams[:eigvec_spectrum_low_n_power_fraction_cutoff],
     kw...)
 
     VW = eigenfunction_spectrum_2D!(F, v; operators, kw...)
@@ -977,13 +996,40 @@ function eigvec_spectrum_filter!(F, v, m;
 
     @views for _X in fields
         f, X = first(_X), last(_X)
+
         PV_frac_real = sum(abs2∘real, X[1:n_cutoff, 1:Δl_inds]) / sum(abs2∘real, X)
         PV_frac_imag = sum(abs2∘imag, X[1:n_cutoff, 1:Δl_inds]) / sum(abs2∘imag, X)
         flag &= (PV_frac_real > eigvec_spectrum_power_cutoff) & (PV_frac_imag > eigvec_spectrum_power_cutoff)
+
+        flag || break
+
+        real_lown_pow_ratio = sum(abs2∘real, X[(n_cutoff÷2+1):n_cutoff, 1:Δl_inds])/sum(abs2∘real, X[1:n_cutoff÷2, 1:Δl_inds])
+        real_lown_flag = real_lown_pow_ratio <= low_n_power_lowercutoff
+
+        flag &= real_lown_flag
+        flag || break
+
+        imag_lown_pow_ratio = sum(abs2∘imag, X[(n_cutoff÷2+1):n_cutoff, 1:Δl_inds])/sum(abs2∘imag, X[1:n_cutoff÷2, 1:Δl_inds])
+        imag_lown_flag = imag_lown_pow_ratio <= low_n_power_lowercutoff
+
+        flag &= imag_lown_flag
         flag || break
     end
 
     return flag
+end
+
+function eigvec_spectrum_filter(v, m; operators, kw...)
+    @unpack nr, nℓ = operators.radial_params
+    F = allocate_field_vectors(nr, nℓ)
+    eigvec_spectrum_filter!(F, v, m; operators, kw...)
+end
+
+function eigvec_spectrum_filter(Feig::FilteredEigen, m, ind; kw...)
+    @unpack nr, nℓ = Feig.operators.radial_params
+    F = allocate_field_vectors(nr, nℓ)
+    mind = m_index(Feig, m)
+    eigvec_spectrum_filter!(F, Feig.vs[mind][:,ind], m; Feig.operators, Feig.kw..., kw...)
 end
 
 allocate_Pl(m, nℓ) = zeros(range(m, length = 2nℓ + 1))
@@ -997,12 +1043,16 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m;
     V_symmetric,
     θ_cutoff = DefaultFilterParams[:θ_cutoff],
     equator_power_cutoff_frac = DefaultFilterParams[:equator_power_cutoff_frac],
+    pole_cutoff_angle = deg2rad(25),
+    pole_power_cutoff_frac = 0.05,
     filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff],
     nℓ = operators.radial_params.nℓ,
     Plcosθ = allocate_Pl(m, nℓ),
-    angular_filter = true,
+    angular_filter_equator = true,
+    angular_filter_highlat = false,
     radial_filter = true,
     compute_invtransform = true,
+    radial_topbotpower_cutoff = DefaultFilterParams[:radial_topbotpower_cutoff],
     kw...
     )
 
@@ -1025,19 +1075,30 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m;
 
     for _X in fields
         f, X = first(_X), last(_X)
-        if angular_filter
-            r_ind_peak = peakindabs1(X)
-            peak_latprofile = @view X[r_ind_peak, :]
+        if angular_filter_equator
             θlowind = searchsortedfirst(θ, θ_cutoff)
             θhighind = searchsortedlast(θ, pi - θ_cutoff)
-            powfrac = sum(abs2, @view peak_latprofile[θlowind:θhighind]) / sum(abs2, peak_latprofile)
+            powfrac = sum(abs2, @view X[:, θlowind:θhighind]) / sum(abs2, X)
             powflag = powfrac > equator_power_cutoff_frac
+
+            # ensure that there isn't much power at the poles
+            θpolecutoff = searchsortedfirst(θ, pole_cutoff_angle)
+            powfrac = sum(abs2, @view X[:, 1:θpolecutoff]) / sum(abs2, X)
+            powflag = powfrac < pole_power_cutoff_frac
+
+            r_ind_peak = peakindabs1(X)
+            peak_latprofile = @view X[r_ind_peak, :]
             peak_latprofile_max = maximum(abs2, peak_latprofile)
             peak_latprofile_max_inrange = maximum(abs2, @view peak_latprofile[θlowind:θhighind])
             peakflag = peak_latprofile_max_inrange == peak_latprofile_max
             eqfilter &= powflag & peakflag
-            eqfilter || break
+        elseif angular_filter_highlat
+            θlowind = searchsortedfirst(θ, θ_cutoff)
+            θhighind = searchsortedlast(θ, pi - θ_cutoff)
+            powfrac = 1 - sum(abs2, @view X[:, θlowind:θhighind]) / sum(abs2, X)
+            eqfilter = powfrac > equator_power_cutoff_frac
         end
+        eqfilter || break
 
         if radial_filter
             # ensure that the radial peak isn't at the bottom of the domain
@@ -1052,12 +1113,12 @@ function spatial_filter!(VWSinv, VWSinvsh, F, v, m;
             r_bot_cutoff = r_in + (r_out - r_in)*5/100
             r_bot_ind = findmin(r -> abs(r - r_bot_cutoff), rpts)[2]
             r_in_ind = findmin(r -> abs(r - r_in), rpts)[2]
-            top_power = sum(abs, view(X, :, r_out_ind:r_top_ind))
-            bot_power = sum(abs, view(X, :, r_bot_ind:r_in_ind))
+            top_power = sum(abs, view(X, r_out_ind:r_top_ind, :))
+            bot_power = sum(abs, view(X, r_bot_ind:r_in_ind, :))
             tot_power = sum(abs, X)
-            radfilter = (top_power + bot_power)/tot_power < 0.95
-            radfilter || break
+            radfilter = (top_power + bot_power)/tot_power < radial_topbotpower_cutoff
         end
+        radfilter || break
     end
 
     return eqfilter & radfilter
@@ -1073,6 +1134,13 @@ function spatial_filter(v, m;
     spatial_filter!(VWSinv, VWSinvsh, F, v, m; operators, kw...)
 end
 
+function spatial_filter(Feig::FilteredEigen, m, ind; kw...)
+    mind = m_index(Feig, m)
+    spatial_filter(Feig.vs[mind][:,ind], m; Feig.operators,
+        filtercache = allocate_filter_caches(m; Feig.operators, Feig.constraints),
+        Feig.kw..., kw...)
+end
+
 function angularindex_maximum(Vr::AbstractMatrix{<:Real}, θ)
     equator_ind = angularindex_equator(Vr, θ)
     nθ = length(θ)
@@ -1084,8 +1152,10 @@ function angularindex_maximum(Vr::AbstractMatrix{<:Real}, θ)
     ind_max += first(rangescan) - 1
 end
 
-angularindex_equator(Vr, θ) = findmin(x -> abs(x - pi/2), θ)[2]
-indexof_equator(θ) = angularindex_equator(nothing, θ)
+angularindex_colatitude(Vr, θ, θi) = findmin(x -> abs(x - θi), θ)[2]
+angularindex_equator(Vr, θ) = angularindex_colatitude(Vr, θ, pi/2)
+indexof_colatitude(θ, θi) = angularindex_colatitude(nothing, θ, θi)
+indexof_equator(θ) = indexof_colatitude(θ, pi/2)
 
 function sign_changes(v)
     isempty(v) && return 0
@@ -1124,16 +1194,13 @@ function count_num_nodes!(radprof::AbstractVector{<:Real}, rptsrev; smallcutoff 
 
     min(ncross, zerocrossings)
 end
-function count_radial_nodes_equator(V::AbstractMatrix{<:Complex},
-        angularindex, rptsrev,
-        radproftemp = similar(V, real(eltype(V)), size(V,1)),
-        )
+function count_radial_nodes(radprof, rptsrev,
+        radproftempreal = similar(radprof, real(eltype(V))))
 
-    radprof = @view V[:, angularindex]
-    radproftemp .= real.(radprof)
-    nnodes_real = count_num_nodes!(radproftemp, rptsrev)
-    radproftemp .= imag.(radprof)
-    nnodes_imag = count_num_nodes!(radproftemp, rptsrev)
+    radproftempreal .= real.(radprof)
+    nnodes_real = count_num_nodes!(radproftempreal, rptsrev)
+    radproftempreal .= imag.(radprof)
+    nnodes_imag = count_num_nodes!(radproftempreal, rptsrev)
     nnodes_real, nnodes_imag
 end
 function count_V_radial_nodes(v::AbstractVector{<:Complex}, m; operators,
@@ -1146,12 +1213,18 @@ function count_V_radial_nodes(v::AbstractVector{<:Complex}, m; operators,
         kw...)
 
     @unpack rptsrev = operators
-    @unpack VWSinv, VWSinvsh, F, radproftemp = fieldcaches
+    @unpack VWSinv, VWSinvsh, F, radproftempreal = fieldcaches
     eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, kw...)
     (; V) = VWSinv
     realcache .= real.(V)
     eqind = angularindex_fn(realcache, θ)
-    count_radial_nodes_equator(V, eqind, rptsrev, radproftemp)
+    radprof = @view V[:, eqind]
+    count_radial_nodes(radprof, rptsrev, radproftempreal)
+end
+
+function count_V_radial_nodes(Feig::FilteredEigen, m, ind; kw...)
+    mind = m_index(Feig, m)
+    count_V_radial_nodes(Feig.vs[mind][:,ind], m; Feig.operators, Feig.kw..., kw...)
 end
 
 function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
@@ -1160,17 +1233,18 @@ function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
     filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff],
     nnodesmax = DefaultFilterParams[:nnodesmax],
     compute_invtransform = true,
-    radproftemp = similar(VWSinv.V, real(eltype(VWSinv.V)), size(VWSinv.V,1)),
+    radproftempreal = similar(VWSinv.V, real(eltype(VWSinv.V)), size(VWSinv.V,1)),
+    radproftempcomplex = similar(VWSinv.V, size(VWSinv.V,1)),
     kw...)
 
     nodesfilter = true
 
     @unpack nparams = operators.radial_params
-    @unpack nvariables = operators
-    @unpack rptsrev = operators
+    @unpack nvariables, rptsrev = operators
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     (; θ) = spharm_θ_grid_uniform(m, nℓ)
+    lowercutoffind = indexof_colatitude(θ, deg2rad(60))
     eqind = indexof_equator(θ)
 
     if compute_invtransform
@@ -1179,8 +1253,10 @@ function nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
 
     for _X in fields
         f, X = first(_X), last(_X)
-        radprof = @view X[:, eqind]
-        nnodes_real, nnodes_imag = count_radial_nodes_equator(X, eqind, rptsrev, radproftemp)
+        for col in eachcol(@view X[:, lowercutoffind:eqind])
+            radproftempcomplex .+= col
+        end
+        nnodes_real, nnodes_imag = count_radial_nodes(radproftempcomplex, rptsrev, radproftempreal)
         nodesfilter &= nnodes_real <= nnodesmax && nnodes_imag <= nnodesmax
         nodesfilter || break
     end
@@ -1190,13 +1266,14 @@ end
 module Filters
     using BitFlags
     export DefaultFilter
-    @bitflag FilterFlag::UInt8 begin
+    @bitflag FilterFlag::UInt16 begin
         NONE=0
         EIGEN # Eigensystem satisfy
         EIGVAL # Imaginary to real ratio
         EIGVEC # spectrum power cutoff in n and l
         BC # boundary conditions
         SPATIAL_EQUATOR # peak near the equator
+        SPATIAL_HIGHLAT # peak near the equator
         SPATIAL_RADIAL # power not concentrated at the top/bottom surface layers
         NODES # number of radial nodes
     end
@@ -1208,8 +1285,8 @@ module Filters
     Base.in(t::FilterFlag, F::FilterFlag) = (t & F) != NONE
     Base.broadcastable(x::FilterFlag) = Ref(x)
 
-    const DefaultFilter = EIGEN | EIGVAL | EIGVEC | BC | SPATIAL_RADIAL | NODES
     const SPATIAL = SPATIAL_EQUATOR | SPATIAL_RADIAL
+    const DefaultFilter = EIGEN | EIGVAL | EIGVEC | BC | SPATIAL | NODES
 end
 using .Filters
 
@@ -1232,7 +1309,9 @@ const DefaultFilterParams = Dict(
     # radial nodes filter
     :nnodesmax => 10,
     # exclude a field from a filter if relative power is below a cutoff
-    :filterfieldpowercutoff => 1e-4,
+    :filterfieldpowercutoff => 1e-2,
+    :eigvec_spectrum_low_n_power_fraction_cutoff => 1,
+    :radial_topbotpower_cutoff => 0.9,
 )
 
 function filterfn(λ, v, m, M, filterparams;
@@ -1244,23 +1323,24 @@ function filterfn(λ, v, m, M, filterparams;
     @unpack BC = constraints
     @unpack nℓ = operators.radial_params;
 
-    filterparams = merge(DefaultFilterParams, filterparams);
+    filterparams_all = merge(DefaultFilterParams, filterparams);
 
-    @unpack eig_imag_unstable_cutoff = filterparams
-    @unpack eig_imag_to_real_ratio_cutoff = filterparams
-    @unpack eig_imag_stable_cutoff = filterparams
-    @unpack eigvec_spectrum_power_cutoff = filterparams
-    @unpack bc_atol = filterparams
-    @unpack Δl_cutoff = filterparams
-    @unpack n_cutoff = filterparams
-    @unpack θ_cutoff = filterparams
-    @unpack equator_power_cutoff_frac = filterparams
-    @unpack eigen_rtol = filterparams
-    @unpack filterfieldpowercutoff = filterparams
-    @unpack nnodesmax = filterparams
-    @unpack V_symmetric = filterparams
+    eig_imag_unstable_cutoff = Float64(filterparams_all[:eig_imag_unstable_cutoff])::Float64
+    eig_imag_to_real_ratio_cutoff = Float64(filterparams_all[:eig_imag_to_real_ratio_cutoff])::Float64
+    eig_imag_stable_cutoff = Float64(filterparams_all[:eig_imag_stable_cutoff])::Float64
+    eigvec_spectrum_power_cutoff = Float64(filterparams_all[:eigvec_spectrum_power_cutoff])::Float64
+    bc_atol = Float64(filterparams_all[:bc_atol])::Float64
+    Δl_cutoff = filterparams_all[:Δl_cutoff]::Int
+    n_cutoff = filterparams_all[:n_cutoff]::Int
+    θ_cutoff = Float64(filterparams_all[:θ_cutoff])::Float64
+    equator_power_cutoff_frac = Float64(filterparams_all[:equator_power_cutoff_frac])::Float64
+    eigen_rtol = Float64(filterparams_all[:eigen_rtol])::Float64
+    filterfieldpowercutoff = Float64(filterparams_all[:filterfieldpowercutoff])::Float64
+    nnodesmax = filterparams_all[:nnodesmax]::Int
+    V_symmetric = filterparams[:V_symmetric]::Bool
 
-    (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F, radproftemp) = filtercache;
+    (; MVcache, BCVcache, VWSinv, VWSinvsh,
+        Plcosθ, F, radproftempreal, radproftempcomplex) = filtercache;
 
     allfilters = Filters.FilterFlag(filterflags)
     compute_invtransform = true
@@ -1296,7 +1376,8 @@ function filterfn(λ, v, m, M, filterparams;
         f = spatial_filter!(VWSinv, VWSinvsh, F, v, m;
             θ_cutoff, equator_power_cutoff_frac, operators, nℓ, Plcosθ,
             filterfieldpowercutoff, V_symmetric,
-            angular_filter = Filters.SPATIAL_EQUATOR in allfilters,
+            angular_filter_equator = Filters.SPATIAL_EQUATOR in allfilters,
+            angular_filter_highlat = Filters.SPATIAL_HIGHLAT in allfilters,
             radial_filter = Filters.SPATIAL_RADIAL in allfilters,
             compute_invtransform,
             )
@@ -1310,7 +1391,7 @@ function filterfn(λ, v, m, M, filterparams;
     if Filters.NODES in allfilters
         f = nodes_filter!(VWSinv, VWSinvsh, F, v, m, operators;
                 nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax, V_symmetric,
-                compute_invtransform, radproftemp)
+                compute_invtransform, radproftempreal, radproftempcomplex)
         if !f
             @debug "NODES" filterfieldpowercutoff, nnodesmax
             return false
@@ -1329,12 +1410,33 @@ function filterfn(λ, v, m, M, filterparams;
     return true
 end
 
+m_index(Fssym, m) = findfirst(==(m), Fssym.mr)
+
+function filterfn(Fssym, m, ind, Ms; kw...)
+    mind = m_index(Fssym, m)
+    filterfn(Fssym.lams[mind][ind], Fssym.vs[mind][:,ind], m, Ms, Fssym.kw;
+        Fssym.operators, Fssym.constraints,
+        filterflags = Fssym.kw[:filterflags], kw...)
+end
+
+function allocate_field_vectors(nr, nℓ)
+    nparams = nr * nℓ
+    (; V = zeros(ComplexF64, nparams), W = zeros(ComplexF64, nparams), S = zeros(ComplexF64, nparams))
+end
+
 function allocate_field_caches(nr, nℓ, nθ)
     VWSinv = (; V = zeros(ComplexF64, nr, nθ), W = zeros(ComplexF64, nr, nθ), S = zeros(ComplexF64, nr, nθ))
     VWSinvsh = (; V = zeros(ComplexF64, nr, nℓ), W = zeros(ComplexF64, nr, nℓ), S = zeros(ComplexF64, nr, nℓ))
-    F = (; V = zeros(ComplexF64, nr * nℓ), W = zeros(ComplexF64, nr * nℓ), S = zeros(ComplexF64, nr * nℓ))
-    radproftemp = zeros(real(eltype(VWSinv.V)), size(VWSinv.V,1))
-    (; VWSinv, VWSinvsh, F, radproftemp)
+    F = allocate_field_vectors(nr, nℓ)
+    radproftempreal = zeros(real(eltype(VWSinv.V)), size(VWSinv.V,1))
+    radproftempcomplex = zeros(eltype(VWSinv.V), size(VWSinv.V,1))
+    (; VWSinv, VWSinvsh, F, radproftempreal, radproftempcomplex)
+end
+
+function allocate_field_caches(Feig::FilteredEigen, m)
+    @unpack nr, nℓ = Feig.radial_params
+    nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
+    allocate_field_caches(nr, nℓ, nθ)
 end
 
 function allocate_MVcache(nrows)
@@ -1424,7 +1526,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     additional_params = (; operators, constraints, filtercache);
     Ms = M isa NTuple{2,AbstractMatrix} ? map(computesparse, M) : M
 
-    inds_bool = filterfn.(λ, eachcol(v), m, Ref(Ms), Ref(filterparams); operators, additional_params..., filterflags)
+    inds_bool = filterfn.(λ, eachcol(v), m, Ref(Ms), Ref(filterparams); additional_params..., filterflags)
     filtinds = axes(λ, 1)[inds_bool]
     λ, v = λ[filtinds], v[:, filtinds]
 
@@ -1584,13 +1686,18 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
     λs, vs
 end
 
-function filter_eigenvalues(f::FilteredEigen; kw...)
-    @unpack operators = f
-    kw2 = merge(f.kw, kw)
-    matrixfn! = f.kw[:diffrot] ? differential_rotation_matrix! : uniform_rotation_matrix!
+function filter_eigenvalues(Feig::FilteredEigen; kw...)
+    @unpack operators = Feig
+    kw2 = merge(Feig.kw, kw)
+    matrixfn! = updaterotatationprofile(Feig)
     λfs, vfs =
-        filter_eigenvalues(f.lams, f.vs, f.mr; operators, matrixfn!, kw2...);
-    FilteredEigen(λfs, vfs, f.mr, kw2, operators)
+        filter_eigenvalues(Feig.lams, Feig.vs, Feig.mr; operators, matrixfn!, kw2...);
+    FilteredEigen(λfs, vfs, Feig.mr, kw2, operators)
+end
+
+function filter_eigenvalues(filename::String; kw...)
+    Feig = FilteredEigen(filename)
+    filter_eigenvalues(Feig; kw...)
 end
 
 filenamerottag(isdiffrot, rotation_profile) = isdiffrot ? "dr_$rotation_profile" : "ur"
@@ -1618,52 +1725,26 @@ function save_eigenvalues(f, mr; operators, save=true, kw...)
     end
 end
 
-function RotMatrix(::Val{T}, V_symmetric, diffrot, rotation_profile; operators, kw...) where {T}
-    T ∈ (:spectrum, :matrix) || error("unknown code ", T)
-    if !diffrot
-        RotMatrix(V_symmetric, :uniform, nothing, nothing,
-            T == :matrix ? uniform_rotation_matrix! : uniform_rotation_spectrum!)
+function differential_rotation_matrix(Feig::FilteredEigen, m; kw...)
+    differential_rotation_matrix(m; Feig.operators, Feig.kw..., kw...)
+end
+
+function mass_matrix(Feig::FilteredEigen, m; kw...)
+    mass_matrix(m; Feig.operators, Feig.kw..., kw...)
+end
+
+function operator_matrices(m; operators, diffrot::Bool, kw...)
+    A = if diffrot
+        differential_rotation_matrix(m; operators, kw...)
     else
-        d = RotMatrix(V_symmetric, rotation_profile, nothing, nothing,
-            T == :matrix ? differential_rotation_matrix! : differential_rotation_spectrum!)
-        updaterotatationprofile(d; operators, kw...)
+        uniform_rotation_matrix(m; operators, kw...)
     end
-end
-
-function filteredeigen(filename::String; kw...)
-    feig = FilteredEigen(filename)
-    operators = feig.operators
-    fkw = feig.kw
-    diffrot::Bool = fkw[:diffrot]
-    V_symmetric::Bool = fkw[:V_symmetric]
-    rotation_profile::Union{Symbol, Nothing} = fkw[:rotation_profile]
-    smoothing_param::Float64 = get(fkw, :smoothing_param, 1e-4)
-
-    matrixfn! = RotMatrix(Val(:matrix), V_symmetric, diffrot, rotation_profile;
-                    operators, smoothing_param)
-    filter_eigenvalues(feig; matrixfn!, fkw..., kw...)
-end
-
-function differential_rotation_matrix(feig::FilteredEigen, m; kw...)
-    operators = feig.operators
-    fkw = feig.kw
-    differential_rotation_matrix(m; operators, fkw..., kw...)
-end
-
-function mass_matrix(feig::FilteredEigen, m; kw...)
-    operators = feig.operators
-    fkw = feig.kw
-    mass_matrix(m; operators, fkw..., kw...)
-end
-
-function operator_matrices(feig::FilteredEigen, m, kw...)
-    A = if feig.kw[:diffrot]
-        differential_rotation_matrix(feig, m; kw...)
-    else
-        uniform_rotation_matrix(feig, m; kw...)
-    end
-    B = mass_matrix(feig, m; kw...)
+    B = mass_matrix(m; operators, kw...)
     map(computesparse, (A, B))
+end
+
+function operator_matrices(Feig::FilteredEigen, m, kw...)
+    operator_matrices(m; Feig.operators, Feig.kw..., kw...)
 end
 
 function eigenfunction_spectrum_2D!(F, v; operators, kw...)
@@ -1681,12 +1762,15 @@ function eigenfunction_spectrum_2D!(F, v; operators, kw...)
     (; V, W, S)
 end
 
-function eigvec_spectrum_filter(Feig::FilteredEigen, m, ind; kw...)
-    @unpack operators = Feig
-    constraints = constraintmatrix(operators)
-    filtercache = allocate_filter_caches(m; operators, constraints)
-    (; F) = filtercache;
-    eigvec_spectrum_filter!(F, Feig.vs[m][:, ind], m; operators, Feig.kw..., kw...)
+function eigenfunction_spectrum_2D(v; operators, kw...)
+    @unpack nr, nℓ = operators.radial_params
+    F = allocate_field_vectors(nr, nℓ)
+    eigenfunction_spectrum_2D!(F, v; operators, kw...)
+end
+
+function eigenfunction_spectrum_2D(Feig, m, ind; kw...)
+    mind = m_index(Feig, m)
+    eigenfunction_spectrum_2D(Feig.vs[mind][:, ind]; Feig.operators, Feig.kw..., kw...)
 end
 
 function invtransform1!(radialspace::Space, out::AbstractMatrix, coeffs::AbstractMatrix,
@@ -1804,6 +1888,11 @@ function eigenfunction_realspace(v, m; operators, kw...)
     eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, kw...)
 
     return (; VWSinv, θ)
+end
+
+function eigenfunction_realspace(Feig::FilteredEigen, m, ind)
+    mind = m_index(Feig, m)
+    eigenfunction_realspace(Feig.vs[mind][:,ind], m; Feig.operators, Feig.kw...)
 end
 
 function eigenfunction_n_theta!(VWSinv, F, v, m;

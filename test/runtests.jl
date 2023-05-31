@@ -11,7 +11,7 @@ using ApproxFun
 using UnPack
 using ApproxFunAssociatedLegendre
 
-using RossbyWaveSpectrum.Filters: NODES, SPATIAL, EIGVEC, EIGVAL, EIGEN, BC
+using RossbyWaveSpectrum.Filters: NODES, SPATIAL, EIGVEC, EIGVAL, EIGEN, BC, SPATIAL_HIGHLAT
 
 include("testutils.jl")
 
@@ -55,7 +55,7 @@ end
     nr, nℓ = 60, 30
 
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-    constraints = RossbyWaveSpectrum.constraintmatrix(operators)
+    constraints = RossbyWaveSpectrum.constraintmatrix(operators, Val(true))
     @unpack nullspacematrices = constraints
     ZV, ZW, ZS = nullspacematrices
     @unpack r_in, r_out = operators.radial_params
@@ -118,13 +118,13 @@ end
 end
 
 @testset "filters" begin
-    @test !BC == NODES | SPATIAL | EIGVEC | EIGVAL | EIGEN
-    @test !EIGVAL == NODES | SPATIAL | BC | EIGVEC | EIGEN
-    @test !EIGVEC == NODES | SPATIAL | BC | EIGVAL | EIGEN
-    @test !EIGEN == NODES | SPATIAL | BC | EIGVEC | EIGVAL
-    @test !SPATIAL == NODES | BC | EIGVEC | EIGVAL | EIGEN
-    @test !NODES == SPATIAL | BC | EIGVEC | EIGVAL | EIGEN
-    @test !(EIGVAL | EIGVEC) == NODES | SPATIAL | BC | EIGEN
+    @test !BC == NODES | SPATIAL | EIGVEC | EIGVAL | EIGEN | SPATIAL_HIGHLAT
+    @test !EIGVAL == NODES | SPATIAL | BC | EIGVEC | EIGEN | SPATIAL_HIGHLAT
+    @test !EIGVEC == NODES | SPATIAL | BC | EIGVAL | EIGEN | SPATIAL_HIGHLAT
+    @test !EIGEN == NODES | SPATIAL | BC | EIGVEC | EIGVAL | SPATIAL_HIGHLAT
+    @test !SPATIAL == NODES | BC | EIGVEC | EIGVAL | EIGEN | SPATIAL_HIGHLAT
+    @test !NODES == SPATIAL | BC | EIGVEC | EIGVAL | EIGEN | SPATIAL_HIGHLAT
+    @test !(EIGVAL | EIGVEC) == NODES | SPATIAL | BC | EIGEN | SPATIAL_HIGHLAT
 end
 
 @testset "invtransform" begin
@@ -210,7 +210,7 @@ end
     nr, nℓ = 40, 8
     nparams = nr * nℓ
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ, ν=1e10);
-    constraints = RossbyWaveSpectrum.constraintmatrix(operators);
+    constraints = RossbyWaveSpectrum.constraintmatrix(operators, Val(true));
     @unpack r_in, r_out, Δr = operators.radial_params
     @unpack BCmatrices = constraints;
     @unpack radialspace = operators.radialspaces;
@@ -595,7 +595,7 @@ end
     nr, nℓ = 45, 8
     nparams = nr * nℓ
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ);
-    constraints = RossbyWaveSpectrum.constraintmatrix(operators);
+    constraints = RossbyWaveSpectrum.constraintmatrix(operators, Val(true));
     @unpack r_in, r_out, Δr = operators.radial_params
     @unpack BCmatrices = constraints;
     @unpack radialspace = operators.radialspaces
@@ -769,7 +769,7 @@ include("run_threadedtests.jl")
             filename = RossbyWaveSpectrum.rossbyeigenfilename(nr, nℓ,
                 RossbyWaveSpectrum.filenamerottag(diffrot, diffrotprof),
                 RossbyWaveSpectrum.filenamesymtag(V_symmetric))
-            f = filteredeigen(filename)
+            f = RossbyWaveSpectrum.filter_eigenvalues(filename)
             @test f.operators.radial_params[:nr] == nr
             @test f.operators.radial_params[:nℓ] == nℓ
             rm(filename)
