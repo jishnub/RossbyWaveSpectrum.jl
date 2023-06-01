@@ -1513,7 +1513,7 @@ function plot_matrix_block(M, rowind, colind, nℓ, ℓind, ℓ′ind, nvariable
     f.tight_layout()
 end
 
-function plot_diffrot_radial(; operators, kw...)
+function plot_diffrot_solar_equatorial_data(; operators, f = figure(), ax = f.add_subplot(), kw...)
     r_raw = SolarModel.solar_rotation_profile_radii()
     Ω_raw = SolarModel.solar_rotation_profile_raw()
     θinds = axes(Ω_raw,2)
@@ -1525,14 +1525,24 @@ function plot_diffrot_radial(; operators, kw...)
     @unpack r_in, r_out = operators.radial_params
     r_in_frac = r_in / Rsun
     r_out_frac = r_out / Rsun
+    r_inds = r_out_frac .>= r_raw .>= r_in_frac
 
-    plot(r_raw[r_raw .>= r_in_frac], ΔΩ_raw_eq[r_raw .>= r_in_frac]*1e9/2pi, label="radial, equator")
+    ax.plot(r_raw[r_inds], ΔΩ_raw_eq[r_inds]*1e9/2pi,
+        color=get(kw, :color, "grey"), label="solar", ls="dashed")
+end
+
+function plot_diffrot_radial_data(; operators, kw...)
+    f, ax = subplots(1,1)
+    @unpack Ω0 = operators.constants
     @unpack rpts = operators
+    νnHzunit = freqnHzunit(Ω0)
+
+    plot_diffrot_solar_equatorial_data(; operators, f, ax)
 
     if get(kw, :plot_smoothed, true)
         (; ΔΩ,) = SolarModel.radial_differential_rotation_profile_derivatives_Fun(;
             operators, rotation_profile = get(kw, :rotation_profile, :solar_equator), kw...);
-        plot(rpts/Rsun, ΔΩ.(rpts)*Ω0*1e9/2pi, label="smoothed model")
+        ax.plot(rpts/Rsun, ΔΩ.(rpts).*νnHzunit, label="smoothed model")
     end
 
     xmin, xmax = extrema(rpts)./Rsun
@@ -1540,17 +1550,17 @@ function plot_diffrot_radial(; operators, kw...)
     pad = Δx*0.1
     xlim(xmin - pad, xmax + pad)
     if get(kw, :plot_guides, false)
-        axhline(0, ls="dotted", color="black")
-        axvline(r_out_frac, ls="dotted", color="black")
+        ax.axhline(0, ls="dotted", color="black")
+        ax.axvline(r_out_frac, ls="dotted", color="black")
     end
     fontsize = get(kw, :fontsize, 12)
-    xlabel(L"r/R_\odot"; fontsize)
-    ylabel(L"\Delta\Omega/2\pi" * " [nHz]"; fontsize)
-    gca().xaxis.set_major_locator(ticker.MaxNLocator(4))
-    gca().yaxis.set_major_locator(ticker.MaxNLocator(4))
-    legend(loc="best"; fontsize)
-    gca().tick_params(axis="both", which="major", labelsize=fontsize)
-    tight_layout()
+    ax.set_xlabel(L"r/R_\odot"; fontsize)
+    ax.set_ylabel(L"\Delta\Omega/2\pi" * " [nHz]"; fontsize)
+    ax.xaxis.set_major_locator(ticker.MaxNLocator(4))
+    ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
+    ax.legend(loc="best"; fontsize)
+    ax.tick_params(axis="both", which="major", labelsize=fontsize)
+    f.tight_layout()
 end
 
 function _plot_diffrot_radial_derivatives(axlist, rpts, ΔΩ, ddrΔΩ, d2dr2ΔΩ; ncoeffs = true, labelpre = "", kw...)
@@ -1592,15 +1602,17 @@ function plot_diffrot_radial_derivatives(; operators, kw...)
     f.tight_layout()
 end
 
-function plot_diffrot_solar(; operators, ΔΩprofile_deriv, kw...)
+function plot_diffrot_solar(; operators,
+        ΔΩprofile_deriv = SolarModel.solar_differential_rotation_profile_derivatives_Fun(; operators),
+        f = figure(),
+        ax = f.add_subplot(projection="polar") , kw...)
+
     @unpack rpts = operators
     @unpack Ω0 = operators.constants
     @unpack r_in, r_out = operators.radial_params
     (; ΔΩ) = ΔΩprofile_deriv
     Ω = (1 + ΔΩ) * Ω0
 
-    f = figure()
-    ax = f.add_subplot(projection="polar")
     Nθ = 100
     θ = range(0, pi, Nθ)
     ax.set_theta_zero_location("N")
@@ -1618,6 +1630,39 @@ function plot_diffrot_solar(; operators, ΔΩprofile_deriv, kw...)
 
     if get(kw, :save, false)
         filename = "rotprof.eps"
+        savefiginfo(f, filename, dpi=get(kw, :dpi, 200))
+    end
+end
+
+function plot_diffrot_solar_and_radialsection(; operators,
+        ΔΩprofile_deriv = SolarModel.solar_differential_rotation_profile_derivatives_Fun(; operators), kw...)
+
+    f = figure()
+    ax1 = f.add_subplot(121, projection="polar")
+    ax2 = f.add_subplot(122)
+    plot_diffrot_solar(; operators, ΔΩprofile_deriv, f, ax = ax1, kw..., save=false)
+
+    @unpack rpts = operators
+    @unpack Ω0 = operators.constants
+    (; ΔΩ) = ΔΩprofile_deriv
+
+    νnHzunit = freqnHzunit(Ω0)
+
+    plot_diffrot_solar_equatorial_data(; operators, f, ax=ax2)
+
+    ax2.axhline(0, ls="dotted", color="black")
+    ax2.plot(rpts/Rsun, ΔΩ.(rpts, 0) .* νnHzunit, color="black", label="smoothed")
+    ax2.set_xlabel(L"r/R_\odot", fontsize=12)
+    ax2.set_ylabel(L"(\Omega_\mathrm{eq} - \Omega_\mathrm{ref})\;/2\pi" * "  [nHz]", fontsize=12)
+    ax2.yaxis.set_major_locator(ticker.MaxNLocator(6))
+    ax2.set_box_aspect(1)
+    ax2.legend(loc="lower right")
+
+    f.set_size_inches(7,4)
+    f.tight_layout()
+    f.subplots_adjust(wspace=0.5)
+    if get(kw, :save, false)
+        filename = "solarrotprof_radsection.eps"
         savefiginfo(f, filename, dpi=get(kw, :dpi, 200))
     end
 end

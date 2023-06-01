@@ -151,10 +151,20 @@ function parameters(nr, nℓ; r_in = 0.7Rsun, r_out = 0.98Rsun)
     return (; nchebyr, r_in, r_out, Δr, nr, nparams, nℓ, r_mid)
 end
 
-function superadiabaticity(r::Real;
-        r_out = Rsun, δcz = 3e-6, δtop = 3e-5, δrad = -1e-3,
-        dtrans = 0.05Rsun, dtop = 0.05Rsun,
-        r_sub = 0.8 * Rsun, r_tran = 0.725 * Rsun)
+const SuperAdiabaticityParamsDefault = pairs((; δcz = 3e-6, δtop = 3e-5, δrad = -1e-3,
+                                        dtrans = 0.05Rsun, dtop = 0.05Rsun,
+                                        r_sub = 0.8 * Rsun, r_tran = 0.725 * Rsun))
+
+function superadiabaticity(r::Real; r_out = Rsun, kw...)
+    kw2 = merge(SuperAdiabaticityParamsDefault, kw)
+
+    @unpack δcz = kw2
+    @unpack δtop = kw2
+    @unpack δrad = kw2
+    @unpack dtrans = kw2
+    @unpack dtop = kw2
+    @unpack r_sub = kw2
+    @unpack r_tran = kw2
 
     δconv = δtop * exp((r - r_out) / dtop) + δcz * (r - r_sub) / (r_out - r_sub)
     δconv + (δrad - δconv) * 1 / 2 * (1 - tanh((r - r_tran) / dtrans))
@@ -255,12 +265,14 @@ function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _strati
     scalings = merge(DefaultScalings, scalings)
     radial_operators(nr, nℓ, r_in_frac, r_out_frac,
         _stratified, nvariables, ν, trackingrate, Tuple(scalings),
-        superadiabaticityparams,
+        pairs(superadiabaticityparams),
         )
 end
 function radial_operators(operatorparams...)
     nr, nℓ, r_in_frac, r_out_frac, _stratified,
-        nvariables, ν, trackingrate, _scalings, superadiabaticityparams = operatorparams
+        nvariables, ν, trackingrate, _scalings = operatorparams
+
+    superadiabaticityparams = merge(SuperAdiabaticityParamsDefault, get(operatorparams, 10, pairs((;))))
 
     Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling = _scalings
 

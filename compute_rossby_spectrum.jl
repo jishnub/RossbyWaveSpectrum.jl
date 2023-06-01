@@ -9,6 +9,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
             trackingratescaling = 1.0,
             Seqglobalscaling = 1.0,
             ΔΩ_scale = 1.0,
+            ΔΩ_frac = 1.0,
             Δl_cutoff = 15,
             n_cutoff = 15,
             viscosity = 5e11,
@@ -29,10 +30,11 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
 
     hostname = Libc.gethostname()
     @show hostname
-    @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac smoothing_param ΔΩ_scale;
-    @show V_symmetric diffrot rotation_profile viscosity;
+    @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac smoothing_param ΔΩ_scale ΔΩ_frac
+    @show superadiabaticityparams
+    @show V_symmetric diffrot rotation_profile viscosity
     @show extrakw
-    @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads();
+    @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads()
 
     timer = TimerOutput()
 
@@ -44,7 +46,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
 
     spectrumfn! = @timeit timer "spectrumfn" begin
         RossbyWaveSpectrum.RotMatrix(Val(:spectrum), V_symmetric, diffrot, rotation_profile;
-            operators, smoothing_param, ΔΩ_scale)
+            operators, smoothing_param, ΔΩ_scale, ΔΩ_frac)
     end
 
     println(timer)
@@ -53,7 +55,8 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
 
     kw = Base.pairs((; Δl_cutoff, n_cutoff,
         diffrot, rotation_profile, V_symmetric,
-        smoothing_param, ΔΩ_scale, ΔΩ_smoothing_param))
+        smoothing_param, ΔΩ_scale, ΔΩ_frac, ΔΩ_smoothing_param,
+        superadiabaticityparams))
 
     @time RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange;
         operators, kw..., extrakw...)

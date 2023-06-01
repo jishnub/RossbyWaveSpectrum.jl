@@ -1311,7 +1311,7 @@ const DefaultFilterParams = Dict(
     # exclude a field from a filter if relative power is below a cutoff
     :filterfieldpowercutoff => 1e-2,
     :eigvec_spectrum_low_n_power_fraction_cutoff => 1,
-    :radial_topbotpower_cutoff => 0.9,
+    :radial_topbotpower_cutoff => 0.5,
 )
 
 function filterfn(λ, v, m, M, filterparams;
@@ -1338,6 +1338,7 @@ function filterfn(λ, v, m, M, filterparams;
     filterfieldpowercutoff = Float64(filterparams_all[:filterfieldpowercutoff])::Float64
     nnodesmax = filterparams_all[:nnodesmax]::Int
     V_symmetric = filterparams[:V_symmetric]::Bool
+    radial_topbotpower_cutoff = Float64(filterparams_all[:radial_topbotpower_cutoff])::Float64
 
     (; MVcache, BCVcache, VWSinv, VWSinvsh,
         Plcosθ, F, radproftempreal, radproftempcomplex) = filtercache;
@@ -1380,6 +1381,7 @@ function filterfn(λ, v, m, M, filterparams;
             angular_filter_highlat = Filters.SPATIAL_HIGHLAT in allfilters,
             radial_filter = Filters.SPATIAL_RADIAL in allfilters,
             compute_invtransform,
+            radial_topbotpower_cutoff,
             )
         if !f
             @debug "SPATIAL" θ_cutoff, equator_power_cutoff_frac, filterfieldpowercutoff
