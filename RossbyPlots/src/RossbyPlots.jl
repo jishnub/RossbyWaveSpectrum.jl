@@ -261,7 +261,7 @@ function nodes_cutoff_mask(vecs, mr, nodes_cutoff; operators, V_symmetric, kw...
         fieldcaches = RossbyWaveSpectrum.allocate_field_caches(nr, nℓ, length(θ))
         realcache = similar(fieldcaches.VWSinv.V, real(eltype(fieldcaches.VWSinv.V)))
         map(eachcol(vm)) do v
-            reimnodes = RossbyWaveSpectrum.count_V_radial_nodes(v, m; operators, fieldcaches, realcache, V_symmetric)
+            reimnodes = RossbyWaveSpectrum.count_radial_nodes(v, m; operators, fieldcaches, realcache, V_symmetric)
             maximum(reimnodes)
         end
     end
@@ -353,7 +353,7 @@ function spectrum(lams::AbstractArray, mr;
     if !isnothing(nodes_cutoff) || highlight_nodes
         ns = map(zip(vecs, mr)) do (vm, m)
             map(eachcol(vm)) do v
-                RossbyWaveSpectrum.count_V_radial_nodes(v, m; operators, V_symmetric)[1]
+                RossbyWaveSpectrum.count_radial_nodes(v, m; operators, V_symmetric)[1]
             end
         end
     end
@@ -1135,8 +1135,8 @@ end
 
 function eigenfunction(feig::FilteredEigen, m::Integer, ind::Integer; kw...)
     @unpack operators = feig
-    mind = findfirst(==(m), feig.mr)
-    eigenfunction(feig.vs[mind][:, ind], m; operators, λ = feig.lams[mind][ind], feig.kw..., kw...)
+    λ, v = feig[m][ind]
+    eigenfunction(v, m; operators, λ, feig.kw..., kw...)
 end
 
 function eigenfunction(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
@@ -1174,8 +1174,8 @@ end
 
 function eigenfunctions_allstreamfn(f::FilteredEigen, m::Integer, vind::Integer; kw...)
     @unpack operators = f
-    mind = findfirst(==(m), f.mr)
-    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(f.vs[mind][:, vind], m;
+    λ, v = f[m][vind]
+    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m;
             operators, f.kw..., kw...)
     if get(kw, :scale_eigenvectors, false)
         RossbyWaveSpectrum.scale_eigenvectors!(VWSinv; operators)
@@ -1222,8 +1222,7 @@ function eigenfunctions_allstreamfn(VWSinv::NamedTuple, θ, m; operators, kw...)
 end
 
 function eigenfunction_rossbyridge(f::FilteredEigen, m; kw...)
-    mind = findfirst(==(m), feig.mr)
-    eigenfunction_rossbyridge(f.lams[mind], f.vs[mind], m; operators = f.operators, f.kw..., kw...)
+    eigenfunction_rossbyridge(f[m].lams, f[m].vs, m; operators = f.operators, f.kw..., kw...)
 end
 
 function eignorm(v)
@@ -1359,13 +1358,13 @@ function eigenfunctions_polar(feig::FilteredEigen, m; mode=nothing,
     f, axlist = get(kw, :faxlist) do
         subplots(1,2, sharey=true)
     end
-    mind = RossbyWaveSpectrum.m_index(feig, m)
+    λs_m = feig[m].lams
     ind = if mode==:asym
-        argmin(abs.(feig.lams[mind] .- 2.5*RossbyWaveSpectrum.rossby_ridge(m)))
+        argmin(abs.(λs_m .- 2.5*RossbyWaveSpectrum.rossby_ridge(m)))
     elseif mode==:symsectoral
-        argmin(abs.(feig.lams[mind] .- RossbyWaveSpectrum.rossby_ridge(m)))
+        argmin(abs.(λs_m .- RossbyWaveSpectrum.rossby_ridge(m)))
     elseif mode==:symhighest
-        lastindex(feig.lams[mind])
+        lastindex(λs_m)
     else
         kw[:ind]
     end
@@ -1450,8 +1449,7 @@ end
 
 function eigenfunction_spectrum(f::FilteredEigen, m::Integer, ind::Integer; kw...)
     @unpack operators = f
-    mind = RossbyWaveSpectrum.m_index(f, m)
-    eigenfunction_spectrum(f.vs[mind][:, ind], m; operators, f.kw..., kw...)
+    eigenfunction_spectrum(f[m][ind].v, m; operators, f.kw..., kw...)
 end
 
 function plot_matrix(M, nvariables = 3)

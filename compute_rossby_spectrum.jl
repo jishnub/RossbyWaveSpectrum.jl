@@ -9,7 +9,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
             trackingratescaling = 1.0,
             Seqglobalscaling = 1.0,
             ΔΩ_scale = 1.0,
-            ΔΩ_frac = 1.0,
+            ΔΩ_frac = 0.0,
             Δl_cutoff = 15,
             n_cutoff = 15,
             viscosity = 5e11,

@@ -215,14 +215,14 @@ end
     @unpack BCmatrices = constraints;
     @unpack radialspace = operators.radialspaces;
     MVn, MWn, MSn = BCmatrices;
-    @testset for m in (1, 5, 10), V_symmetric in [true, false]
+    @testset for m in (2, 5, 10), V_symmetric in [true, false]
         λu, vu, Mu = RossbyWaveSpectrum.uniform_rotation_spectrum(m;
             operators, constraints, V_symmetric);
         λuf, vuf = RossbyWaveSpectrum.filter_eigenvalues(λu, vu, Mu, m;
             operators, constraints, V_symmetric, Δl_cutoff = 7, n_cutoff = 9,
             eig_imag_damped_cutoff = 1e-3, eig_imag_unstable_cutoff = -1e-3,
             scale_eigenvectors = false);
-        @info "uniform rot: $(length(λuf)) eigenmode$(length(λuf) > 1 ? "s" : "") found for m = $m"
+        @info "uniform rot $V_symmetric: $(length(λuf)) eigenmode$(length(λuf) > 1 ? "s" : "") found for m = $m"
         if V_symmetric
             @testset "ℓ == m" begin
                 res, ind = findmin(abs.(real(λuf) .- 2/(m+1)))
@@ -601,7 +601,7 @@ end
     @unpack radialspace = operators.radialspaces
     MVn, MWn, MSn = BCmatrices;
     ΔΩ_frac = 0.02
-    @testset for m in (1, 5, 10), V_symmetric in [true, false]
+    @testset for m in (2, 5, 10), V_symmetric in [true, false]
         @testset "constant" begin
             λr, vr, Mr = RossbyWaveSpectrum.differential_rotation_spectrum(m; operators, constraints,
                 rotation_profile = :constant, ΔΩ_frac, V_symmetric);
@@ -609,7 +609,7 @@ end
                 operators, constraints, V_symmetric, Δl_cutoff = 7, n_cutoff = 9,
                 eig_imag_unstable_cutoff = -1e-3,
                 scale_eigenvectors = false);
-            @info "constant diff rot: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
+            @info "constant diff rot $V_symmetric: $(length(λrf)) eigenmode$(length(λrf) > 1 ? "s" : "") found for m = $m"
             vfn = zeros(eltype(vrf), size(vrf, 1))
             @testset "boundary condition" begin
                 Vop = RossbyWaveSpectrum.SolarModel.V_boundary_op(operators);

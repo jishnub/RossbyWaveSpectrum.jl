@@ -305,14 +305,16 @@ function radial_operators(operatorparams...)
     radialspace_D2 = rangespace(d2dr2 : radialspace)
     radialspace_D4 = rangespace(d4dr4 : radialspace)
 
+    n_uppercutoff = 200
+
     # density stratification
-    ρ = replaceemptywitheps(ApproxFun.chop(Fun(sρ, radialspace), 1e-3));
+    ρ = replaceemptywitheps(ApproxFun.chop(Fun(sρ, radialspace, n_uppercutoff), 1e-3));
     @checkncoeff ρ nr
 
-    ηρ = replaceemptywitheps(ApproxFun.chop(Fun(sηρ, radialspace), 1e-3));
+    ηρ = replaceemptywitheps(ApproxFun.chop(Fun(sηρ, radialspace, n_uppercutoff), 1e-3));
     @checkncoeff ηρ nr
 
-    ηT = replaceemptywitheps(ApproxFun.chop(Fun(sηT, radialspace), 1e-3));
+    ηT = replaceemptywitheps(ApproxFun.chop(Fun(sηT, radialspace, n_uppercutoff), 1e-3));
     @checkncoeff ηT nr
 
     ηρT = ηρ + ηT
@@ -338,24 +340,24 @@ function radial_operators(operatorparams...)
     ηρ_by_r3 = ηρ_by_r2 * onebyr
     @checkncoeff ηρ_by_r3 nr
 
-    ddr_ηρ = chop(Fun(ddrsηρ, radialspace), 1e-3);
+    ddr_ηρ = chop!(Fun(ddrsηρ, radialspace, n_uppercutoff), 1e-3);
     @checkncoeff ddr_ηρ nr
 
-    ddr_ηρbyr = chop(Fun(ddrsηρ_by_r, radialspace), 1e-3);
+    ddr_ηρbyr = chop!(Fun(ddrsηρ_by_r, radialspace, n_uppercutoff), 1e-3);
     @checkncoeff ddr_ηρbyr nr
 
     # ddr_ηρbyr = ddr * ηρ_by_r
-    d2dr2_ηρ = chop!(Fun(d2dr2sηρ, radialspace), 1e-3);
+    d2dr2_ηρ = chop!(Fun(d2dr2sηρ, radialspace, n_uppercutoff), 1e-3);
     @checkncoeff d2dr2_ηρ nr
 
-    d3dr3_ηρ = chop(Fun(d3dr3sηρ, radialspace), 1e-3);
+    d3dr3_ηρ = chop!(Fun(d3dr3sηρ, radialspace, n_uppercutoff), 1e-3);
     @checkncoeff d3dr3_ηρ nr
 
-    ddr_ηρbyr2 = chop(Fun(ddrsηρ_by_r2, radialspace), 1e-3);
+    ddr_ηρbyr2 = chop!(Fun(ddrsηρ_by_r2, radialspace, n_uppercutoff), 1e-3);
     @checkncoeff ddr_ηρbyr2 nr
 
     # ddr_ηρbyr2 = ddr * ηρ_by_r2
-    ηρ2_by_r2 = ApproxFun.chop(ηρ_by_r2 * ηρ, 1e-3);
+    ηρ2_by_r2 = ApproxFun.chop!(ηρ_by_r2 * ηρ, 1e-3);
     @checkncoeff ηρ2_by_r2 nr
 
     ddrηρ_by_r = ddr_ηρ * onebyr
