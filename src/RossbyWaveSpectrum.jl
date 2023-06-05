@@ -1065,16 +1065,16 @@ function spatial_filter!(filtercache, v, m;
     V_symmetric,
     θ_cutoff = DefaultFilterParams[:θ_cutoff],
     equator_power_cutoff_frac = DefaultFilterParams[:equator_power_cutoff_frac],
-    pole_cutoff_angle = deg2rad(25),
-    pole_power_cutoff_frac = 0.05,
+    pole_cutoff_angle = DefaultFilterParams[:pole_cutoff_angle],
+    pole_power_cutoff_frac = DefaultFilterParams[:pole_power_cutoff_frac],
     filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff],
+    radial_topbotpower_cutoff = DefaultFilterParams[:radial_topbotpower_cutoff],
     nℓ = operators.radial_params.nℓ,
     Plcosθ = allocate_Pl(m, nℓ),
     angular_filter_equator = true,
     angular_filter_highlat = false,
     radial_filter = true,
     compute_invtransform = true,
-    radial_topbotpower_cutoff = DefaultFilterParams[:radial_topbotpower_cutoff],
     kw...
     )
 
