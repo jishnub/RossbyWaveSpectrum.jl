@@ -11,6 +11,7 @@ import BandedMatrices: BandedMatrix
 using ApproxFunOrthogonalPolynomials
 using ApproxFunSingularities
 using BlockBandedMatrices
+using HalfIntegers
 
 export NormalizedPlm
 export sinθdθ_Operator
@@ -35,7 +36,7 @@ azimuthalorder(p::NormalizedPlm) = p.m
 
 
 ApproxFunBase.domain(::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
-NormalizedPlm(m::Int) = NormalizedPlm(m, JacobiWeight(m/2, m/2, NormalizedJacobi(m,m)))
+NormalizedPlm(m::Int) = NormalizedPlm(m, JacobiWeight(half(m), half(m), NormalizedJacobi(m,m)))
 NormalizedPlm(; m::Int) = NormalizedPlm(m)
 Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(m=", azimuthalorder(sp), ")")
 
