@@ -158,7 +158,7 @@ function sph_points(N)
     return π / N * (0.5:(N-0.5)), 2π / M * (0:(M-1))
 end
 
-reversedview(v) = view(v, reverse(eachindex(v)))
+reversedview(v::AbstractVector) = view(v, reverse(eachindex(v)))
 
 # Legedre expansion constants
 α⁻ℓm(ℓ, m) = (ℓ < abs(m) ? 0.0 : oftype(0.0, √((ℓ - m) * (ℓ + m) / ((2ℓ - 1) * (2ℓ + 1)))))
@@ -894,6 +894,11 @@ function constrained_eigensystem((A, B);
     end
     @timeit timer "eigen!" λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(A_constrained, B_constrained)
     @timeit timer "projectback" v = realmatcomplexmatmul(constraints.ZC, w, temp_projectback)
+    # normalize the eigenvectors
+    for c in eachcol(v)
+        c ./= c[1] # remove extra phase
+        normalize!(c)
+    end
     λ, v, (A, B)
 end
 
@@ -1024,16 +1029,22 @@ function eigvec_spectrum_filter!(F, v, m;
         PV_frac_imag = sum(abs2∘imag, X[1:n_cutoff, 1:Δl_inds]) / sum(abs2∘imag, X)
         flag &= (PV_frac_real > eigvec_spectrum_power_cutoff) & (PV_frac_imag > eigvec_spectrum_power_cutoff)
 
+        @debug "$f PV_frac flag $flag"
+
         flag || break
 
         real_lown_pow_ratio = sum(abs2∘real, X[(n_cutoff÷2+1):n_cutoff, 1:Δl_inds])/sum(abs2∘real, X[1:n_cutoff÷2, 1:Δl_inds])
         real_lown_flag = real_lown_pow_ratio <= low_n_power_lowercutoff
+
+        @debug "$f real_lown_flag $real_lown_flag"
 
         flag &= real_lown_flag
         flag || break
 
         imag_lown_pow_ratio = sum(abs2∘imag, X[(n_cutoff÷2+1):n_cutoff, 1:Δl_inds])/sum(abs2∘imag, X[1:n_cutoff÷2, 1:Δl_inds])
         imag_lown_flag = imag_lown_pow_ratio <= low_n_power_lowercutoff
+
+        @debug "$f imag_lown_flag $imag_lown_flag"
 
         flag &= imag_lown_flag
         flag || break
@@ -1081,10 +1092,10 @@ function spatial_filter!(filtercache, v, m;
     (; θ) = spharm_θ_grid_uniform(m, nℓ)
     eqind = indexof_equator(θ)
 
-    (; VWSinv, VWSinvsh, F, radproftempreal) = filtercache
+    (; VWSinv, radproftempreal) = filtercache
 
     if compute_invtransform
-        eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m;
+        eigenfunction_realspace!(filtercache, v, m;
             operators, nℓ, Plcosθ, V_symmetric)
     end
 
@@ -1099,15 +1110,16 @@ function spatial_filter!(filtercache, v, m;
 
     for _X in fields
         f, X = first(_X), last(_X)
+        tot_power = sum(abs2, X)
         if angular_filter_equator
             θlowind = searchsortedfirst(θ, θ_cutoff)
             θhighind = searchsortedlast(θ, pi - θ_cutoff)
-            powfrac = sum(abs2, @view X[:, θlowind:θhighind]) / sum(abs2, X)
+            powfrac = sum(abs2, @view X[:, θlowind:θhighind]) / tot_power
             powflag = powfrac > equator_power_cutoff_frac
 
             # ensure that there isn't much power at the poles
             θpolecutoff = searchsortedfirst(θ, pole_cutoff_angle)
-            powfrac = sum(abs2, @view X[:, 1:θpolecutoff]) / sum(abs2, X)
+            powfrac = sum(abs2, @view X[:, 1:θpolecutoff]) / tot_power
             powflag = powfrac < pole_power_cutoff_frac
 
             r_ind_peak = peakindabs1(X)
@@ -1119,7 +1131,7 @@ function spatial_filter!(filtercache, v, m;
         elseif angular_filter_highlat
             θlowind = searchsortedfirst(θ, θ_cutoff)
             θhighind = searchsortedlast(θ, pi - θ_cutoff)
-            powfrac = 1 - sum(abs2, @view X[:, θlowind:θhighind]) / sum(abs2, X)
+            powfrac = 1 - sum(abs2, @view X[:, θlowind:θhighind]) / tot_power
             eqfilter = powfrac > equator_power_cutoff_frac
         end
         eqfilter || break
@@ -1137,22 +1149,23 @@ function spatial_filter!(filtercache, v, m;
             s = Dierckx.Spline1D(rptsrev, reversedview(radproftempreal))
 
             # ensure that most of the power isn't concentrated in the top and bottom surface layers
-            r_top_5pc_cutoff = r_out - (r_out - r_in)*5/100
             r_top_10pc_cutoff = r_out - (r_out - r_in)*10/100
 
-            r_bot_5pc_cutoff = r_in + (r_out - r_in)*5/100
             r_bot_10pc_cutoff = r_in + (r_out - r_in)*10/100
 
+            tot_power = Dierckx.integrate(s, rptsrev[1], rptsrev[end])
+
             # check that the power is smoothly varying, and not sharply concentrated at the top
-            tot_power = Dierckx.integrate(s, r_in, r_out)
-            top_5pc_power = Dierckx.integrate(s, r_top_5pc_cutoff, r_out)
-            top_5pc_power_fraction = top_5pc_power/tot_power
-            top_5pc10pc_power = Dierckx.integrate(s, r_top_10pc_cutoff, r_top_5pc_cutoff)
-            top_power_flag = top_5pc10pc_power > top_5pc_power/4
-            bot_5pc_power = Dierckx.integrate(s, r_in, r_bot_5pc_cutoff)
-            bot_5pc_power_fraction = bot_5pc_power/tot_power
-            pow_frac_flag = (top_5pc_power_fraction + bot_5pc_power_fraction) < radial_topbotpower_cutoff
-            radfilter = pow_frac_flag || top_power_flag
+            top_10pc_power = Dierckx.integrate(s, r_top_10pc_cutoff, rptsrev[end])
+            top_10pc_power_fraction = top_10pc_power/tot_power
+            @debug "$f tot_power $tot_power top_10pc_power_fraction $top_10pc_power_fraction"
+
+            bot_10pc_power = Dierckx.integrate(s, rptsrev[1], r_bot_10pc_cutoff)
+            bot_10pc_power_fraction = bot_10pc_power/tot_power
+            @debug "$f bot_10pc_power $bot_10pc_power bot_10pc_power_fraction $bot_10pc_power_fraction"
+
+            pow_frac_flag = (top_10pc_power_fraction + bot_10pc_power_fraction) < radial_topbotpower_cutoff
+            radfilter = pow_frac_flag
         end
         radfilter || break
     end
@@ -1250,8 +1263,8 @@ function count_radial_nodes(v::AbstractVector{<:Complex}, m; operators,
         kw...)
 
     @unpack rptsrev = operators
-    @unpack VWSinv, VWSinvsh, F, radproftempreal = fieldcaches
-    eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, kw...)
+    @unpack VWSinv, radproftempreal = fieldcaches
+    eigenfunction_realspace!(fieldcaches, v, m; operators, kw...)
     X = getproperty(VWSinv, field)
     realcache .= real.(X)
     eqind = angularindex_fn(realcache, θ)
@@ -1443,9 +1456,13 @@ function allocate_field_caches(nr, nℓ, nθ)
     VWSinv = (; V = zeros(ComplexF64, nr, nθ), W = zeros(ComplexF64, nr, nθ), S = zeros(ComplexF64, nr, nθ))
     VWSinvsh = (; V = zeros(ComplexF64, nr, nℓ), W = zeros(ComplexF64, nr, nℓ), S = zeros(ComplexF64, nr, nℓ))
     F = allocate_field_vectors(nr, nℓ)
+    fieldtempreal = similar(VWSinv.V, real(eltype(VWSinv.V)))
     radproftempreal = zeros(real(eltype(VWSinv.V)), size(VWSinv.V,1))
     radproftempcomplex = zeros(eltype(VWSinv.V), size(VWSinv.V,1))
-    (; VWSinv, VWSinvsh, F, radproftempreal, radproftempcomplex)
+    angularproftempreal = zeros(real(eltype(VWSinv.V)), size(VWSinv.V,2))
+    angularproftempcomplex = zeros(eltype(VWSinv.V), size(VWSinv.V,2))
+    (; VWSinv, VWSinvsh, F, radproftempreal, radproftempcomplex,
+        angularproftempreal, angularproftempcomplex, fieldtempreal)
 end
 
 function allocate_field_caches(Feig::FilteredEigen, m)
@@ -1801,7 +1818,7 @@ function invtransform1!(radialspace::Space, out::AbstractMatrix, coeffs::Abstrac
     return out
 end
 
-function eigenfunction_rad_sh!(VWSinvsh, F, v; operators, n_cutoff = -1, kw...)
+function eigenfunction_rad_sh!(VWSinvsh, F, v; operators, n_lowpass_cutoff::Union{Int,Nothing} = nothing, kw...)
     VWS = eigenfunction_spectrum_2D!(F, v; operators, kw...)
     @unpack V, W, S = VWS
     @unpack radialspace = operators.radialspaces;
@@ -1812,16 +1829,16 @@ function eigenfunction_rad_sh!(VWSinvsh, F, v; operators, n_cutoff = -1, kw...)
 
     itransplan! = ApproxFunBase.plan_itransform!(radialspace, @view(Vinv[:, 1]))
 
-    if n_cutoff >= 0
+    if !isnothing(n_lowpass_cutoff)
         field_lowpass = similar(V)
         field_lowpass .= V
-        field_lowpass[n_cutoff+1:end, :] .= 0
+        field_lowpass[n_lowpass_cutoff+1:end, :] .= 0
         invtransform1!(radialspace, Vinv, field_lowpass, itransplan!)
         field_lowpass .= W
-        field_lowpass[n_cutoff+1:end, :] .= 0
+        field_lowpass[n_lowpass_cutoff+1:end, :] .= 0
         invtransform1!(radialspace, Winv, field_lowpass, itransplan!)
         field_lowpass .= S
-        field_lowpass[n_cutoff+1:end, :] .= 0
+        field_lowpass[n_lowpass_cutoff+1:end, :] .= 0
         invtransform1!(radialspace, Sinv, field_lowpass, itransplan!)
     else
         invtransform1!(radialspace, Vinv, V, itransplan!)
@@ -1844,7 +1861,7 @@ function invshtransform2!(VWSinv, VWS, m;
     V_symmetric,
     nℓ = size(VWS.V, 2),
     Plcosθ = allocate_Pl(m, nℓ),
-    Δl_cutoff = lastindex(Plcosθ),
+    Δl_lowpass_cutoff = lastindex(Plcosθ),
     kw...)
 
     V_lm = VWS.V
@@ -1869,13 +1886,13 @@ function invshtransform2!(VWSinv, VWS, m;
         collectPlm!(Plcosθ, cos(θi); m, norm = Val(:normalized))
         # V
         for (ℓind, ℓ) in enumerate(V_ℓs)
-            ℓ > m + Δl_cutoff && continue
+            ℓ > m + Δl_lowpass_cutoff && continue
             Plmcosθ = Plcosθ[ℓ]
             @. V[:, θind] += V_lm[:, ℓind] * Plmcosθ
         end
         # W, S
         for (ℓind, ℓ) in enumerate(W_ℓs)
-            ℓ > m + Δl_cutoff && continue
+            ℓ > m + Δl_lowpass_cutoff && continue
             Plmcosθ = Plcosθ[ℓ]
             @. W[:, θind] += W_lm[:, ℓind] * Plmcosθ
             @. S[:, θind] += S_lm[:, ℓind] * Plmcosθ
@@ -1885,12 +1902,13 @@ function invshtransform2!(VWSinv, VWS, m;
     (; VWSinv, θ)
 end
 
-function eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m;
+function eigenfunction_realspace!(fieldcaches, v, m;
     operators,
     nℓ = operators.radial_params.nℓ,
     Plcosθ = allocate_Pl(m, nℓ),
     kw...)
 
+    @unpack VWSinv, VWSinvsh, F = fieldcaches
     eigenfunction_rad_sh!(VWSinvsh, F, v; operators, kw...)
     invshtransform2!(VWSinv, VWSinvsh, m; nℓ, Plcosθ, kw...)
 end
@@ -1900,15 +1918,14 @@ function eigenfunction_realspace(v, m; operators, kw...)
     (; θ) = spharm_θ_grid_uniform(m, nℓ)
     nθ = length(θ)
 
-    @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nℓ, nθ)
-
-    eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, kw...)
-
+    fieldcaches = allocate_field_caches(nr, nℓ, nθ)
+    eigenfunction_realspace!(fieldcaches, v, m; operators, kw...)
+    @unpack VWSinv = fieldcaches
     return (; VWSinv, θ)
 end
 
-function eigenfunction_realspace(Feig::FilteredEigen, m, ind)
-    eigenfunction_realspace(Feig[m][ind].v, m; Feig.operators, Feig.kw...)
+function eigenfunction_realspace(Feig::FilteredEigen, m, ind; kw...)
+    eigenfunction_realspace(Feig[m][ind].v, m; Feig.operators, Feig.kw..., kw...)
 end
 
 function eigenfunction_n_theta!(VWSinv, F, v, m;
