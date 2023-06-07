@@ -3,9 +3,10 @@ module ApproxFunAssociatedLegendre
 using DomainSets
 using ApproxFunBase
 using ApproxFunBase: SubOperator, UnsetSpace, ConcreteMultiplication, MultiplicationWrapper,
-	ConstantTimesOperator, ConversionWrapper
+	ConstantTimesOperator, ConversionWrapper, SpaceOperator
 import ApproxFunBase: domainspace, rangespace, Multiplication, setspace, Conversion,
-	spacescompatible, maxspace_rule
+	spacescompatible, maxspace_rule, Fun, coefficients, DefiniteIntegral, DefiniteIntegralWrapper,
+	canonicalspace, Derivative, DerivativeWrapper
 using BandedMatrices
 import BandedMatrices: BandedMatrix
 using ApproxFunOrthogonalPolynomials
@@ -28,7 +29,7 @@ const JacobiMaybeNormalized = Union{Jacobi{<:ChebyshevInterval},
 const WeightedJacobiMaybeNormalized = Union{WeightedNormalizedJacobi,
 	JacobiWeight{<:Jacobi{<:ChebyshevInterval}}}
 
-struct NormalizedPlm{T, NJS <: Space{ChebyshevInterval{T},T}} <: Space{ChebyshevInterval{T},T}
+struct NormalizedPlm{T<:Real, NJS<:Space{ChebyshevInterval{T},T}} <: Space{ChebyshevInterval{T},T}
 	m :: Int
 	jacobispace :: NJS
 end
@@ -43,20 +44,24 @@ Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(m=", azimuthalor
 spacescompatible(b::typeof(NormalizedLegendre()), a::NormalizedPlm) =
 	spacescompatible(a, b)
 function spacescompatible(a::NormalizedPlm, b::typeof(NormalizedLegendre()))
-	iseven(azimuthalorder(a)) && spacescompatible(a.jacobispace, b)
+	iseven(azimuthalorder(a)) && spacescompatible(canonicalspace(a), b)
 end
 
-Conversion(J::JacobiMaybeNormalized, sp::NormalizedPlm) = Conversion(JacobiWeight(0,0,J), sp)
-function Conversion(J::WeightedJacobiMaybeNormalized, sp::NormalizedPlm)
-	C = Conversion(J, sp.jacobispace)
-	S = ApproxFunBase.SpaceOperator(C, J, sp)
-	ApproxFunBase.ConversionWrapper(S)
+function Conversion(J::JacobiMaybeNormalized, sp::NormalizedPlm)
+	C = Conversion(JacobiWeight(0,0,J), sp)
+	ConversionWrapper(SpaceOperator(C, J, sp))
 end
-Conversion(sp::NormalizedPlm, J::JacobiMaybeNormalized) = Conversion(sp, JacobiWeight(0,0,J))
+function Conversion(J::WeightedJacobiMaybeNormalized, sp::NormalizedPlm)
+	C = Conversion(J, canonicalspace(sp))
+	ConversionWrapper(SpaceOperator(C, J, sp))
+end
+function Conversion(sp::NormalizedPlm, J::JacobiMaybeNormalized)
+	C = Conversion(sp, JacobiWeight(0,0,J))
+	ConversionWrapper(SpaceOperator(C, sp, J))
+end
 function Conversion(sp::NormalizedPlm, J::WeightedJacobiMaybeNormalized)
-	C = Conversion(sp.jacobispace, J)
-	S = ApproxFunBase.SpaceOperator(C, sp, J)
-	ApproxFunBase.ConversionWrapper(S)
+	C = Conversion(canonicalspace(sp), J)
+	ConversionWrapper(SpaceOperator(C, sp, J))
 end
 
 # Assume that only one m is being used
@@ -65,13 +70,13 @@ function Base.union(A::NormalizedPlm, B::NormalizedPlm)
 	A
 end
 
-ApproxFunBase.canonicalspace(A::NormalizedPlm) = A.jacobispace
+canonicalspace(A::NormalizedPlm) = A.jacobispace
 
 function maxspace_rule(A::Union{JacobiMaybeNormalized, WeightedNormalizedJacobi}, B::NormalizedPlm)
-	maxspace(A, B.jacobispace)
+	maxspace(A, canonicalspace(B))
 end
 function maxspace_rule(A::NormalizedPlm, B::Union{JacobiMaybeNormalized,WeightedNormalizedJacobi})
-	maxspace(A.jacobispace, B)
+	maxspace(canonicalspace(A), B)
 end
 function maxspace_rule(A::NormalizedPlm, B::NormalizedPlm)
 	@assert azimuthalorder(A) == azimuthalorder(B)
@@ -84,7 +89,7 @@ function Base.:(==)(A::NormalizedPlm, B::NormalizedPlm)
 end
 
 function assertLegendre(sp::JacobiMaybeNormalized)
-	csp = ApproxFunBase.canonicalspace(sp)
+	csp = canonicalspace(sp)
 	@assert csp == Legendre() "multiplication is only defined in Legendre space"
 end
 function assertLegendre(sp::NormalizedPlm)
@@ -103,33 +108,52 @@ plnorm(ℓ) = sqrt(plnorm2(ℓ))
 # Associated Legendre polynomial norm
 plmnorm(l, m) = exp(LegendrePolynomials.logplm_norm(l, m))
 
-function ApproxFunBase.spacescompatible(a::NormalizedPlm, b::NormalizedPlm)
+function spacescompatible(a::NormalizedPlm, b::NormalizedPlm)
 	azimuthalorder(a) == 0 || azimuthalorder(b) == 0 ||
 		azimuthalorder(a) == azimuthalorder(b) || return false
-	ApproxFunBase.spacescompatible(a.jacobispace, b.jacobispace)
+	spacescompatible(canonicalspace(a), canonicalspace(b))
 end
 
 function ApproxFunBase.evaluate(v::Vector, s::NormalizedPlm, x)
-	evaluate(v, s.jacobispace, x)
+	evaluate(v, canonicalspace(s), x)
 end
 
 for f in [:plan_transform, :plan_transform!, :plan_itransform, :plan_itransform!]
 	@eval function ApproxFunBase.$f(sp::NormalizedPlm, v::Vector)
-		ApproxFunBase.$f(sp.jacobispace, v)
+		ApproxFunBase.$f(canonicalspace(sp), v)
 	end
 end
 
 function _Fun(f, sp::NormalizedPlm)
-	F = Fun(f, sp.jacobispace)
+	F = Fun(f, canonicalspace(sp))::Fun{<:WeightedNormalizedJacobi}
 	c = coefficients(F)
 	Fun(sp, c)
 end
-ApproxFunBase.Fun(f, sp::NormalizedPlm) = _Fun(f, sp)
-ApproxFunBase.Fun(f::Fun, sp::NormalizedPlm) = _Fun(f, sp)
-ApproxFunBase.Fun(f::typeof(identity), sp::NormalizedPlm) = _Fun(f, sp)
+Fun(f::typeof(identity), sp::NormalizedPlm) = _Fun(f, sp)
 
-function ApproxFunBase.Derivative(sp::NormalizedPlm, k::Int)
-	ApproxFunBase.DerivativeWrapper(Derivative(sp.jacobispace, k), k)
+function coefficients(f::AbstractVector,
+		sp::JacobiWeight{<:Any,ChebyshevInterval{T}},
+		snp::NormalizedPlm{T,<:Space{ChebyshevInterval{T}}}) where {T<:Real}
+
+	coefficients(f, sp, canonicalspace(snp))
+end
+
+function coefficients(f::AbstractVector,
+		snp::NormalizedPlm{T,<:Space{ChebyshevInterval{T}}},
+		sp::JacobiWeight{<:Any,ChebyshevInterval{T}}) where {T<:Real}
+
+	coefficients(f, canonicalspace(snp), sp)
+end
+
+function coefficients(f::AbstractVector,
+		snp1::NormalizedPlm{T,<:Space{ChebyshevInterval{T}}},
+		snp2::NormalizedPlm{T,<:Space{ChebyshevInterval{T}}}) where {T<:Real}
+
+	coefficients(f, snp1.jacobispace, snp2.jacobispace)
+end
+
+function Derivative(sp::NormalizedPlm, k::Int)
+	DerivativeWrapper(Derivative(canonicalspace(sp), k), k)
 end
 
 abstract type PlmSpaceOperator{T, DS<:NormalizedPlm} <: Operator{T} end
@@ -195,15 +219,15 @@ function Base.getindex(P::sinθdθ_plus_2cosθ_Operator{T}, i::Int, j::Int) wher
 	S + 2C
 end
 
-function ApproxFunBase.Multiplication(f::Fun, sp::NormalizedPlm)
+function Multiplication(f::Fun, sp::NormalizedPlm)
 	Multiplication(Fun(f, NormalizedLegendre()), sp)
 end
-function ApproxFunBase.Multiplication(f::Fun{<:JacobiMaybeNormalized}, sp::NormalizedPlm)
+function Multiplication(f::Fun{<:JacobiMaybeNormalized}, sp::NormalizedPlm)
 	assertLegendre(space(f))
 	g = Fun(f, NormalizedPlm(0))
 	Multiplication(g, sp)
 end
-function ApproxFunBase.Multiplication(f::Fun{<:NormalizedPlm}, sp::NormalizedPlm)
+function Multiplication(f::Fun{<:NormalizedPlm}, sp::NormalizedPlm)
 	assertLegendre(space(f))
 	ConcreteMultiplication(f, sp)
 end
@@ -212,15 +236,15 @@ function BandedMatrices.bandwidths(M::ConcreteMultiplication{<:NormalizedPlm, <:
 	nc = max(ncoefficients(f), 1) # treat empty vectors as 0
 	(nc-1, nc-1)
 end
-function ApproxFunBase.rangespace(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm})
-	ApproxFunBase.domainspace(M)
+function rangespace(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm})
+	domainspace(M)
 end
 function _getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i, j)
 	sp = domainspace(M)
 	f = M.f
 	g = Fun(space(f).jacobispace, coefficients(f))
 	sp = domainspace(M)
-	spj = sp.jacobispace
+	spj = canonicalspace(sp)
 	x = Multiplication(g, spj)[i, j]
 end
 Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i::Int, j::Int) =
@@ -259,10 +283,18 @@ function Base.getindex(P::HorizontalLaplacian{T,<:NormalizedPlm}, i::Int, j::Int
 	end
 end
 
-function ApproxFunBase.Multiplication(f::Fun{<:NormalizedPlm}, sp::NormalizedPolynomialSpace{<:Jacobi})
+function Multiplication(f::Fun{<:NormalizedPlm}, sp::NormalizedPolynomialSpace{<:Jacobi})
 	assertLegendre(space(f))
 	Multiplication(Fun(f, NormalizedLegendre()), sp)
 end
+
+# Definite integrals
+function DefiniteIntegral(S::NormalizedPlm)
+	D = DefiniteIntegral(canonicalspace(S))
+	DefiniteIntegralWrapper(D, S)
+end
+
+Base.sum(f::Fun{<:NormalizedPlm}) = sum(Fun(space(f).jacobispace, coefficients(f)))
 
 ###################################################################################
 

@@ -14,6 +14,14 @@ end
 γ⁺ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ+1, m)
 γ⁻ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ, m) - β⁻ℓm(ℓ, m)
 
+@testset "comparison" begin
+    sp = NormalizedPlm(2)
+    @test sp == sp
+    @test maxspace(sp, sp) == sp
+    @test union(sp, sp) == sp
+    @test conversion_type(sp, sp) == sp
+end
+
 @testset "multiplication" begin
     function costheta_operator(nℓ, m)
         dl = [α⁻ℓm(ℓ, m) for ℓ in m .+ (1:nℓ-1)]
@@ -73,4 +81,32 @@ end
     f = Conversion(jsp, nsp) * Fun(x->√(1-x^2), jsp)
     g = Fun(x->√(1-x^2), nsp)
     @test f ≈ g
+    f = Conversion(nsp, jsp) * Fun(x->√(1-x^2), nsp)
+    g = Fun(x->√(1-x^2), jsp)
+end
+
+@testset "Fun" begin
+    sp = NormalizedPlm(3)
+    f = @inferred Fun(x->√(1-x^2)^3 * x^2, sp.jacobispace)
+    g = @inferred Fun(f, sp)
+    @test f ≈ g
+
+    @test Fun(g, NormalizedPlm(1)) ≈ Fun(x->√(1-x^2) * (1-x^2) * x^2, NormalizedPlm(1))
+
+    sp = NormalizedPlm(3)
+    f = @inferred Fun(x->√(1-x^2)^3 * x^2, sp)
+    g = @inferred Fun(f, sp.jacobispace)
+    @test f ≈ g
+
+    sp = NormalizedPlm(0)
+    f = Fun(sp.jacobispace)
+    g = @inferred Fun(sp)
+    @test f ≈ g
+end
+
+@testset "Definite Integral" begin
+    sp = NormalizedPlm(3)
+    f = Fun(x->√(1-x^2)^3 * x^2, sp)
+    @test sum(f) ≈ pi/16
+    @test DefiniteIntegral() * f ≈ pi/16
 end

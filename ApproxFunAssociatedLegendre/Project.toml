@@ -15,7 +15,7 @@ HalfIntegers = "f0d1745a-41c9-11e9-1dd9-e5d34d218721"
 [compat]
 ApproxFunBase = "0.7, 0.8"
 ApproxFunOrthogonalPolynomials = "0.5, 0.6"
-ApproxFunSingularities = "0.3"
+ApproxFunSingularities = "0.3.11"
 Aqua = "0.5"
 BandedMatrices = "0.17"
 BlockBandedMatrices = "0.11, 0.12"
