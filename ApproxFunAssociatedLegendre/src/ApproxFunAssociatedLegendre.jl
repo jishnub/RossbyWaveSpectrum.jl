@@ -147,6 +147,10 @@ canonicalfun(f::Fun{<:NormalizedPlm}) = Fun(canonicalspace(f), coefficients(f))
 maybecanonicalfun(f::Fun{<:NormalizedPlm}) = canonicalfun(f)
 maybecanonicalfun(f::Fun) = f
 
+# abs2 necessarily produces a polynomial, so we may decompose this in a Chebyshev space
+Base.abs2(f::Fun{<:NormalizedPlm,<:Real}) = Fun(abs2(canonicalfun(f)), Chebyshev(domain(f)))
+Base.abs2(f::Fun{<:NormalizedPlm,<:Complex}) = abs2(real(f)) + abs2(imag(f))
+
 function coefficients(f::AbstractVector,
 		sp::JacobiWeight{<:Any,ChebyshevInterval{T}}, snp::NormalizedPlm{T}) where {T<:Real}
 

@@ -75,9 +75,14 @@ end
     g = Multiplication(Fun(x->(1-x^2) * x^2, NormalizedPlm(2))) * x
     @test g(0.4) ≈ (x -> (1-x^2) * x^3)(0.4)
 
-    f = Fun(x->(1-x^2)^2 * x^2, NormalizedPlm(4))
-    g = abs2(f)
-    @test g(0.4) ≈ (x->(1-x^2)^4 * x^4)(0.4)
+    @testset "abs2" begin
+        f = Fun(x->(1-x^2)^2 * x^2, NormalizedPlm(4))
+        g = abs2(f)
+        @test g(0.4) ≈ (x->(1-x^2)^4 * x^4)(0.4)
+
+        f = Fun(x->(1-x^2)^2 * x^2 * (2 + 3im), NormalizedPlm(4))
+        @test abs2(f)(0.4) ≈ (x->abs2((1-x^2)^2 * x^2 * (2 + 3im)))(0.4)
+    end
 end
 
 @testset "sintheta_dtheta_operator" begin
