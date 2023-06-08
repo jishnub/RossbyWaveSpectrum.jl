@@ -19,6 +19,7 @@ using SolarModel
 using SparseArrays
 using StructArrays
 using TimerOutputs
+using Trapz
 @reexport using UnPack
 using ZChop
 
@@ -53,7 +54,7 @@ end
 
 Base.show(io::IO, f::FilteredEigen) = print(io, "Filtered eigen with m range = $(f.mr)")
 
-m_index(Fssym, m) = findfirst(==(m), Fssym.mr)
+m_index(Feig, m) = findfirst(==(m), Feig.mr)
 
 struct FilteredEigenOneOrder
     lams::Vector{ComplexF64}
@@ -1097,7 +1098,7 @@ function spatial_filter!(filtercache, v, m;
     (; θ) = spharm_θ_grid_uniform(m, nℓ)
     eqind = indexof_equator(θ)
 
-    (; VWSinv, radproftempreal) = filtercache
+    (; VWSinv, radproftempreal, fieldtempreal) = filtercache
 
     if compute_invtransform
         eigenfunction_realspace!(filtercache, v, m;
@@ -1108,31 +1109,38 @@ function spatial_filter!(filtercache, v, m;
 
     radfilter = true
 
-    @unpack nparams, r_out, r_in = operators.radial_params
+    @unpack nparams, r_out, r_in, nr = operators.radial_params
     @unpack nvariables = operators
     @unpack rpts, rptsrev = operators
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
     for _X in fields
         f, X = first(_X), last(_X)
-        tot_power = sum(abs2, X)
+        fieldtempreal .= abs2.(X)
+        tot_power = trapz((rpts, θ), fieldtempreal)
         if angular_filter_equator
             θlowind = searchsortedfirst(θ, θ_cutoff)
             θhighind = searchsortedlast(θ, pi - θ_cutoff)
-            powfrac = sum(abs2, @view X[:, θlowind:θhighind]) / tot_power
-            @debug "$f θ_cutoff power frac $powfrac"
+            θinds = θlowind:θhighind
+            pow_within_cutoff = trapz((rpts, θ[θinds]), @view fieldtempreal[:, θinds])
+            powfrac = pow_within_cutoff / tot_power
             powflag = powfrac > equator_power_cutoff_frac
+            @debug "$f equatorial powfrac $powfrac cutoff $equator_power_cutoff_frac powflag $powflag"
 
             # ensure that there isn't too much power at the poles
             θpolecutoff = searchsortedfirst(θ, pole_cutoff_angle)
-            powfrac = sum(abs2, @view X[:, 1:θpolecutoff]) / tot_power
+            θinds = 1:θpolecutoff
+            pow_poles = 2trapz((rpts, θ[θinds]), @view fieldtempreal[:, θinds])
+            powfrac = pow_poles  / tot_power
             powflag &= powfrac < pole_power_cutoff_frac
+            @debug "$f polar powfrac $powfrac cutoff $pole_power_cutoff_frac powflag $powflag"
 
             r_ind_peak = peakindabs1(X)
             peak_latprofile = @view X[r_ind_peak, :]
             peak_latprofile_max = maximum(abs2, peak_latprofile)
             peak_latprofile_max_inrange = maximum(abs2, @view peak_latprofile[θlowind:θhighind])
             peakflag = peak_latprofile_max_inrange == peak_latprofile_max
+            @debug "$f peakflag $peakflag"
             eqfilter &= powflag & peakflag
         elseif angular_filter_highlat
             θlowind = searchsortedfirst(θ, θ_cutoff)
@@ -1142,36 +1150,34 @@ function spatial_filter!(filtercache, v, m;
         end
         eqfilter || break
 
+        @debug "$f eqfilter $eqfilter"
+
         if radial_filter
             # ensure that the radial peak isn't at the bottom of the domain
-            maxradpowind = findmax(y -> sum(abs, y), eachslice(X, dims=1))[2]
-            radfilter = rpts[maxradpowind] > r_in + (r_out - r_in)/10 # 10% above the lower boundary
-            radfilter || break
-
-            for ri in axes(X,1)
-                radproftempreal[ri] = sum(abs, view(X, ri, :))
+            for (ri, row) in enumerate(eachrow(fieldtempreal))
+                radproftempreal[ri] = trapz(θ, row)
             end
-
-            s = Dierckx.Spline1D(rptsrev, reversedview(radproftempreal))
 
             # ensure that most of the power isn't concentrated in the top and bottom surface layers
             r_top_10pc_cutoff = r_out - (r_out - r_in)*10/100
+            r_top_10pc_cutoff_ind = findlast(>(r_top_10pc_cutoff), rpts)
 
             r_bot_10pc_cutoff = r_in + (r_out - r_in)*10/100
-
-            tot_power = Dierckx.integrate(s, rptsrev[1], rptsrev[end])
+            r_bot_10pc_cutoff_ind = findlast(>(r_bot_10pc_cutoff), rpts)
 
             # check that the power is smoothly varying, and not sharply concentrated at the top
-            top_10pc_power = Dierckx.integrate(s, r_top_10pc_cutoff, rptsrev[end])
+            rinds = 1:r_top_10pc_cutoff_ind
+            top_10pc_power = trapz(view(rpts, rinds), view(radproftempreal, rinds))
             top_10pc_power_fraction = top_10pc_power/tot_power
             @debug "$f tot_power $tot_power top_10pc_power_fraction $top_10pc_power_fraction"
 
-            bot_10pc_power = Dierckx.integrate(s, rptsrev[1], r_bot_10pc_cutoff)
+            rinds = r_bot_10pc_cutoff_ind:nr
+            bot_10pc_power = trapz(view(rpts, rinds), view(radproftempreal, rinds))
             bot_10pc_power_fraction = bot_10pc_power/tot_power
             @debug "$f bot_10pc_power $bot_10pc_power bot_10pc_power_fraction $bot_10pc_power_fraction"
 
             pow_frac_flag = (top_10pc_power_fraction + bot_10pc_power_fraction) < radial_topbotpower_cutoff
-            radfilter = pow_frac_flag
+            radfilter &= pow_frac_flag
         end
         radfilter || break
     end
@@ -1349,7 +1355,7 @@ using .Filters
 
 include("DefaultFilterParams.jl")
 
-function filterfn(λ, v, m, M, filterparams;
+function filterfn(λ::Number, v::AbstractVector, m::Integer, M, filterparams;
         operators,
         constraints = constraintmatrix(operators),
         filtercache = allocate_filter_caches(m; operators, constraints),
@@ -1447,10 +1453,11 @@ function filterfn(λ, v, m, M, filterparams;
     return true
 end
 
-function filterfn(Fssym, m, ind, Ms; kw...)
-    filterfn(Fssym[m][ind]..., m, Ms, Fssym.kw;
-        Fssym.operators, Fssym.constraints,
-        filterflags = Fssym.kw[:filterflags], kw...)
+function filterfn(Feig::FilteredEigen, m, ind, Ms = operator_matrices(Feig, m),
+        filterparams = pairs((;)); kw...)
+    filterfn(Feig[m][ind]..., m, Ms, merge(Feig.kw, filterparams);
+        Feig.operators, Feig.constraints,
+        filterflags = Feig.kw[:filterflags], kw...)
 end
 
 function allocate_field_vectors(nr, nℓ)
@@ -1465,10 +1472,7 @@ function allocate_field_caches(nr, nℓ, nθ)
     fieldtempreal = similar(VWSinv.V, real(eltype(VWSinv.V)))
     radproftempreal = zeros(real(eltype(VWSinv.V)), size(VWSinv.V,1))
     radproftempcomplex = zeros(eltype(VWSinv.V), size(VWSinv.V,1))
-    angularproftempreal = zeros(real(eltype(VWSinv.V)), size(VWSinv.V,2))
-    angularproftempcomplex = zeros(eltype(VWSinv.V), size(VWSinv.V,2))
-    (; VWSinv, VWSinvsh, F, radproftempreal, radproftempcomplex,
-        angularproftempreal, angularproftempcomplex, fieldtempreal)
+    (; VWSinv, VWSinvsh, F, radproftempreal, radproftempcomplex, fieldtempreal)
 end
 
 function allocate_field_caches(Feig::FilteredEigen, m)

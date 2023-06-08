@@ -4,7 +4,7 @@ const DefaultFilterParams = Dict(
     # eigval filter
     :eig_imag_unstable_cutoff => -1e-6,
     :eig_imag_to_real_ratio_cutoff => 3,
-    :eig_imag_stable_cutoff => 0.5,
+    :eig_imag_stable_cutoff => 0.2,
     # eigensystem satisfy filter
     :eigen_rtol => 0.01,
     # smooth eigenvector filter
@@ -17,10 +17,10 @@ const DefaultFilterParams = Dict(
     :pole_cutoff_angle => deg2rad(25),
     :pole_power_cutoff_frac => 0.05,
     # radial nodes filter
-    :nnodesmax => 10,
+    :nnodesmax => 5,
     :nodessmallpowercutoff => 0.05,
     # exclude a field from a filter if relative power is below a cutoff
     :filterfieldpowercutoff => 1e-2,
     :eigvec_spectrum_low_n_power_fraction_cutoff => 1,
-    :radial_topbotpower_cutoff => 0.5,
+    :radial_topbotpower_cutoff => 0.7,
 )

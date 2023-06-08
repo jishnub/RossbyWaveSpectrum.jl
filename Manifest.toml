@@ -2,7 +2,7 @@
 
 julia_version = "1.9.1"
 manifest_format = "2.0"
-project_hash = "f686766c68bc62c17a3dbba205f9d0e2b4a0de73"
+project_hash = "f6ad73f76ddbd90a835be367b2c823c4385570fe"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -853,6 +853,11 @@ deps = ["Adapt", "ArgCheck", "BangBang", "Baselet", "CompositionsBase", "DefineS
 git-tree-sha1 = "25358a5f2384c490e98abd565ed321ffae2cbb37"
 uuid = "28d57a85-8fef-5791-bfe6-a80928e7c999"
 version = "0.4.76"
+
+[[deps.Trapz]]
+git-tree-sha1 = "79eb0ed763084a3e7de81fe1838379ac6a23b6a0"
+uuid = "592b5752-818d-11e9-1e9a-2b8ca4a44cd1"
+version = "2.0.3"
 
 [[deps.UUIDs]]
 deps = ["Random", "SHA"]
