@@ -2,6 +2,7 @@ using Test
 using ApproxFunAssociatedLegendre
 using LinearAlgebra
 using ApproxFunOrthogonalPolynomials
+using ApproxFunSingularities
 
 using Aqua
 @testset "project quality" begin
@@ -20,6 +21,18 @@ end
     @test maxspace(sp, sp) == sp
     @test union(sp, sp) == sp
     @test conversion_type(sp, sp) == sp
+
+    @testset for S in (Legendre(), NormalizedLegendre())
+        @test ApproxFunBase.hasconversion(NormalizedPlm(0), S)
+        @test ApproxFunBase.hasconversion(S, NormalizedPlm(0))
+        @test ApproxFunBase.hasconversion(JacobiWeight(0,0,S), NormalizedPlm(0))
+        @test ApproxFunBase.hasconversion(NormalizedPlm(0), JacobiWeight(0,0,S))
+    end
+
+    @test ApproxFunBase.spacescompatible(NormalizedLegendre(), NormalizedPlm(0))
+    @test ApproxFunBase.spacescompatible(NormalizedPlm(0), NormalizedLegendre())
+    @test !ApproxFunBase.spacescompatible(Legendre(), NormalizedPlm(0))
+    @test !ApproxFunBase.spacescompatible(NormalizedPlm(0), Legendre())
 end
 
 @testset "multiplication" begin

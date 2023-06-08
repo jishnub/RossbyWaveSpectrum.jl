@@ -6,7 +6,7 @@ using ApproxFunBase: SubOperator, UnsetSpace, ConcreteMultiplication, Multiplica
 	ConstantTimesOperator, ConversionWrapper, SpaceOperator
 import ApproxFunBase: domainspace, rangespace, Multiplication, setspace, Conversion,
 	spacescompatible, maxspace_rule, Fun, coefficients, DefiniteIntegral, DefiniteIntegralWrapper,
-	canonicalspace, Derivative, DerivativeWrapper
+	canonicalspace, Derivative, DerivativeWrapper, hasconversion
 using BandedMatrices
 import BandedMatrices: BandedMatrix
 using ApproxFunOrthogonalPolynomials
@@ -23,11 +23,12 @@ export expand
 export kronmatrix
 export kronmatrix!
 
-const WeightedNormalizedJacobi = JacobiWeight{<:NormalizedPolynomialSpace{<:Jacobi{<:ChebyshevInterval}}}
-const JacobiMaybeNormalized = Union{Jacobi{<:ChebyshevInterval},
-	NormalizedPolynomialSpace{<:Jacobi{<:ChebyshevInterval}}}
-const WeightedJacobiMaybeNormalized = Union{WeightedNormalizedJacobi,
-	JacobiWeight{<:Jacobi{<:ChebyshevInterval}}}
+const WeightedNormalizedJacobi{T} =
+	JacobiWeight{<:NormalizedPolynomialSpace{<:Jacobi{ChebyshevInterval{T}}}, ChebyshevInterval{T}}
+const JacobiMaybeNormalized{T} = Union{Jacobi{ChebyshevInterval{T}},
+	NormalizedPolynomialSpace{<:Jacobi{ChebyshevInterval{T}}}}
+const WeightedJacobiMaybeNormalized{T} = Union{WeightedNormalizedJacobi{T},
+	JacobiWeight{<:Jacobi{ChebyshevInterval{T}},ChebyshevInterval{T}}}
 
 struct NormalizedPlm{T<:Real, NJS<:Space{ChebyshevInterval{T},T}} <: Space{ChebyshevInterval{T},T}
 	m :: Int
@@ -35,20 +36,33 @@ struct NormalizedPlm{T<:Real, NJS<:Space{ChebyshevInterval{T},T}} <: Space{Cheby
 end
 azimuthalorder(p::NormalizedPlm) = p.m
 
+canonicalspace(A::NormalizedPlm) = A.jacobispace
+function canonicalspace_zerostrip(A::NormalizedPlm)
+	azimuthalorder(A) == 0 ? NormalizedLegendre(domain(A)) : canonicalspace(A)
+end
 
 ApproxFunBase.domain(::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
 NormalizedPlm(m::Int) = NormalizedPlm(m, JacobiWeight(half(m), half(m), NormalizedJacobi(m,m)))
 NormalizedPlm(; m::Int) = NormalizedPlm(m)
 Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(m=", azimuthalorder(sp), ")")
 
-spacescompatible(b::typeof(NormalizedLegendre()), a::NormalizedPlm) =
+spacescompatible(b::JacobiMaybeNormalized, a::NormalizedPlm) =
 	spacescompatible(a, b)
-function spacescompatible(a::NormalizedPlm, b::typeof(NormalizedLegendre()))
+function spacescompatible(a::NormalizedPlm, b::JacobiMaybeNormalized)
 	iseven(azimuthalorder(a)) && spacescompatible(canonicalspace(a), b)
 end
 
+hasconversion(J::JacobiMaybeNormalized, sp::NormalizedPlm) = hasconversion(J, canonicalspace(sp))
+hasconversion(sp::NormalizedPlm, J::JacobiMaybeNormalized) = hasconversion(canonicalspace(sp), J)
+function hasconversion(J::WeightedJacobiMaybeNormalized{T}, sp::NormalizedPlm{T}) where {T}
+	hasconversion(J, canonicalspace(sp))
+end
+function hasconversion(sp::NormalizedPlm{T}, J::WeightedJacobiMaybeNormalized{T}) where {T}
+	hasconversion(canonicalspace(sp), J)
+end
+
 function Conversion(J::JacobiMaybeNormalized, sp::NormalizedPlm)
-	C = Conversion(JacobiWeight(0,0,J), sp)
+	C = Conversion(J, canonicalspace_zerostrip(sp))
 	ConversionWrapper(SpaceOperator(C, J, sp))
 end
 function Conversion(J::WeightedJacobiMaybeNormalized, sp::NormalizedPlm)
@@ -56,7 +70,7 @@ function Conversion(J::WeightedJacobiMaybeNormalized, sp::NormalizedPlm)
 	ConversionWrapper(SpaceOperator(C, J, sp))
 end
 function Conversion(sp::NormalizedPlm, J::JacobiMaybeNormalized)
-	C = Conversion(sp, JacobiWeight(0,0,J))
+	C = Conversion(canonicalspace_zerostrip(sp), J)
 	ConversionWrapper(SpaceOperator(C, sp, J))
 end
 function Conversion(sp::NormalizedPlm, J::WeightedJacobiMaybeNormalized)
@@ -70,12 +84,10 @@ function Base.union(A::NormalizedPlm, B::NormalizedPlm)
 	A
 end
 
-canonicalspace(A::NormalizedPlm) = A.jacobispace
-
-function maxspace_rule(A::Union{JacobiMaybeNormalized, WeightedNormalizedJacobi}, B::NormalizedPlm)
+function maxspace_rule(A::Union{JacobiMaybeNormalized, WeightedJacobiMaybeNormalized}, B::NormalizedPlm)
 	maxspace(A, canonicalspace(B))
 end
-function maxspace_rule(A::NormalizedPlm, B::Union{JacobiMaybeNormalized,WeightedNormalizedJacobi})
+function maxspace_rule(A::NormalizedPlm, B::Union{JacobiMaybeNormalized,WeightedJacobiMaybeNormalized})
 	maxspace(canonicalspace(A), B)
 end
 function maxspace_rule(A::NormalizedPlm, B::NormalizedPlm)
@@ -132,27 +144,22 @@ end
 Fun(f::typeof(identity), sp::NormalizedPlm) = _Fun(f, sp)
 
 function coefficients(f::AbstractVector,
-		sp::JacobiWeight{<:Any,ChebyshevInterval{T}},
-		snp::NormalizedPlm{T,<:Space{ChebyshevInterval{T}}}) where {T<:Real}
+		sp::JacobiWeight{<:Any,ChebyshevInterval{T}}, snp::NormalizedPlm{T}) where {T<:Real}
 
 	coefficients(f, sp, canonicalspace(snp))
 end
 
 function coefficients(f::AbstractVector,
-		snp::NormalizedPlm{T,<:Space{ChebyshevInterval{T}}},
-		sp::JacobiWeight{<:Any,ChebyshevInterval{T}}) where {T<:Real}
+		snp::NormalizedPlm{T}, sp::JacobiWeight{<:Any,ChebyshevInterval{T}}) where {T<:Real}
 
 	coefficients(f, canonicalspace(snp), sp)
 end
 
-function coefficients(f::AbstractVector,
-		snp1::NormalizedPlm{T,<:Space{ChebyshevInterval{T}}},
-		snp2::NormalizedPlm{T,<:Space{ChebyshevInterval{T}}}) where {T<:Real}
-
+function coefficients(f::AbstractVector, snp1::NormalizedPlm, snp2::NormalizedPlm)
 	coefficients(f, snp1.jacobispace, snp2.jacobispace)
 end
 
-function Derivative(sp::NormalizedPlm, k::Int)
+Base.@constprop :aggressive function Derivative(sp::NormalizedPlm, k::Int)
 	DerivativeWrapper(Derivative(canonicalspace(sp), k), k)
 end
 
@@ -223,8 +230,7 @@ function Multiplication(f::Fun, sp::NormalizedPlm)
 	Multiplication(Fun(f, NormalizedLegendre()), sp)
 end
 function Multiplication(f::Fun{<:JacobiMaybeNormalized}, sp::NormalizedPlm)
-	assertLegendre(space(f))
-	g = Fun(f, NormalizedPlm(0))
+	g = Fun(Fun(f, NormalizedLegendre()), NormalizedPlm(0))
 	Multiplication(g, sp)
 end
 function Multiplication(f::Fun{<:NormalizedPlm}, sp::NormalizedPlm)
