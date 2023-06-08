@@ -83,6 +83,10 @@ end
         f = Fun(x->(1-x^2)^2 * x^2 * (2 + 3im), NormalizedPlm(4))
         @test abs2(f)(0.4) ≈ (x->abs2((1-x^2)^2 * x^2 * (2 + 3im)))(0.4)
     end
+
+    f = Fun(x->(1-x^2)*x^2, NormalizedPlm(2))
+    g = Multiplication(f) * Fun(Legendre())
+    @test g ≈ Fun(x->(1-x^2)*x^3, Legendre())
 end
 
 @testset "sintheta_dtheta_operator" begin

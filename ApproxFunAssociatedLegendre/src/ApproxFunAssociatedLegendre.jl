@@ -25,10 +25,12 @@ export kronmatrix!
 
 const WeightedNormalizedJacobi{T} =
 	JacobiWeight{<:NormalizedPolynomialSpace{<:Jacobi{ChebyshevInterval{T}}}, ChebyshevInterval{T}}
-const JacobiMaybeNormalized{T} = Union{Jacobi{ChebyshevInterval{T}},
-	NormalizedPolynomialSpace{<:Jacobi{ChebyshevInterval{T}}}}
+
 const WeightedJacobiMaybeNormalized{T} = Union{WeightedNormalizedJacobi{T},
 	JacobiWeight{<:Jacobi{ChebyshevInterval{T}},ChebyshevInterval{T}}}
+
+const MaybeNormalizedPolynomial{T,P<:PolynomialSpace{ChebyshevInterval{T}}} =
+	Union{P,NormalizedPolynomialSpace{P,ChebyshevInterval{T}}}
 
 struct NormalizedPlm{T<:Real, NJS<:Space{ChebyshevInterval{T},T}} <: Space{ChebyshevInterval{T},T}
 	m :: Int
@@ -42,18 +44,21 @@ function canonicalspace_zerostrip(A::NormalizedPlm)
 end
 
 ApproxFunBase.domain(::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
-NormalizedPlm(m::Int) = NormalizedPlm(m, JacobiWeight(half(m), half(m), NormalizedJacobi(m,m)))
+function NormalizedPlm(m::Int)
+	sp = NormalizedJacobi(m,m)
+	NormalizedPlm(m, JacobiWeight(half(m), half(m), sp))
+end
 NormalizedPlm(; m::Int) = NormalizedPlm(m)
 Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(m=", azimuthalorder(sp), ")")
 
-spacescompatible(b::JacobiMaybeNormalized, a::NormalizedPlm) =
+spacescompatible(b::MaybeNormalizedPolynomial, a::NormalizedPlm) =
 	spacescompatible(a, b)
-function spacescompatible(a::NormalizedPlm, b::JacobiMaybeNormalized)
+function spacescompatible(a::NormalizedPlm, b::MaybeNormalizedPolynomial)
 	iseven(azimuthalorder(a)) && spacescompatible(canonicalspace(a), b)
 end
 
-hasconversion(J::JacobiMaybeNormalized, sp::NormalizedPlm) = hasconversion(J, canonicalspace(sp))
-hasconversion(sp::NormalizedPlm, J::JacobiMaybeNormalized) = hasconversion(canonicalspace(sp), J)
+hasconversion(J::MaybeNormalizedPolynomial, sp::NormalizedPlm) = hasconversion(J, canonicalspace(sp))
+hasconversion(sp::NormalizedPlm, J::MaybeNormalizedPolynomial) = hasconversion(canonicalspace(sp), J)
 function hasconversion(J::WeightedJacobiMaybeNormalized{T}, sp::NormalizedPlm{T}) where {T}
 	hasconversion(J, canonicalspace(sp))
 end
@@ -61,7 +66,7 @@ function hasconversion(sp::NormalizedPlm{T}, J::WeightedJacobiMaybeNormalized{T}
 	hasconversion(canonicalspace(sp), J)
 end
 
-function Conversion(J::JacobiMaybeNormalized, sp::NormalizedPlm)
+function Conversion(J::MaybeNormalizedPolynomial, sp::NormalizedPlm)
 	C = Conversion(J, canonicalspace_zerostrip(sp))
 	ConversionWrapper(SpaceOperator(C, J, sp))
 end
@@ -69,7 +74,7 @@ function Conversion(J::WeightedJacobiMaybeNormalized, sp::NormalizedPlm)
 	C = Conversion(J, canonicalspace(sp))
 	ConversionWrapper(SpaceOperator(C, J, sp))
 end
-function Conversion(sp::NormalizedPlm, J::JacobiMaybeNormalized)
+function Conversion(sp::NormalizedPlm, J::MaybeNormalizedPolynomial)
 	C = Conversion(canonicalspace_zerostrip(sp), J)
 	ConversionWrapper(SpaceOperator(C, sp, J))
 end
@@ -84,10 +89,10 @@ function Base.union(A::NormalizedPlm, B::NormalizedPlm)
 	A
 end
 
-function maxspace_rule(A::Union{JacobiMaybeNormalized, WeightedJacobiMaybeNormalized}, B::NormalizedPlm)
+function maxspace_rule(A::Union{MaybeNormalizedPolynomial, WeightedJacobiMaybeNormalized}, B::NormalizedPlm)
 	maxspace(A, canonicalspace(B))
 end
-function maxspace_rule(A::NormalizedPlm, B::Union{JacobiMaybeNormalized,WeightedJacobiMaybeNormalized})
+function maxspace_rule(A::NormalizedPlm, B::Union{MaybeNormalizedPolynomial, WeightedJacobiMaybeNormalized})
 	maxspace(canonicalspace(A), B)
 end
 function maxspace_rule(A::NormalizedPlm, B::NormalizedPlm)
@@ -98,14 +103,6 @@ end
 function Base.:(==)(A::NormalizedPlm, B::NormalizedPlm)
 	@assert azimuthalorder(A) == azimuthalorder(B)
 	true
-end
-
-function assertLegendre(sp::JacobiMaybeNormalized)
-	csp = canonicalspace(sp)
-	@assert csp == Legendre() "multiplication is only defined in Legendre space"
-end
-function assertLegendre(sp::NormalizedPlm)
-	@assert azimuthalorder(sp) == 0 "multiplication is only defined in Legendre space"
 end
 
 function ApproxFunBase.union_rule(a::NormalizedPlm, b::Union{ConstantSpace, PolynomialSpace})
@@ -271,9 +268,8 @@ function Base.getindex(P::HorizontalLaplacian{T,<:NormalizedPlm}, i::Int, j::Int
 	end
 end
 
-function Multiplication(f::Fun{<:NormalizedPlm}, sp::NormalizedPolynomialSpace{<:Jacobi})
-	assertLegendre(space(f))
-	Multiplication(Fun(f, NormalizedLegendre()), sp)
+function Multiplication(f::Fun{<:NormalizedPlm}, sp::MaybeNormalizedPolynomial)
+	Multiplication(canonicalfun(f), sp)
 end
 
 # Definite integrals

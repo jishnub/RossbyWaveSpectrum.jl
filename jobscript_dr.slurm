@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --time="3:00:00"
-#SBATCH --job-name=5pc
+#SBATCH --job-name=10pc
 #SBATCH --nodes=1
 #SBATCH -C dalma
 #SBATCH --ntasks=1
@@ -28,7 +28,7 @@ nr, nℓ = 60, 30
 mrange = 2:20
 viscosity = 5e11
 trackingrate = :hanson2020 # :carrington, :hanson2020, :cutoff or :surface
-ΔΩ_scale = 0.05
+ΔΩ_scale = 0.1
 Δl_cutoff = 20
 n_cutoff = 15
 diffrot=true
