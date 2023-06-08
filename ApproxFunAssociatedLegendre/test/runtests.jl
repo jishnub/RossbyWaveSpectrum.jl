@@ -145,3 +145,10 @@ end
     @test sum(f) ≈ pi/16
     @test DefiniteIntegral() * f ≈ pi/16
 end
+
+@testset "Tensor space" begin
+    z = (x,y) -> x*(1-y^2)
+    f = Fun(z, Chebyshev() ⊗ NormalizedPlm(2))
+    @test f(0.3, 0.4) ≈ z(0.3, 0.4)
+    @test abs2(f)(0.3, 0.4) ≈ ((x,y) -> abs2(z(x,y)))(0.3, 0.4)
+end
