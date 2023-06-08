@@ -953,6 +953,11 @@ function boundary_condition_filter(v::StructVector{<:Complex}, BC::AbstractMatri
     norm(BCVcache) < atol
 end
 
+function eigensystem_satisfy_filter(Feig::FilteredEigen, m::Integer, ind::Integer, args...; kwargs...)
+    λ, v = Feig[m][ind]
+    eigensystem_satisfy_filter(λ, v, args...; kwargs...)
+end
+
 function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
         AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}}, args...; kw...)
 
@@ -1115,12 +1120,13 @@ function spatial_filter!(filtercache, v, m;
             θlowind = searchsortedfirst(θ, θ_cutoff)
             θhighind = searchsortedlast(θ, pi - θ_cutoff)
             powfrac = sum(abs2, @view X[:, θlowind:θhighind]) / tot_power
+            @debug "$f θ_cutoff power frac $powfrac"
             powflag = powfrac > equator_power_cutoff_frac
 
-            # ensure that there isn't much power at the poles
+            # ensure that there isn't too much power at the poles
             θpolecutoff = searchsortedfirst(θ, pole_cutoff_angle)
             powfrac = sum(abs2, @view X[:, 1:θpolecutoff]) / tot_power
-            powflag = powfrac < pole_power_cutoff_frac
+            powflag &= powfrac < pole_power_cutoff_frac
 
             r_ind_peak = peakindabs1(X)
             peak_latprofile = @view X[r_ind_peak, :]

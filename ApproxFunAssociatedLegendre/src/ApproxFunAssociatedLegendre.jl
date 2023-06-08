@@ -8,7 +8,7 @@ import ApproxFunBase: domainspace, rangespace, Multiplication, setspace, Convers
 	spacescompatible, maxspace_rule, Fun, coefficients, DefiniteIntegral, DefiniteIntegralWrapper,
 	canonicalspace, Derivative, DerivativeWrapper, hasconversion
 using BandedMatrices
-import BandedMatrices: BandedMatrix
+import BandedMatrices: BandedMatrix, bandwidths
 using ApproxFunOrthogonalPolynomials
 using ApproxFunSingularities
 using BlockBandedMatrices
@@ -143,6 +143,10 @@ function _Fun(f, sp::NormalizedPlm)
 end
 Fun(f::typeof(identity), sp::NormalizedPlm) = _Fun(f, sp)
 
+canonicalfun(f::Fun{<:NormalizedPlm}) = Fun(canonicalspace(f), coefficients(f))
+maybecanonicalfun(f::Fun{<:NormalizedPlm}) = canonicalfun(f)
+maybecanonicalfun(f::Fun) = f
+
 function coefficients(f::AbstractVector,
 		sp::JacobiWeight{<:Any,ChebyshevInterval{T}}, snp::NormalizedPlm{T}) where {T<:Real}
 
@@ -189,7 +193,7 @@ for P in [:sinθdθ_Operator, :cosθ_Operator, :sinθdθ_plus_2cosθ_Operator]
 	end
 end
 
-BandedMatrices.bandwidths(::Union{sinθdθ_Operator, cosθ_Operator, sinθdθ_plus_2cosθ_Operator}) = (1,1)
+bandwidths(::Union{sinθdθ_Operator, cosθ_Operator, sinθdθ_plus_2cosθ_Operator}) = (1,1)
 
 C⁻ℓm(ℓ, m, T = Float64) = (ℓ < abs(m) ? T(0) : convert(T, √(T(ℓ - m) * T(ℓ + m) / (T(2ℓ - 1) * T(2ℓ + 1)))))
 C⁺ℓm(ℓ, m, T) = C⁻ℓm(ℓ+1, m, T)
@@ -227,38 +231,12 @@ function Base.getindex(P::sinθdθ_plus_2cosθ_Operator{T}, i::Int, j::Int) wher
 end
 
 function Multiplication(f::Fun, sp::NormalizedPlm)
-	Multiplication(Fun(f, NormalizedLegendre()), sp)
+	g = maybecanonicalfun(f)
+	jsp = canonicalspace(sp)
+	M = Multiplication(g, jsp) → jsp
+	S = SpaceOperator(M, sp, sp)
+	MultiplicationWrapper(f, S)
 end
-function Multiplication(f::Fun{<:JacobiMaybeNormalized}, sp::NormalizedPlm)
-	g = Fun(Fun(f, NormalizedLegendre()), NormalizedPlm(0))
-	Multiplication(g, sp)
-end
-function Multiplication(f::Fun{<:NormalizedPlm}, sp::NormalizedPlm)
-	assertLegendre(space(f))
-	ConcreteMultiplication(f, sp)
-end
-function BandedMatrices.bandwidths(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm})
-	f = M.f
-	nc = max(ncoefficients(f), 1) # treat empty vectors as 0
-	(nc-1, nc-1)
-end
-function rangespace(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm})
-	domainspace(M)
-end
-function _getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i, j)
-	sp = domainspace(M)
-	f = M.f
-	g = Fun(space(f).jacobispace, coefficients(f))
-	sp = domainspace(M)
-	spj = canonicalspace(sp)
-	x = Multiplication(g, spj)[i, j]
-end
-Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i::Int, j::Int) =
-	_getindex(M, i, j)
-Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i::UnitRange{Int}, j::UnitRange{Int}) =
-	_getindex(M, i, j)
-Base.getindex(M::ConcreteMultiplication{<:NormalizedPlm, <:NormalizedPlm}, i::AbstractRange{Int}, j::AbstractRange{Int}) =
-	_getindex(M, first(i):last(i), first(j):last(j))[1:step(i):end, 1:step(j):end]
 
 struct HorizontalLaplacian{T,DS<:Space} <: PlmSpaceOperator{T,DS}
 	ds :: DS
@@ -272,7 +250,7 @@ ApproxFunBase.setspace(P::HorizontalLaplacian{T}, sp::Space) where {T} =
 Base.convert(::Type{Operator{T}}, h::HorizontalLaplacian) where {T} =
 	HorizontalLaplacian{T}(h.ds, h.diagshift)::Operator{T}
 
-BandedMatrices.bandwidths(::HorizontalLaplacian) = (0,0)
+bandwidths(::HorizontalLaplacian) = (0,0)
 
 Base.:(+)(H::HorizontalLaplacian{T}, ds::Int) where {T} = HorizontalLaplacian{T}(H.ds, H.diagshift + ds)
 Base.:(+)(ds::Int, H::HorizontalLaplacian) = H + ds

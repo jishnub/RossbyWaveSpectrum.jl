@@ -61,6 +61,23 @@ end
         g = M * f
         @test g(0.2) ≈ (x -> x * fn(x, m))(0.2)
     end
+
+    x = Fun(NormalizedPlm(0))
+    @testset for sp in (ConstantSpace(), Legendre(), NormalizedLegendre(), NormalizedPlm(0))
+        twox = Multiplication(Fun(2,sp)) * x
+        @test twox(0.4) ≈ 2x(0.4) ≈ 2*0.4
+    end
+    @testset for sp in (Legendre(), NormalizedLegendre(), NormalizedPlm(0))
+        twox = Multiplication(Fun(x->x^3,sp)) * x
+        @test twox(0.4) ≈ (x -> x^4)(0.4)
+    end
+
+    g = Multiplication(Fun(x->(1-x^2) * x^2, NormalizedPlm(2))) * x
+    @test g(0.4) ≈ (x -> (1-x^2) * x^3)(0.4)
+
+    f = Fun(x->(1-x^2)^2 * x^2, NormalizedPlm(4))
+    g = abs2(f)
+    @test g(0.4) ≈ (x->(1-x^2)^4 * x^4)(0.4)
 end
 
 @testset "sintheta_dtheta_operator" begin
