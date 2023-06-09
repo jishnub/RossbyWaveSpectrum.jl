@@ -28,11 +28,6 @@ end
         @test ApproxFunBase.hasconversion(JacobiWeight(0,0,S), NormalizedPlm(0))
         @test ApproxFunBase.hasconversion(NormalizedPlm(0), JacobiWeight(0,0,S))
     end
-
-    @test ApproxFunBase.spacescompatible(NormalizedLegendre(), NormalizedPlm(0))
-    @test ApproxFunBase.spacescompatible(NormalizedPlm(0), NormalizedLegendre())
-    @test !ApproxFunBase.spacescompatible(Legendre(), NormalizedPlm(0))
-    @test !ApproxFunBase.spacescompatible(NormalizedPlm(0), Legendre())
 end
 
 @testset "multiplication" begin

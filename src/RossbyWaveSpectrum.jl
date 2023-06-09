@@ -628,10 +628,11 @@ function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deri
 
     @unpack radialspace = operators.radialspaces;
     # velocity and its derivatives are expanded in Legendre poly
-    latitudinal_space = NormalizedPlm(0, NormalizedLegendre());
+    latitudinal_space = NormalizedPlm(0);
     space2d = radialspace ⊗ latitudinal_space
 
-    cosθ = Fun(Legendre());
+    angularsp = Ultraspherical(Legendre())
+    cosθ = Fun(angularsp);
     Ir = I : radialspace;
     Iℓ = I : latitudinal_space;
     ∇² = HorizontalLaplacian(latitudinal_space);
@@ -640,9 +641,12 @@ function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deri
     ωΩr = (Ir ⊗ sinθdθ_plus_2cosθ) * ΔΩ;
     ∂rωΩr = (Ir ⊗ sinθdθ_plus_2cosθ) * dr_ΔΩ;
     # cotθddθ = cosθ * 1/sinθ * d/dθ = -cosθ * d/d(cosθ) = -x*d/dx
-    cotθdθ = KroneckerOperator(Ir, -cosθ * Derivative(Legendre()),
-        radialspace * Legendre(), radialspace * Jacobi(1,1));
+    cotθdθ = KroneckerOperator(Ir, -cosθ * Derivative(angularsp),
+        radialspace * angularsp,
+        radialspace * rangespace(Derivative(angularsp)));
+
     cotθdθΔΩ = Fun(cotθdθ * ΔΩ, space2d);
+
     ∇²_min_2 = ∇²-2;
     inv_sinθ_∂θωΩr = (Ir ⊗ ∇²_min_2) * ΔΩ + 2cotθdθΔΩ;
     cotθdθdr_ΔΩ = Fun(cotθdθ * dr_ΔΩ, space2d);

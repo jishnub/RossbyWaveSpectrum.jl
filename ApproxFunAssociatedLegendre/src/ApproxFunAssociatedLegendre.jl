@@ -23,13 +23,13 @@ export expand
 export kronmatrix
 export kronmatrix!
 
-const WeightedNormalizedJacobi{T} =
-	JacobiWeight{<:NormalizedPolynomialSpace{<:Jacobi{ChebyshevInterval{T}}}, ChebyshevInterval{T}}
+const JacobiWeightNormalized{T,P<:PolynomialSpace{ChebyshevInterval{T}}} =
+	JacobiWeight{<:NormalizedPolynomialSpace{P,ChebyshevInterval{T}}, ChebyshevInterval{T}}
 
-const WeightedJacobiMaybeNormalized{T} = Union{WeightedNormalizedJacobi{T},
-	JacobiWeight{<:Jacobi{ChebyshevInterval{T}},ChebyshevInterval{T}}}
+const JacobiWeightMaybeNormalized{T,P<:PolynomialSpace{ChebyshevInterval{T}}} =
+	Union{JacobiWeightNormalized{T,P}, JacobiWeight{P,ChebyshevInterval{T}}}
 
-const MaybeNormalizedPolynomial{T,P<:PolynomialSpace{ChebyshevInterval{T}}} =
+const PolynomialMaybeNormalized{T,P<:PolynomialSpace{ChebyshevInterval{T}}} =
 	Union{P,NormalizedPolynomialSpace{P,ChebyshevInterval{T}}}
 
 struct NormalizedPlm{T<:Real, NJS<:Space{ChebyshevInterval{T},T}} <: Space{ChebyshevInterval{T},T}
@@ -45,40 +45,40 @@ end
 
 ApproxFunBase.domain(::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
 function NormalizedPlm(m::Int)
-	sp = NormalizedJacobi(m,m)
+	sp = NormalizedUltraspherical(NormalizedJacobi(m,m))
 	NormalizedPlm(m, JacobiWeight(half(m), half(m), sp))
 end
 NormalizedPlm(; m::Int) = NormalizedPlm(m)
 Base.show(io::IO, sp::NormalizedPlm) = print(io, "NormalizedPlm(m=", azimuthalorder(sp), ")")
 
-spacescompatible(b::MaybeNormalizedPolynomial, a::NormalizedPlm) =
+spacescompatible(b::PolynomialMaybeNormalized, a::NormalizedPlm) =
 	spacescompatible(a, b)
-function spacescompatible(a::NormalizedPlm, b::MaybeNormalizedPolynomial)
+function spacescompatible(a::NormalizedPlm, b::PolynomialMaybeNormalized)
 	iseven(azimuthalorder(a)) && spacescompatible(canonicalspace(a), b)
 end
 
-hasconversion(J::MaybeNormalizedPolynomial, sp::NormalizedPlm) = hasconversion(J, canonicalspace(sp))
-hasconversion(sp::NormalizedPlm, J::MaybeNormalizedPolynomial) = hasconversion(canonicalspace(sp), J)
-function hasconversion(J::WeightedJacobiMaybeNormalized{T}, sp::NormalizedPlm{T}) where {T}
+hasconversion(J::PolynomialMaybeNormalized, sp::NormalizedPlm) = hasconversion(J, canonicalspace(sp))
+hasconversion(sp::NormalizedPlm, J::PolynomialMaybeNormalized) = hasconversion(canonicalspace(sp), J)
+function hasconversion(J::JacobiWeightMaybeNormalized{T}, sp::NormalizedPlm{T}) where {T}
 	hasconversion(J, canonicalspace(sp))
 end
-function hasconversion(sp::NormalizedPlm{T}, J::WeightedJacobiMaybeNormalized{T}) where {T}
+function hasconversion(sp::NormalizedPlm{T}, J::JacobiWeightMaybeNormalized{T}) where {T}
 	hasconversion(canonicalspace(sp), J)
 end
 
-function Conversion(J::MaybeNormalizedPolynomial, sp::NormalizedPlm)
+function Conversion(J::PolynomialMaybeNormalized, sp::NormalizedPlm)
 	C = Conversion(J, canonicalspace_zerostrip(sp))
 	ConversionWrapper(SpaceOperator(C, J, sp))
 end
-function Conversion(J::WeightedJacobiMaybeNormalized, sp::NormalizedPlm)
+function Conversion(J::JacobiWeightMaybeNormalized, sp::NormalizedPlm)
 	C = Conversion(J, canonicalspace(sp))
 	ConversionWrapper(SpaceOperator(C, J, sp))
 end
-function Conversion(sp::NormalizedPlm, J::MaybeNormalizedPolynomial)
+function Conversion(sp::NormalizedPlm, J::PolynomialMaybeNormalized)
 	C = Conversion(canonicalspace_zerostrip(sp), J)
 	ConversionWrapper(SpaceOperator(C, sp, J))
 end
-function Conversion(sp::NormalizedPlm, J::WeightedJacobiMaybeNormalized)
+function Conversion(sp::NormalizedPlm, J::JacobiWeightMaybeNormalized)
 	C = Conversion(canonicalspace(sp), J)
 	ConversionWrapper(SpaceOperator(C, sp, J))
 end
@@ -89,10 +89,10 @@ function Base.union(A::NormalizedPlm, B::NormalizedPlm)
 	A
 end
 
-function maxspace_rule(A::Union{MaybeNormalizedPolynomial, WeightedJacobiMaybeNormalized}, B::NormalizedPlm)
+function maxspace_rule(A::Union{PolynomialMaybeNormalized, JacobiWeightMaybeNormalized}, B::NormalizedPlm)
 	maxspace(A, canonicalspace(B))
 end
-function maxspace_rule(A::NormalizedPlm, B::Union{MaybeNormalizedPolynomial, WeightedJacobiMaybeNormalized})
+function maxspace_rule(A::NormalizedPlm, B::Union{PolynomialMaybeNormalized, JacobiWeightMaybeNormalized})
 	maxspace(canonicalspace(A), B)
 end
 function maxspace_rule(A::NormalizedPlm, B::NormalizedPlm)
@@ -134,7 +134,7 @@ for f in [:plan_transform, :plan_transform!, :plan_itransform, :plan_itransform!
 end
 
 function _Fun(f, sp::NormalizedPlm)
-	F = Fun(f, canonicalspace(sp))::Fun{<:WeightedNormalizedJacobi}
+	F = Fun(f, canonicalspace(sp))::Fun{<:JacobiWeight{<:NormalizedUltraspherical}}
 	c = coefficients(F)
 	Fun(sp, c)
 end
@@ -268,7 +268,7 @@ function Base.getindex(P::HorizontalLaplacian{T,<:NormalizedPlm}, i::Int, j::Int
 	end
 end
 
-function Multiplication(f::Fun{<:NormalizedPlm}, sp::MaybeNormalizedPolynomial)
+function Multiplication(f::Fun{<:NormalizedPlm}, sp::PolynomialMaybeNormalized)
 	Multiplication(canonicalfun(f), sp)
 end
 
