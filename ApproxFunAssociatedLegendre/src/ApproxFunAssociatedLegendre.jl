@@ -165,7 +165,7 @@ function coefficients(f::AbstractVector, snp1::NormalizedPlm, snp2::NormalizedPl
 end
 
 Base.@constprop :aggressive function Derivative(sp::NormalizedPlm, k::Int)
-	DerivativeWrapper(Derivative(canonicalspace(sp), k), k)
+	DerivativeWrapper(Derivative(canonicalspace(sp), k), k, sp)
 end
 
 abstract type PlmSpaceOperator{T, DS<:NormalizedPlm} <: Operator{T} end
@@ -279,6 +279,10 @@ function DefiniteIntegral(S::NormalizedPlm)
 end
 
 Base.sum(f::Fun{<:NormalizedPlm}) = sum(Fun(space(f).jacobispace, coefficients(f)))
+
+function Base.:(*)(A::PlmSpaceOperator, B::PlmSpaceOperator)
+	SpaceOperator(TimesOperator(A, B), domainspace(B), rangespace(A))
+end
 
 ###################################################################################
 

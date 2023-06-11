@@ -3,6 +3,7 @@ module SolarModel
 using Reexport
 
 using ApproxFun
+using ApproxFun: SpaceOperator
 using BandedMatrices
 using BlockArrays
 using BlockBandedMatrices
@@ -308,13 +309,13 @@ function radial_operators(operatorparams...)
     n_uppercutoff = 200
 
     # density stratification
-    ρ = replaceemptywitheps(ApproxFun.chop(Fun(sρ, radialspace, n_uppercutoff), 1e-3));
+    ρ = replaceemptywitheps(ApproxFun.chop!(Fun(sρ, radialspace, n_uppercutoff), 1e-3));
     @checkncoeff ρ nr
 
-    ηρ = replaceemptywitheps(ApproxFun.chop(Fun(sηρ, radialspace, n_uppercutoff), 1e-3));
+    ηρ = replaceemptywitheps(ApproxFun.chop!(Fun(sηρ, radialspace, n_uppercutoff), 1e-3));
     @checkncoeff ηρ nr
 
-    ηT = replaceemptywitheps(ApproxFun.chop(Fun(sηT, radialspace, n_uppercutoff), 1e-3));
+    ηT = replaceemptywitheps(ApproxFun.chop!(Fun(sηT, radialspace, n_uppercutoff), 1e-3));
     @checkncoeff ηT nr
 
     ηρT = ηρ + ηT
@@ -396,7 +397,9 @@ function radial_operators(operatorparams...)
     Cp = 1.7e8
 
     # ddr_S0_by_Cp = γ/Cp * δ * ηρ;
-    ddr_S0_by_Cp = chop(Fun(x -> γ / Cp * superadiabaticity(x; superadiabaticityparams...) * ηρ(x), radialspace), 1e-3);
+    ddr_S0_by_Cp = chop!(
+        Fun(x -> γ / Cp * superadiabaticity(x; superadiabaticityparams...) * ηρ(x),
+            radialspace), 1e-3);
     @checkncoeff ddr_S0_by_Cp nr
 
     ddr_S0_by_Cp_by_r2 = onebyr2 * ddr_S0_by_Cp

@@ -5,6 +5,7 @@ using MKL
 using Reexport
 
 @reexport using ApproxFun
+using ApproxFun: SpaceOperator
 @reexport using ApproxFunAssociatedLegendre
 @reexport using BlockArrays
 using BlockBandedMatrices
@@ -290,7 +291,7 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
     @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
 
     @unpack onebyr, onebyr2, r, r2, g, ηρ, ddr_S0_by_Cp_by_r2 = operators.rad_terms;
-    @unpack ddr, d2dr2, DDr, ddrDDr, ∇r2_plus_ddr_lnρT_ddr = operators.diff_operators;
+    @unpack ddr, d2dr2, DDr, ddrDDr, DDr_minus_2byr, ∇r2_plus_ddr_lnρT_ddr = operators.diff_operators;
     @unpack radialspaces = operators;
     @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
     @unpack constants = operators;
@@ -326,7 +327,7 @@ function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_sy
 
     scaled_curl_u_x_ω_r_tmp = OpVector(V = Ir ⊗ twom_by_ℓℓp1,
         iW = (Ir ⊗ two_by_ℓℓp1) * (
-            (DDr - 2*onebyr) ⊗ (cosθop * ∇²)
+            DDr_minus_2byr ⊗ (cosθop * ∇²)
             - DDr ⊗ sinθdθop - onebyr ⊗ (sinθdθop * ∇²))
         )
 
@@ -428,7 +429,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     @unpack nr, nℓ = operators.radial_params;
     @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
 
-    @unpack ddr, DDr, ddrDDr = operators.diff_operators;
+    @unpack ddr, DDr, ddrDDr, DDr_minus_2byr = operators.diff_operators;
     @unpack onebyr, onebyr2, ηρ_by_r = operators.rad_terms;
 
     @unpack radialspaces = operators;
@@ -456,7 +457,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
     VVop_ = ΔΩ_frac * m * (Ir ⊗ (4inv_ℓℓp1 - 1))
-    VWop_ = ΔΩ_frac * (Ir ⊗ (-4inv_ℓℓp1)) * ((DDr - 2onebyr) ⊗ (cosθop * ℓℓp1op) +
+    VWop_ = ΔΩ_frac * (Ir ⊗ (-4inv_ℓℓp1)) * (DDr_minus_2byr ⊗ (cosθop * ℓℓp1op) +
                     DDr ⊗ sinθdθop - onebyr ⊗ (sinθdθop * ℓℓp1op))
 
     temp = zeros(eltype(M), nr * nℓ, nr * nℓ)
@@ -498,7 +499,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         V_symmetric, kw...)
 
     @unpack nr, nℓ = operators.radial_params;
-    @unpack DDr, ddr, ddrDDr = operators.diff_operators;
+    @unpack DDr, ddr, ddrDDr, DDr_minus_2byr = operators.diff_operators;
     @unpack onebyr, g, ηρ_by_r, onebyr2, twobyr = operators.rad_terms;
     @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
     @unpack Ω0 = operators.constants;
@@ -535,7 +536,7 @@ function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 
     VVop_ = m * (ΔΩ ⊗ (4inv_ℓℓp1 - 1))
     VWop_ = -(Ir ⊗ 4inv_ℓℓp1) * (
-        (ΔΩ * (DDr - 2onebyr) - ddrΔΩ) ⊗ (cosθop * ℓℓp1op) +
+        (ΔΩ * DDr_minus_2byr - ddrΔΩ) ⊗ (cosθop * ℓℓp1op) +
         (ΔΩ * DDr) ⊗ sinθdθop - (ΔΩ * onebyr + ddrΔΩ/4) ⊗ (sinθdθop * ℓℓp1op)
     )
 

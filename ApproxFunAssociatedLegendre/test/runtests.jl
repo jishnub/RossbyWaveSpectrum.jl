@@ -138,6 +138,23 @@ end
     @test f ≈ g
 end
 
+@testset "Derivative" begin
+    @testset "odd m" begin
+        sp = NormalizedPlm(1)
+        f = Fun(x->√(1-x^2)*x^2, sp)
+        df = Derivative() * f
+        @test df(0.4) ≈ (x -> (2x - 3x^3)/√(1-x^2))(0.4)
+    end
+    @testset "even m" begin
+        sp = NormalizedPlm(2)
+        f = Fun(x->(1-x^2)*x^2, sp)
+        g = Fun(x->(1-x^2)*x^2, Chebyshev())
+        df = Derivative() * f
+        dg = Derivative() * g
+        @test df ≈ dg
+    end
+end
+
 @testset "Definite Integral" begin
     sp = NormalizedPlm(3)
     f = Fun(x->√(1-x^2)^3 * x^2, sp)
