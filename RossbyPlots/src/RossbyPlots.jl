@@ -1868,7 +1868,8 @@ function plot_density_scale_heights(; operators, kw...)
     f.tight_layout()
 end
 
-function load_and_filter_output(nr, nℓ, rottag = "dr_solar_latrad_squished", symtag = "sym";
+function load_and_filter_output(nr, nℓ, rotscales = [0.0, 0.25, 0.5, 0.75];
+        rottag = "dr_solar_latrad_squished", symtag = "sym",
         r_in = 0.65, r_out = 0.985, nu = 5.0e11,
         eig_imag_stable_cutoff = 0.2,
         filterflags=Filters.EIGVAL|Filters.SPATIAL,
@@ -1876,7 +1877,7 @@ function load_and_filter_output(nr, nℓ, rottag = "dr_solar_latrad_squished", s
         nodes_cutoff = 2,
         )
 
-    map([0.0, 0.25, 0.5, 0.75]) do rotscale
+    map(rotscales) do rotscale
         Fssym = RossbyWaveSpectrum.FilteredEigen(
             rossbyeigenfilename(nr, nℓ, rottag, symtag,
             "nu$(nu)_rin$(r_in)_rout$(r_out)_trackhanson2020_rotscale$(rotscale)"))
