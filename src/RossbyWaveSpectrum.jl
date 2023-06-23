@@ -57,6 +57,31 @@ Base.show(io::IO, f::FilteredEigen) = print(io, "Filtered eigen with m range = $
 
 m_index(Feig, m) = findfirst(==(m), Feig.mr)
 
+function FilteredEigen(lams, vs, mr, kw, operators)
+    constraints = constraintmatrix(operators)
+    FilteredEigen(lams, vs, mr, kw, operators, constraints)
+end
+
+function FilteredEigen(fname::String)
+    isfile(fname) || throw(ArgumentError("Couldn't find $fname"))
+    lam, vec, mr, kw, operatorparams =
+        load(fname, "lam", "vec", "mr", "kw", "operatorparams");
+    operators = radial_operators(operatorparams...)
+    FilteredEigen(lam, vec, mr, kw, operators)
+end
+
+function Base.getindex(Feig::FilteredEigen, m::Integer)
+    mind = m_index(Feig, m)
+    m in Feig.mr || throw(ArgumentError("m = $m is not contained in $f"))
+    FilteredEigenOneOrder(Feig.lams[mind], Feig.vs[mind], m, Feig.kw, Feig.operators, Feig.constraints)
+end
+
+function Base.getindex(Feig::FilteredEigen, mr::UnitRange{<:Integer})
+    ((mr ∩ Feig.mr) == mr) || throw(ArgumentError("m range $mr is not contained in $f"))
+    minds = m_index(Feig, minimum(mr)):m_index(Feig, maximum(mr))
+    FilteredEigenOneOrder(Feig.lams[minds], Feig.vs[minds], m, Feig.kw, Feig.operators, Feig.constraints)
+end
+
 struct FilteredEigenOneOrder
     lams::Vector{ComplexF64}
     vs :: StructArray{ComplexF64, 2, NamedTuple{(:re, :im), NTuple{2,Matrix{Float64}}}, Int64}
@@ -70,26 +95,8 @@ eigvalspairs(f::FilteredEigenOneOrder) = pairs(f.lams)
 
 Base.show(io::IO, f::FilteredEigenOneOrder) = print(io, "Filtered eigen with m = $(f.m)")
 
-function Base.getindex(f::FilteredEigen, m::Integer)
-    mind = m_index(f, m)
-    m in f.mr || throw(ArgumentError("m = $m is not contained in $f"))
-    FilteredEigenOneOrder(f.lams[mind], f.vs[mind], m, f.kw, f.operators, f.constraints)
-end
-
 function Base.getindex(f::FilteredEigenOneOrder, ind::Integer)
     (; λ = f.lams[ind], v = f.vs[:, ind])
-end
-
-function FilteredEigen(lams, vs, mr, kw, operators)
-    constraints = constraintmatrix(operators)
-    FilteredEigen(lams, vs, mr, kw, operators, constraints)
-end
-
-function FilteredEigen(fname::String)
-    lam, vec, mr, kw, operatorparams =
-        load(fname, "lam", "vec", "mr", "kw", "operatorparams");
-    operators = radial_operators(operatorparams...)
-    FilteredEigen(lam, vec, mr, kw, operators)
 end
 
 struct RotMatrix{TV,TW,F}
@@ -959,40 +966,7 @@ function boundary_condition_filter(v::StructVector{<:Complex}, BC::AbstractMatri
     norm(BCVcache) < atol
 end
 
-function eigensystem_satisfy_filter(Feig::FilteredEigen, m::Integer, ind::Integer, args...; kwargs...)
-    λ, v = Feig[m][ind]
-    eigensystem_satisfy_filter(λ, v, args...; kwargs...)
-end
-
-function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
-        AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}}, args...; kw...)
-
-    eigensystem_satisfy_filter(λ, v, map(computesparse, AB), args...; kw...)
-end
-
-const TStructSparseComplexMat{T} = @NamedTuple{re::SparseMatrixCSC{T, Int64}, im::SparseMatrixCSC{T, Int64}}
-function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
-        AB::Tuple{StructArray{Complex{T},2,TStructSparseComplexMat{T}}, SparseMatrixCSC{T, Int64}},
-        MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1));
-        rtol = DefaultFilterParams[:eigen_rtol]) where {T<:Real}
-
-    A, B = AB;
-    Av, λBv = MVcache;
-
-    mul!(Av.re, A.re, v.re)
-    mul!(Av.re, A.im, v.im, -1.0, 1.0)
-    mul!(Av.im, A.re, v.im)
-    mul!(Av.im, A.im, v.re,  1.0, 1.0)
-
-    mul!(λBv.re, B, v.re)
-    mul!(λBv.im, B, v.im)
-    λBv .*= λ
-
-    normAv = norm(Av)
-    normλBv = norm(λBv)
-    Av .-= λBv
-    norm(Av) <= rtol*max(normAv, normλBv)
-end
+include("eigensystem_satisfy_filter.jl")
 
 function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff])
     Vpow = sum(abs2, @view v[1:nparams])
@@ -1015,66 +989,7 @@ function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = Def
     return filterfields
 end
 
-function eigvec_spectrum_filter!(F, v, m;
-    operators,
-    n_cutoff = DefaultFilterParams[:n_cutoff],
-    Δl_cutoff = DefaultFilterParams[:Δl_cutoff],
-    eigvec_spectrum_power_cutoff = DefaultFilterParams[:eigvec_spectrum_power_cutoff],
-    filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff],
-    low_n_power_lowercutoff = DefaultFilterParams[:eigvec_spectrum_low_n_power_fraction_cutoff],
-    kw...)
-
-    VW = eigenfunction_spectrum_2D!(F, v; operators, kw...)
-    Δl_inds = Δl_cutoff ÷ 2
-
-    @unpack nparams = operators.radial_params
-    @unpack nvariables = operators
-
-    flag = true
-    fields = filterfields(VW, v, nparams, nvariables; filterfieldpowercutoff)
-
-    @views for _X in fields
-        f, X = first(_X), last(_X)
-
-        PV_frac_real = sum(abs2∘real, X[1:n_cutoff, 1:Δl_inds]) / sum(abs2∘real, X)
-        PV_frac_imag = sum(abs2∘imag, X[1:n_cutoff, 1:Δl_inds]) / sum(abs2∘imag, X)
-        flag &= (PV_frac_real > eigvec_spectrum_power_cutoff) & (PV_frac_imag > eigvec_spectrum_power_cutoff)
-
-        @debug "$f PV_frac flag $flag"
-
-        flag || break
-
-        real_lown_pow_ratio = sum(abs2∘real, X[(n_cutoff÷2+1):n_cutoff, 1:Δl_inds])/sum(abs2∘real, X[1:n_cutoff÷2, 1:Δl_inds])
-        real_lown_flag = real_lown_pow_ratio <= low_n_power_lowercutoff
-
-        @debug "$f real_lown_flag $real_lown_flag"
-
-        flag &= real_lown_flag
-        flag || break
-
-        imag_lown_pow_ratio = sum(abs2∘imag, X[(n_cutoff÷2+1):n_cutoff, 1:Δl_inds])/sum(abs2∘imag, X[1:n_cutoff÷2, 1:Δl_inds])
-        imag_lown_flag = imag_lown_pow_ratio <= low_n_power_lowercutoff
-
-        @debug "$f imag_lown_flag $imag_lown_flag"
-
-        flag &= imag_lown_flag
-        flag || break
-    end
-
-    return flag
-end
-
-function eigvec_spectrum_filter(v, m; operators, kw...)
-    @unpack nr, nℓ = operators.radial_params
-    F = allocate_field_vectors(nr, nℓ)
-    eigvec_spectrum_filter!(F, v, m; operators, kw...)
-end
-
-function eigvec_spectrum_filter(Feig::FilteredEigen, m, ind; kw...)
-    @unpack nr, nℓ = Feig.operators.radial_params
-    F = allocate_field_vectors(nr, nℓ)
-    eigvec_spectrum_filter!(F, Feig[m][ind].v, m; Feig.operators, Feig.kw..., kw...)
-end
+include("eigvec_spectrum_filter.jl")
 
 allocate_Pl(m, nℓ) = zeros(range(m, length = 2nℓ + 1))
 
@@ -1082,128 +997,7 @@ function peakindabs1(X)
     findmax(v -> sum(abs2, v), eachrow(X))[2]
 end
 
-function spatial_filter!(filtercache, v, m;
-    operators,
-    V_symmetric,
-    θ_cutoff = DefaultFilterParams[:θ_cutoff],
-    equator_power_cutoff_frac = DefaultFilterParams[:equator_power_cutoff_frac],
-    pole_cutoff_angle = DefaultFilterParams[:pole_cutoff_angle],
-    pole_power_cutoff_frac = DefaultFilterParams[:pole_power_cutoff_frac],
-    filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff],
-    radial_topbotpower_cutoff = DefaultFilterParams[:radial_topbotpower_cutoff],
-    nℓ = operators.radial_params.nℓ,
-    Plcosθ = allocate_Pl(m, nℓ),
-    angular_filter_equator = true,
-    angular_filter_highlat = false,
-    radial_filter = true,
-    compute_invtransform = true,
-    kw...
-    )
-
-    (; θ) = spharm_θ_grid_uniform(m, nℓ)
-    eqind = indexof_equator(θ)
-
-    (; VWSinv, radproftempreal, fieldtempreal) = filtercache
-
-    if compute_invtransform
-        eigenfunction_realspace!(filtercache, v, m;
-            operators, nℓ, Plcosθ, V_symmetric)
-    end
-
-    eqfilter = true
-
-    radfilter = true
-
-    @unpack nparams, r_out, r_in, nr = operators.radial_params
-    @unpack nvariables = operators
-    @unpack rpts, rptsrev = operators
-    fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
-
-    for _X in fields
-        f, X = first(_X), last(_X)
-        fieldtempreal .= abs2.(X)
-        tot_power = trapz((rpts, θ), fieldtempreal)
-        if angular_filter_equator
-            θlowind = searchsortedfirst(θ, θ_cutoff)
-            θhighind = searchsortedlast(θ, pi - θ_cutoff)
-            θinds = θlowind:θhighind
-            pow_within_cutoff = trapz((rpts, θ[θinds]), @view fieldtempreal[:, θinds])
-            powfrac = pow_within_cutoff / tot_power
-            powflag = powfrac > equator_power_cutoff_frac
-            @debug "$f equatorial powfrac $powfrac cutoff $equator_power_cutoff_frac powflag $powflag"
-
-            # ensure that there isn't too much power at the poles
-            θpolecutoff = searchsortedfirst(θ, pole_cutoff_angle)
-            θinds = 1:θpolecutoff
-            pow_poles = 2trapz((rpts, θ[θinds]), @view fieldtempreal[:, θinds])
-            powfrac = pow_poles  / tot_power
-            powflag &= powfrac < pole_power_cutoff_frac
-            @debug "$f polar powfrac $powfrac cutoff $pole_power_cutoff_frac powflag $powflag"
-
-            r_ind_peak = peakindabs1(X)
-            peak_latprofile = @view X[r_ind_peak, :]
-            peak_latprofile_max = maximum(abs2, peak_latprofile)
-            peak_latprofile_max_inrange = maximum(abs2, @view peak_latprofile[θlowind:θhighind])
-            peakflag = peak_latprofile_max_inrange == peak_latprofile_max
-            @debug "$f peakflag $peakflag"
-            eqfilter &= powflag & peakflag
-        elseif angular_filter_highlat
-            θlowind = searchsortedfirst(θ, θ_cutoff)
-            θhighind = searchsortedlast(θ, pi - θ_cutoff)
-            powfrac = 1 - sum(abs2, @view X[:, θlowind:θhighind]) / tot_power
-            eqfilter = powfrac > equator_power_cutoff_frac
-        end
-        eqfilter || break
-
-        @debug "$f eqfilter $eqfilter"
-
-        if radial_filter
-            # ensure that the radial peak isn't at the bottom of the domain
-            for (ri, row) in enumerate(eachrow(fieldtempreal))
-                radproftempreal[ri] = trapz(θ, row)
-            end
-
-            # ensure that most of the power isn't concentrated in the top and bottom surface layers
-            r_top_10pc_cutoff = r_out - (r_out - r_in)*10/100
-            r_top_10pc_cutoff_ind = findlast(>(r_top_10pc_cutoff), rpts)
-
-            r_bot_10pc_cutoff = r_in + (r_out - r_in)*10/100
-            r_bot_10pc_cutoff_ind = findlast(>(r_bot_10pc_cutoff), rpts)
-
-            # check that the power is smoothly varying, and not sharply concentrated at the top
-            rinds = 1:r_top_10pc_cutoff_ind
-            top_10pc_power = trapz(view(rpts, rinds), view(radproftempreal, rinds))
-            top_10pc_power_fraction = top_10pc_power/tot_power
-            @debug "$f tot_power $tot_power top_10pc_power_fraction $top_10pc_power_fraction"
-
-            rinds = r_bot_10pc_cutoff_ind:nr
-            bot_10pc_power = trapz(view(rpts, rinds), view(radproftempreal, rinds))
-            bot_10pc_power_fraction = bot_10pc_power/tot_power
-            @debug "$f bot_10pc_power $bot_10pc_power bot_10pc_power_fraction $bot_10pc_power_fraction"
-
-            pow_frac_flag = (top_10pc_power_fraction + bot_10pc_power_fraction) < radial_topbotpower_cutoff
-            radfilter &= pow_frac_flag
-        end
-        radfilter || break
-    end
-
-    return eqfilter & radfilter
-end
-
-function spatial_filter(v, m;
-    operators,
-    filtercache = allocate_filter_caches(m; operators),
-    kw...
-    )
-
-    spatial_filter!(filtercache, v, m; operators, kw...)
-end
-
-function spatial_filter(Feig::FilteredEigen, m, ind; kw...)
-    spatial_filter(Feig[m][ind].v, m; Feig.operators,
-        filtercache = allocate_filter_caches(m; Feig.operators, Feig.constraints),
-        Feig.kw..., kw...)
-end
+include("spatial_filter.jl")
 
 function angularindex_maximum(Vr::AbstractMatrix{<:Real}, θ)
     equator_ind = angularindex_equator(Vr, θ)
@@ -1260,16 +1054,22 @@ function count_num_nodes!(radprof::AbstractVector{<:Real}, rptsrev;
 
     min(ncross, zerocrossings)
 end
-function count_radial_nodes(radprof, rptsrev,
-        radproftempreal = similar(radprof, real(eltype(V))))
+function count_radial_nodes(radprof::AbstractVector{<:Real},
+        rptsrev::AbstractVector{<:Real},
+        radproftempreal = copy(radprof))
+    count_num_nodes!(radproftempreal, rptsrev)
+end
+function count_radial_nodes(radprof::AbstractVector{<:Complex},
+        rptsrev::AbstractVector{<:Real},
+        radproftempreal = similar(radprof, real(eltype(radprof))))
 
     radproftempreal .= real.(radprof)
-    nnodes_real = count_num_nodes!(radproftempreal, rptsrev)
+    nnodes_real = count_radial_nodes(radproftempreal, rptsrev, radproftempreal)
     radproftempreal .= imag.(radprof)
-    nnodes_imag = count_num_nodes!(radproftempreal, rptsrev)
+    nnodes_imag = count_radial_nodes(radproftempreal, rptsrev, radproftempreal)
     nnodes_real, nnodes_imag
 end
-function count_radial_nodes(v::AbstractVector{<:Complex}, m; operators,
+function count_radial_nodes(v::AbstractVector{<:Complex}, m::Integer; operators,
         angularindex_fn = angularindex_equator,
         nr = operators.radial_params[:nr],
         nℓ = operators.radial_params[:nℓ],
@@ -1280,13 +1080,15 @@ function count_radial_nodes(v::AbstractVector{<:Complex}, m; operators,
         kw...)
 
     @unpack rptsrev = operators
-    @unpack VWSinv, radproftempreal = fieldcaches
+    @unpack VWSinv, radproftempreal, radproftempcomplex = fieldcaches
     eigenfunction_realspace!(fieldcaches, v, m; operators, kw...)
     X = getproperty(VWSinv, field)
     realcache .= real.(X)
     eqind = angularindex_fn(realcache, θ)
-    radprof = @view X[:, eqind]
-    count_radial_nodes(radprof, rptsrev, radproftempreal)
+    for (i, row) in enumerate(eachrow(X))
+        radproftempcomplex[i] = trapz(θ, row)
+    end
+    count_radial_nodes(radproftempcomplex, rptsrev, radproftempreal)
 end
 
 function count_radial_nodes(Feig::FilteredEigen, m, ind; kw...)
@@ -1360,110 +1162,7 @@ using .Filters
 
 include("DefaultFilterParams.jl")
 
-function filterfn(λ::Number, v::AbstractVector, m::Integer, M, filterparams;
-        operators,
-        constraints = constraintmatrix(operators),
-        filtercache = allocate_filter_caches(m; operators, constraints),
-        filterflags = DefaultFilter)
-
-    @unpack BC = constraints
-    @unpack nℓ = operators.radial_params;
-
-    filterparams_all = merge(DefaultFilterParams, filterparams);
-
-    eig_imag_unstable_cutoff = Float64(filterparams_all[:eig_imag_unstable_cutoff])::Float64
-    eig_imag_to_real_ratio_cutoff = Float64(filterparams_all[:eig_imag_to_real_ratio_cutoff])::Float64
-    eig_imag_stable_cutoff = Float64(filterparams_all[:eig_imag_stable_cutoff])::Float64
-    eigvec_spectrum_power_cutoff = Float64(filterparams_all[:eigvec_spectrum_power_cutoff])::Float64
-    bc_atol = Float64(filterparams_all[:bc_atol])::Float64
-    Δl_cutoff = filterparams_all[:Δl_cutoff]::Int
-    n_cutoff = filterparams_all[:n_cutoff]::Int
-    θ_cutoff = Float64(filterparams_all[:θ_cutoff])::Float64
-    equator_power_cutoff_frac = Float64(filterparams_all[:equator_power_cutoff_frac])::Float64
-    eigen_rtol = Float64(filterparams_all[:eigen_rtol])::Float64
-    filterfieldpowercutoff = Float64(filterparams_all[:filterfieldpowercutoff])::Float64
-    nnodesmax = filterparams_all[:nnodesmax]::Int
-    V_symmetric = filterparams[:V_symmetric]::Bool
-    radial_topbotpower_cutoff = Float64(filterparams_all[:radial_topbotpower_cutoff])::Float64
-
-    (; MVcache, BCVcache, VWSinv, VWSinvsh,
-        Plcosθ, F, radproftempreal, radproftempcomplex) = filtercache;
-
-    allfilters = Filters.FilterFlag(filterflags)
-    compute_invtransform = true
-
-    if Filters.EIGVAL in allfilters
-        f = eigenvalue_filter(λ, m;
-        eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
-        if !f
-            @debug "EIGVAL" λ, eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff
-            return false
-        end
-    end
-
-    if Filters.EIGVEC in allfilters
-        f = eigvec_spectrum_filter!(F, v, m; operators,
-            n_cutoff, Δl_cutoff, eigvec_spectrum_power_cutoff,
-            filterfieldpowercutoff)
-        if !f
-            @debug "EIGVEC" n_cutoff, Δl_cutoff, eigvec_spectrum_power_cutoff, filterfieldpowercutoff
-            return false
-        end
-    end
-
-    if Filters.BC in allfilters
-        f = boundary_condition_filter(v, BC, BCVcache, bc_atol)
-        if !f
-            @debug "BC" bc_atol
-            return false
-        end
-    end
-
-    if Filters.SPATIAL in allfilters
-        f = spatial_filter!(filtercache, v, m;
-            θ_cutoff, equator_power_cutoff_frac, operators, nℓ, Plcosθ,
-            filterfieldpowercutoff, V_symmetric,
-            angular_filter_equator = Filters.SPATIAL_EQUATOR in allfilters,
-            angular_filter_highlat = Filters.SPATIAL_HIGHLAT in allfilters,
-            radial_filter = Filters.SPATIAL_RADIAL in allfilters,
-            compute_invtransform,
-            radial_topbotpower_cutoff,
-            )
-        if !f
-            @debug "SPATIAL" θ_cutoff, equator_power_cutoff_frac, filterfieldpowercutoff
-            return false
-        end
-        compute_invtransform = false
-    end
-
-    if Filters.NODES in allfilters
-        f = nodes_filter!(filtercache, v, m, operators;
-                nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax, V_symmetric,
-                compute_invtransform, radproftempreal, radproftempcomplex)
-        if !f
-            @debug "NODES" filterfieldpowercutoff, nnodesmax
-            return false
-        end
-        compute_invtransform = false
-    end
-
-    if Filters.EIGEN in allfilters
-        f = eigensystem_satisfy_filter(λ, v, M, MVcache; rtol = eigen_rtol)
-        if !f
-            @debug "EIGEN" λ eigen_rtol
-            return false
-        end
-    end
-
-    return true
-end
-
-function filterfn(Feig::FilteredEigen, m, ind, Ms = operator_matrices(Feig, m),
-        filterparams = pairs((;)); kw...)
-    filterfn(Feig[m][ind]..., m, Ms, merge(Feig.kw, filterparams);
-        Feig.operators, Feig.constraints,
-        filterflags = Feig.kw[:filterflags], kw...)
-end
+include("filterfn.jl")
 
 function allocate_field_vectors(nr, nℓ)
     nparams = nr * nℓ
@@ -1793,7 +1492,7 @@ function operator_matrices(m; operators, diffrot::Bool, kw...)
     map(computesparse, (A, B))
 end
 
-function operator_matrices(Feig::FilteredEigen, m, kw...)
+function operator_matrices(Feig::FilteredEigen, m; kw...)
     operator_matrices(m; Feig.operators, Feig.kw..., kw...)
 end
 

@@ -1,10 +1,11 @@
 #!/bin/bash
-#SBATCH --time="4:00:00"
-#SBATCH --job-name=uni
+#SBATCH --time="9:00:00"
+#SBATCH --job-name=bekki
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
+#SBATCH -C jubail
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=38
+#SBATCH --cpus-per-task=19
 #SBATCH --mem-per-cpu=8G
 
 echo "############"
@@ -22,17 +23,17 @@ srun $julia --project=$project --startup-file=no -t 19 -e \
 using RossbyWaveSpectrum
 using RossbyWaveSpectrum.Filters
 V_symmetric = !parse(Bool, ENV["SLURM_PROCID"]); # 0=>true, 1=>false
-r_in_frac, r_out_frac = 0.65, 0.985
-nr, nℓ = 60, 30
+r_in_frac, r_out_frac = 0.71, 0.985
+nr, nℓ = 60, 40
 mrange = 2:20
 viscosity = 5e11
-trackingrate = :hanson2020 # :carrington, :hanson2020, :cutoff or :surface
-ΔΩ_scale = 0
+trackingrate = :carrington # :carrington, :hanson2020, :cutoff or :surface
+ΔΩ_scale = 1
 Δl_cutoff = 20
 n_cutoff = 15
 diffrot=true
 # ΔΩ_frac = 467/453.1 - 1
-rotation_profile = :solar_latrad_squished
+rotation_profile = :solar_latrad
 # rotation_profile = :solar_constant
 # superadiabaticityparams = (; δrad = -1e-6)
 modeltag = "nu$(viscosity)_rin$(round(r_in_frac, digits=3))_rout$(round(r_out_frac, digits=3))_track$(trackingrate)"

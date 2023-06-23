@@ -12,10 +12,6 @@ BlockBandedMatrices = "ffab5731-97b5-5995-9138-79e8c1846df0"
 DomainSets = "5b8099bc-c8ec-5219-889f-1d9e522a28bf"
 HalfIntegers = "f0d1745a-41c9-11e9-1dd9-e5d34d218721"
 
-[weakdeps]
-FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
-FastTransforms = "057dd010-8810-581a-b7be-e3fc3b93f78c"
-
 [compat]
 ApproxFunBase = "0.7, 0.8"
 ApproxFunOrthogonalPolynomials = "0.5, 0.6"
@@ -24,8 +20,6 @@ Aqua = "0.6"
 BandedMatrices = "0.17"
 BlockBandedMatrices = "0.11, 0.12"
 DomainSets = "0.5, 0.6"
-FFTW = "~1.6"
-FastTransforms = "0.15.4"
 HalfIntegers = "1"
 
 [extras]

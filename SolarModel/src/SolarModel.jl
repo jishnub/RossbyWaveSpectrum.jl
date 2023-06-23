@@ -257,9 +257,13 @@ Base.show(io::IO, o::OperatorWrap) = print(io, "Operators")
 Base.getproperty(y::OperatorWrap, name::Symbol) = getproperty(getfield(y, :x), name)
 Base.propertynames(y::OperatorWrap) = Base.propertynames(getfield(y, :x))
 
-const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e3, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
-function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 5e11,
-        trackingrate = :cutoff,
+const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e3, Weqglobalscaling = 1e-4, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
+function radial_operators(nr, nℓ;
+        r_in_frac = 0.6, r_out_frac = 0.985,
+        _stratified = true,
+        nvariables = 3,
+        ν = 5e11,
+        trackingrate = :hanson2020,
         scalings = DefaultScalings,
         superadiabaticityparams = (;))
 
@@ -639,13 +643,26 @@ function solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts, θpts)
 end
 function maybe_stretched_radius(; operators, squished = false)
     @unpack rpts = operators
-    @unpack r_out = operators.radial_params
+    maybe_stretched_radius(rpts; operators, squished)
+end
+function maybe_stretched_radius(rpts; operators, squished = false)
+    @unpack r_out, r_in = operators.radial_params
     if squished
-        rpts ./ r_out .* Rsun
+        r_in .+ (rpts .- r_in) .* ((Rsun - r_in) / (r_out - r_in))
     else
         rpts
     end
 end
+
+function maybe_squeeze_radius(rpts; operators, squished = false)
+    @unpack r_out, r_in = operators.radial_params
+    if squished
+        r_in .+ (rpts .- r_in) * ((r_out - r_in)/(Rsun - r_in))
+    else
+        rpts
+    end
+end
+
 function solar_rotation_profile_and_derivative_grid(; squished = false, operators, kw...)
     @unpack nℓ = operators.radial_params
     θpts = points(ChebyshevInterval(), nℓ)
