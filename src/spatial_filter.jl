@@ -72,7 +72,7 @@ function spatial_filter!(filtercache, v, m;
             peak_latprofile = @view X[r_ind_peak, :]
             peak_latprofile_max = maximum(abs2, peak_latprofile)
             peak_latprofile_max_inrange = maximum(abs2, @view peak_latprofile[θlowind:θhighind])
-            peakflag = peak_latprofile_max_inrange == peak_latprofile_max
+            peakflag = peak_latprofile_max_inrange ≈ peak_latprofile_max
             @debug "$f peakflag $peakflag"
             eqfilter &= powflag & peakflag
         elseif angular_filter_highlat

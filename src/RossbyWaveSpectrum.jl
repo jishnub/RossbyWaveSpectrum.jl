@@ -628,6 +628,12 @@ function Base.show(io::IO, O::OpVector)
     print(io, ")")
 end
 
+function SolarModel.solar_differential_rotation_profile_derivatives_Fun(Feig::FilteredEigen; kw...)
+    rotation_profile = rotationtag(Feig.kw[:rotation_profile])
+    solar_differential_rotation_profile_derivatives_Fun(; Feig.operators,
+        Feig.kw..., rotation_profile, kw...)
+end
+
 function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
     @unpack onebyr, r, onebyr2, twobyr = operators.rad_terms;
     @unpack ddr, d2dr2 = operators.diff_operators;
@@ -684,6 +690,11 @@ function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deri
     coriolis = NamedTuple{keys(raw)}((ωΩr_plus_2ΔΩr, ∂r_ωΩr_plus_2ΔΩr, inv_sinθ_∂θ_ωΩr_plus_2ΔΩr,
         inv_rsinθ_ωΩθ_plus_2ΔΩθ, inv_sinθ_∂r∂θ_ωΩr_plus_2ΔΩr, ∂r_inv_rsinθ_ωΩθ_plus_2ΔΩθ))
     (; raw, coriolis)
+end
+
+function solar_differential_rotation_vorticity_Fun(Feig::FilteredEigen; kw...)
+    ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(Feig; kw...)
+    solar_differential_rotation_vorticity_Fun(; Feig.operators, ΔΩprofile_deriv)
 end
 
 function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;

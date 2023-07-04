@@ -287,13 +287,15 @@ end
 ###################################################################################
 
 expand(A::PlusOperator, B::PlusOperator) = mapreduce(x -> expand(x,B), +, A.ops)
-function expand(A::PlusOperator, B)
+expand(P::PlusOperator, λ::Number) = mapreduce(op -> expand(op, λ), +, P.ops)
+expand(λ::Number, P::PlusOperator) = mapreduce(op -> expand(λ, op), +, P.ops)
+function expand(P::PlusOperator, B::Operator)
 	Be = expand(B)
-	mapreduce(x -> expand(expand(x), Be), +, A.ops)
+	mapreduce(x -> expand(expand(x), Be), +, P.ops)
 end
-function expand(A, B::PlusOperator)
+function expand(A::Operator, P::PlusOperator)
 	Ae = expand(A)
-	mapreduce(x -> expand(Ae, expand(x)), +, B.ops)
+	mapreduce(x -> expand(Ae, expand(x)), +, P.ops)
 end
 expand(A, B) = expand(A) * expand(B)
 expand(A) = A
@@ -315,7 +317,6 @@ function expand(K::KroneckerOperator, λ::Number)
 	A, B = K.ops
 	A ⊗ (B * λ)
 end
-expand(λ::Number, P::PlusOperator) = mapreduce(op -> expand(λ, op), +, P.ops)
 function expand(λ::Number, T::TimesOperator)
 	(; ops) = T
 	ops[1] *= λ

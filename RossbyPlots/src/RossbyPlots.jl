@@ -15,6 +15,7 @@ using OrderedCollections
 using Printf
 using StructArrays
 using UnPack
+using Roots
 
 const StructMatrix{T} = StructArray{T,2}
 
@@ -1007,14 +1008,17 @@ function spectrum_with_datadispersion((Feig, Feig_filt)::NTuple{2,FilteredEigen}
     Δl_filter = get(kw, :Δl_filter, Int(!V_symmetric))
     plotfull = get(kw, :plotfull, true)
     plotzoom = get(kw, :plotzoom, true)
-    nsubplots = 2 + (plotfull & plotzoom)
+    legend_subplot = get(kw, :legend_subplot, true)
+    nsubplots = 1 + legend_subplot + (plotfull & plotzoom)
     f, axlist = subplots(1, nsubplots, sharex=true,
-        gridspec_kw = Dict("width_ratios" => [fill(2, nsubplots-1); 1]))
+        gridspec_kw = Dict("width_ratios" => [fill(1 + legend_subplot, nsubplots-1); 1]),
+        squeeze=false)
 
     @unpack operators = Feig
     @unpack Ω0 = operators.constants
     νnHzunit = get(kw, :scale_freq, true) ? freqnHzunit(Ω0)  #= around 453 =# : 1.0
 
+    highlight_ridges = get(kw, :highlight_ridge, true)
     ridgecolors = ["purple", "teal", "chocolate", "olive"]
 
     if plotfull
@@ -1040,9 +1044,11 @@ function spectrum_with_datadispersion((Feig, Feig_filt)::NTuple{2,FilteredEigen}
             plot_dispersion(HansonHighmfit; commonkw...,
                 color= "black", label="Hanson", kw...)
 
-            for (ridge, color) in enumerate(ridgecolors)
-                highlight_ridge(Feig, RidgeFrequencies[ridge];
-                    color, label="Ridge $ridge", ax)
+            if highlight_ridges
+                for (ridge, color) in enumerate(ridgecolors)
+                    highlight_ridge(Feig, RidgeFrequencies[ridge];
+                        color, label="Ridge $ridge", ax)
+                end
             end
         else
             color = colorederrorbars ? "brown" : "0.6"
@@ -1076,9 +1082,11 @@ function spectrum_with_datadispersion((Feig, Feig_filt)::NTuple{2,FilteredEigen}
             plot_dispersion(HansonHighmfit; commonkw...,
                 color="black", label="Hanson [HMI]", subtract_sectoral, kw...)
 
-            for (ridge, color) in enumerate(ridgecolors[1:3])
-                highlight_ridge(Feig_filt, RidgeFrequencies[ridge];
-                    color, label="Ridge $ridge", ax, subtract_sectoral)
+            if highlight_ridges
+                for (ridge, color) in enumerate(ridgecolors[1:3])
+                    highlight_ridge(Feig_filt, RidgeFrequencies[ridge];
+                        color, label="Ridge $ridge", ax, subtract_sectoral)
+                end
             end
 
             ax.set_ylim(-300, 300)
@@ -1096,7 +1104,10 @@ function spectrum_with_datadispersion((Feig, Feig_filt)::NTuple{2,FilteredEigen}
     end
 
     axlist[end].legend(leghandles, leglabels, loc="best")
-    axlist[end].axis("off")
+
+    if legend_subplot
+        axlist[end].axis("off")
+    end
 
     f.set_size_inches(length(axlist)*4, 3.5)
     f.tight_layout()
@@ -1220,10 +1231,12 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
                 f.add_subplot(py"$(spec)[1:, 0]", sharey = axprofile)
             end
         end
+        axlist = [axprofile, axsurf, axdepth]
     else
         axprofile = get(kw, :axprofile) do
             f.add_subplot()
         end
+        axlist = [axprofile]
     end
 
     norm0 = matplotlib.colors.CenteredNorm()
@@ -1321,6 +1334,7 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         filename = "eigenfunction.eps"
         savefiginfo(f, filename)
     end
+    f, axlist
 end
 
 function eigenfunction(Feig::FilteredEigen, m::Integer, ind::Integer; kw...)
@@ -1361,6 +1375,7 @@ function eigenfunctions(Feig::FilteredEigen, ms, inds; layout=(2,length(inds)÷2
         filename = joinpath(plotdir, "eigenfn_m$tag.eps")
         savefiginfo(fig, filename)
     end
+    fig, subfigs
 end
 
 function eigenfunctions_ridge(Feig::FilteredEigen, ms, ridgeno=2; kw...)
@@ -1956,12 +1971,16 @@ function _plot_diffrot_solar_vorticity(ωΩ_deriv; operators, kw...)
     f.tight_layout()
 end
 
-function critical_latitude(Feig::FilteredEigen, m)
-    critical_latitude(m; Feig.operators)
+function critical_latitude_singularity_smearing(Feig::FilteredEigen, m)
+    critical_latitude_singularity_smearing(m; Feig.operators)
 end
-function critical_latitude(m; operators)
+function critical_latitude_singularity_smearing(m; operators)
     @unpack ν = operators.constants
     rad2deg(cbrt(ν/m))
+end
+
+function plot_diffrot_latitudinalsection(Feig::FilteredEigen; kw...)
+    plot_diffrot_latitudinalsection(; Feig.operators, Feig.kw..., kw...)
 end
 
 function plot_diffrot_latitudinalsection(; operators,
@@ -2022,8 +2041,35 @@ function lowest_m_criticallat(mr; operators,
     end
 end
 
-function plot_diffrot_latitudinalsection(Feig::FilteredEigen; kw...)
-    plot_diffrot_latitudinalsection(; Feig.operators, Feig.kw..., kw...)
+function critical_latitude_with_radius(Feig::FilteredEigen, m; kw...)
+    critical_latitude_with_radius(m; Feig.operators,
+        ΔΩprofile_deriv =
+            SolarModel.solar_differential_rotation_profile_derivatives_Fun(Feig),
+        kw...)
+end
+
+function critical_latitude_with_radius(m; operators,
+        rotation_profile = :solar_latrad_squished,
+        ΔΩ_scale = 1.0,
+        ΔΩprofile_deriv = SolarModel.solar_differential_rotation_profile_derivatives_Fun(;
+            operators,
+            ΔΩ_scale,
+            rotation_profile = RossbyWaveSpectrum.rotationtag(rotation_profile)),
+        kw...)
+
+    @unpack rpts = operators
+    (; ΔΩ) = ΔΩprofile_deriv
+    dcosθ_ΔΩ = (I ⊗ Derivative()) * ΔΩ
+    map(rpts) do ri
+        ΔΩ_ri = cosθ -> (ΔΩ(ri, cosθ) + 2/(m*(m+1)))
+        if sign(ΔΩ_ri(cosd(90))) == sign(ΔΩ_ri(cosd(0)))
+            return NaN
+        else
+            dcosθ_ΔΩ_ri = cosθ -> dcosθ_ΔΩ(ri, cosθ)
+            cosθroot = find_zero((ΔΩ_ri, dcosθ_ΔΩ_ri), cosd(70))
+            rad2deg(acos(cosθroot))
+        end
+    end
 end
 
 function compare_terms(@nospecialize(terms); x = nothing, y = nothing,
