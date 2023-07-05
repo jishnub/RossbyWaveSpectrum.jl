@@ -49,9 +49,9 @@ uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 
 [[deps.BandedMatrices]]
 deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra", "PrecompileTools", "SparseArrays"]
-git-tree-sha1 = "9ad46355045491b12eab409dee73e9de46293aa2"
+git-tree-sha1 = "3c63ab5fb851444fb018b97883cfd79ae044e888"
 uuid = "aae01518-5342-5314-be14-df237901396f"
-version = "0.17.28"
+version = "0.17.29"
 
 [[deps.Base64]]
 uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
@@ -260,9 +260,9 @@ version = "15.0.4+0"
 
 [[deps.LazyArrays]]
 deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra", "MacroTools", "MatrixFactorizations", "SparseArrays", "StaticArrays"]
-git-tree-sha1 = "d09ea41ff3edd22436cfda281e6af68f5351aaeb"
+git-tree-sha1 = "d23ef2320b3934be971c98b824d16ba59d98aac1"
 uuid = "5078a376-72f3-5289-bfd5-ec5146d43c02"
-version = "1.1.1"
+version = "1.2.0"
 
 [[deps.LazyArtifacts]]
 deps = ["Artifacts", "Pkg"]

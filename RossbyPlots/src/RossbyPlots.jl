@@ -422,7 +422,7 @@ function spectrum(lams::AbstractArray, mr;
         zoom_inds = in(m_zoom).(mr)
         mr_zoom = mr[zoom_inds]
         lamscat_inset = mapreduce(real, vcat,
-            [λs_m .- subtract_sectoral * rossby_ridge(m) for (λs_m) in zip(lams[zoom_inds], mr_zoom)]) .* νnHzunit
+            [λs_m .- subtract_sectoral * rossby_ridge(m) for (λs_m, m) in zip(lams[zoom_inds], mr_zoom)]) .* νnHzunit
         mcat_inset = reduce(vcat, [range(m, m, length(λi)) for (m, λi) in zip(mr_zoom, lams[zoom_inds])])
 
         c = if fillmarker && highlight_nodes
@@ -434,8 +434,8 @@ function spectrum(lams::AbstractArray, mr;
         end
 
         axins = ax.inset_axes([0.3, 0.1, 0.4, 0.4])
-        ymax = (subtract_sectoral * RossbyWaveSpectrum.rossby_ridge(minimum(m_zoom)) + 0.005) * νnHzunit
-        ymin = (subtract_sectoral * RossbyWaveSpectrum.rossby_ridge(maximum(m_zoom)) - 0.02) * νnHzunit
+        ymax = (!subtract_sectoral * rossby_ridge(minimum(m_zoom)) + 0.005) * νnHzunit
+        ymin = (!subtract_sectoral * rossby_ridge(maximum(m_zoom)) - 0.02) * νnHzunit
         axins.set_ylim(minmax(-ymin, -ymax)...)
         axins.xaxis.set_major_locator(ticker.NullLocator())
         axins.yaxis.set_major_locator(ticker.NullLocator())
