@@ -5,10 +5,12 @@ Base.Experimental.@optlevel 1
 
 using PyCall
 using PyPlot
+export PyPlot
 
 using RossbyWaveSpectrum
 
 import ApproxFun: ncoefficients, itransform
+using DelimitedFiles
 using LaTeXStrings
 using LinearAlgebra
 using OrderedCollections
@@ -83,7 +85,7 @@ end
 function rossby_ridge_lines(mr; νnHzunit = 1, ax = gca(), ΔΩ_frac = 0, ridgescalefactor = nothing, kw...)
     if get(kw, :sectoral_rossby_ridge, true)
         ax.plot(mr, -rossby_ridge.(mr; ΔΩ_frac) .* νnHzunit,
-            label = ΔΩ_frac == 0 ? L"\frac{2(Ω/2π)}{m+1}" : "Doppler\nshifted",
+            label = ΔΩ_frac == 0 ? L"2(Ω_0/2π)/(m+1)" : "Doppler\nshifted",
             lw = 1,
             color = get(kw, :sectoral_rossby_ridge_color, "grey"),
             zorder = 0,
@@ -574,67 +576,67 @@ function mantissa_exponent_format(a)
     (a_mantissa == 1 ? "" : L"%$a_mantissa\times") * L"10^{%$a_exponent}"
 end
 
-const RidgeFrequencies = OrderedDict(
+RidgeFrequencies = OrderedDict(
     1 => OrderedDict(
-            8 => 0.0441767058623623,
-            9 => -0.012902736776068121,
-            10 => -0.06326721504551565,
-            11 => -0.1099981491497498,
-            12 => -0.1543384463727554,
-            13 => -0.19691518663508156,
-            14 => -0.23812653480986173,
-            15 => -0.27825410209910145,
-            16 => -0.317508129341382,
-            17 => -0.3560509521867041,
-            18 => -0.39401110035287984,
-            19 => -0.43149190258758113,
-            20 => -0.468576755153908,
+            7 => 0.1096,
+            8 => 0.04893,
+            9 => -0.007569,
+            10 => -0.05759,
+            11 => -0.104,
+            12 => -0.1479,
+            13 => -0.19,
+            14 => -0.2306,
+            15 => -0.2701,
+            16 => -0.3087,
+            17 => -0.3464,
+            18 => -0.3836,
+            19 => -0.4202,
+            20 => -0.4563,
         ),
 
     2 => OrderedDict(
-            4 => 0.3575,
-            5 => 0.2998,
-            7 => 0.1917,
-            8 => 0.1559,
-            9 => 0.1253,
-            10 => 0.09778,
-            11 => 0.07234,
-            12 => 0.04837,
-            13 => 0.02546,
-            14 => 0.003339,
-            11 => 0.07234,
-            12 => 0.04837,
-            13 => 0.02546,
-            14 => 0.003339,
-            15 => -0.01818,
-            16 => -0.03921,
-            17 => -0.05984,
-            18 => -0.08013,
-            19 => -0.1001,
-            20 => -0.1199,
+            3 => 0.4189,
+            4 => 0.3565,
+            5 => 0.3001,
+            7 => 0.2009,
+            8 => 0.1688,
+            9 => 0.1417,
+            10 => 0.1175,
+            11 => 0.09529,
+            12 => 0.07432,
+            13 => 0.05421,
+            14 => 0.0347,
+            15 => 0.01563,
+            16 => -0.003028,
+            17 => -0.02133,
+            18 => -0.03934,
+            19 => -0.0571,
+            20 => -0.07468,
         ),
 
     3 => OrderedDict(
-            2 => 0.6968,
-            3 => 0.557,
-            4 => 0.489,
-            5 => 0.468,
-            6 => 0.4609,
-            7 => 0.469,
-            8 => 0.489,
-            9 => 0.504,
-            10 => 0.5444,
+            2 => 0.6963,
+            3 => 0.5562,
+            4 => 0.4887,
+            6 => 0.4601,
+            7 => 0.4674,
+            8 => 0.4857,
+            9 => 0.4967,
         ),
 
     4 => OrderedDict(
-            12 => -0.1089,
-            13 => -0.1488,
-            14 => -0.1869,
-            15 => -0.2239,
-            16 => -0.2602,
-            17 => -0.2958,
-            18 => -0.331,
-            20 => -0.4004,
+            10 => -0.01582,
+            11 => -0.06185,
+            11 => -0.06185,
+            12 => -0.103,
+            13 => -0.1419,
+            14 => -0.1794,
+            15 => -0.2159,
+            16 => -0.2517,
+            17 => -0.2869,
+            18 => -0.3216,
+            19 => -0.356,
+            20 => -0.39,
         ),
 )
 
@@ -942,6 +944,8 @@ function plot_dispersion(dataset; operators, var = :ν, ax, scale_freq = true, k
     @unpack Ω0 = operators.constants
     νnHzunit = scale_freq ? freqnHzunit(Ω0) : 1.0
     invνnHzunit = scale_freq ? 1.0 : 1/freqnHzunit(Ω0)
+    Ωref = 2pi*453.1e-9
+    Ωscale = Ω0/Ωref
 
     mr = get(kw, :m_range, nothing)
 
@@ -952,12 +956,18 @@ function plot_dispersion(dataset; operators, var = :ν, ax, scale_freq = true, k
 
     subtract_sectoral = get(kw, :subtract_sectoral, false)
     ν_H = [getproperty(dataset[m], var) for m in mr_Hanson]
-    ax.errorbar(mr_Hanson, value.(ν_H) .* invνnHzunit .+ subtract_sectoral .* rossby_ridge.(mr_Hanson) .* νnHzunit;
-        yerr = errorbars_pyplot(ν_H) .* invνnHzunit,
+    doppler = freqnHzunit(Ω0 - Ωref).*mr_Hanson.* invνnHzunit
+    freqs = (value.(ν_H) .* invνnHzunit .+
+            subtract_sectoral .* rossby_ridge.(mr_Hanson) .* νnHzunit) .* Ωscale .- doppler
+
+    ax.errorbar(mr_Hanson, freqs;
+        yerr = errorbars_pyplot(ν_H) .* invνnHzunit * Ωscale,
         xerr=nothing,
-        ls="None",
-        zorder = 2, marker = ".", ms = 5,
-        mfc = "k",
+        ls=get(kw, :datadispersionls, "None"),
+        zorder = get(kw, :zorder, 1),
+        marker = get(kw, :marker, "."),
+        ms = get(kw, :ms, 5),
+        mfc = get(kw, :mfc, "k"),
         color=get(kw, :color, nothing),
         fmt=get(kw, :fmt, ""),
         ecolor=get(kw, :ecolor, nothing),
@@ -983,7 +993,14 @@ function closest_eigenvalue_to_ridge(Feig, ridgefreqs, component = identity; kw.
     map(mr_line) do m
         λtarget = ridgefreqs[m]
         !snaptopoint && return λtarget
-        component(argmin(x->abs(real(x) - λtarget), Feig[m].lams))
+        λdiff, λind = findmin(x->abs(real(x) - λtarget), Feig[m].lams)
+        # real or imag, or identity for the complex eigenvalues
+        λridge = component(Feig[m][λind].λ)
+        normratio = norm(λridge - λtarget)/max(norm(λridge), norm(λtarget))
+        if !isapprox(real(λridge), λtarget, rtol=1e-1)
+            return oftype(λridge, NaN) * NaN
+        end
+        λridge
     end
 end
 function highlight_ridge(Feig, ridgefreqs::OrderedDict; ax = subplot(), kw...)
@@ -1005,7 +1022,7 @@ end
 function spectrum_with_datadispersion((Feig, Feig_filt)::NTuple{2,FilteredEigen}; kw...)
     V_symmetric = Feig.kw[:V_symmetric]
     nodes_cutoff = get(kw, :nodes_cutoff, nothing)
-    Δl_filter = get(kw, :Δl_filter, Int(!V_symmetric))
+    Δl_filter = get(kw, :Δl_filter, nothing)
     plotfull = get(kw, :plotfull, true)
     plotzoom = get(kw, :plotzoom, true)
     legend_subplot = get(kw, :legend_subplot, true)
@@ -1020,6 +1037,18 @@ function spectrum_with_datadispersion((Feig, Feig_filt)::NTuple{2,FilteredEigen}
 
     highlight_ridges = get(kw, :highlight_ridge, true)
     ridgecolors = ["purple", "teal", "chocolate", "olive"]
+    datadispersion = merge(Dict(:Proxauf=>true, :HansonGONG=>true,
+                                :Liang=>true, :HansonHighm=>true),
+                        get(kw, :datadispersion, Dict{Symbol,Bool}()))
+
+    datadispersionls = get(kw, :datadispersionls, "None")
+
+    datadisptitles = Dict(
+        :HansonGONG => "Hanson 2020 [GONG, RD]",
+        :Liang => "Liang 2019 [MDI & HMI, TD]",
+        :Proxauf => "Proxauf 2020 [HMI, RD]",
+        :HansonHighm => "Hanson [HMI, MC]",
+    )
 
     if plotfull
         ax = axlist[1]
@@ -1027,22 +1056,34 @@ function spectrum_with_datadispersion((Feig, Feig_filt)::NTuple{2,FilteredEigen}
             Δl_filter, nodes_cutoff, Feig.kw..., kw..., save=false, f, ax,
             showtitle = false, legend=false)
 
-        commonkw = (; operators, ax, m_range = Feig.mr)
+        commonkw = (; operators, ax, m_range = Feig.mr, datadispersionls)
         if V_symmetric
             colorederrorbars = get(kw, :colorederrorbars, false)
             hansoncolor, liangcolor, proxaufcolor = if colorederrorbars
                 "red", "blue", "green"
             else
-                "0.6", "0.4", "0.7"
+                "0.6", "0.4", "0.2"
             end
-            plot_dispersion(HansonGONGfit; commonkw...,
-                color= hansoncolor, label="Hanson 2020 [GONG]", kw...)
-            plot_dispersion(Liang2019MDIHMI; commonkw...,
-                color= liangcolor, label="Liang 2019 [MDI & HMI]", kw...)
-            plot_dispersion(ProxaufFit; commonkw...,
-                color= proxaufcolor, ls="dashed", label="Proxauf 2020 [HMI]", kw...)
-            plot_dispersion(HansonHighmfit; commonkw...,
-                color= "black", label="Hanson", kw...)
+            if datadispersion[:HansonGONG]
+                plot_dispersion(HansonGONGfit; commonkw...,
+                    color= hansoncolor,
+                    label=datadisptitles[:HansonGONG], kw...)
+            end
+            if datadispersion[:Liang]
+                plot_dispersion(Liang2019MDIHMI; commonkw...,
+                    color= liangcolor,
+                    label=datadisptitles[:Liang], kw...)
+            end
+            if datadispersion[:Proxauf]
+                plot_dispersion(ProxaufFit; commonkw...,
+                    color= proxaufcolor, ls="dashed",
+                    label=datadisptitles[:Proxauf], kw...)
+            end
+            if datadispersion[:HansonHighm]
+                plot_dispersion(HansonHighmfit; commonkw...,
+                    color= "black",
+                    label=datadisptitles[:HansonHighm], kw...)
+            end
 
             if highlight_ridges
                 for (ridge, color) in enumerate(ridgecolors)
@@ -1053,7 +1094,7 @@ function spectrum_with_datadispersion((Feig, Feig_filt)::NTuple{2,FilteredEigen}
         else
             color = colorederrorbars ? "brown" : "0.6"
             plot_dispersion(HansonHFFit; commonkw...,
-                color, label="Hanson 2022 [HMI]", kw...)
+                color, label="Hanson 2022 [HMI, MCA]", kw...)
         end
     end
 
@@ -1071,19 +1112,34 @@ function spectrum_with_datadispersion((Feig, Feig_filt)::NTuple{2,FilteredEigen}
             hansoncolor, liangcolor, proxaufcolor = if colorederrorbars
                 "red", "blue", "green"
             else
-                "0.6", "0.4", "0.7"
+                "0.6", "0.4", "0.2"
             end
-            plot_dispersion(HansonGONGfit; commonkw...,
-                color= hansoncolor, label="Hanson 2020 [GONG]", subtract_sectoral, kw...)
-            plot_dispersion(Liang2019MDIHMI; commonkw...,
-                color= liangcolor, label="Liang 2019 [MDI & HMI]", subtract_sectoral, kw...)
-            plot_dispersion(ProxaufFit; commonkw...,
-                color= proxaufcolor, ls="dashed", label="Proxauf 2020 [HMI]", subtract_sectoral, kw...)
-            plot_dispersion(HansonHighmfit; commonkw...,
-                color="black", label="Hanson [HMI]", subtract_sectoral, kw...)
+            if datadispersion[:HansonGONG]
+                plot_dispersion(HansonGONGfit; commonkw...,
+                    color= hansoncolor,
+                    label=datadisptitles[:HansonGONG], subtract_sectoral, kw...)
+            end
+            if datadispersion[:Liang]
+                plot_dispersion(Liang2019MDIHMI; commonkw...,
+                    color= liangcolor,
+                    label=datadisptitles[:Liang],
+                    subtract_sectoral, kw...)
+            end
+            if datadispersion[:Proxauf]
+                plot_dispersion(ProxaufFit; commonkw...,
+                    color= proxaufcolor, ls="dashed",
+                    label=datadisptitles[:Proxauf],
+                    subtract_sectoral, kw...)
+            end
+            if datadispersion[:HansonHighm]
+                plot_dispersion(HansonHighmfit; commonkw...,
+                    color="black",
+                    label=datadisptitles[:HansonHighm],
+                    subtract_sectoral, kw...)
+            end
 
             if highlight_ridges
-                for (ridge, color) in enumerate(ridgecolors[1:3])
+                for (ridge, color) in enumerate(ridgecolors)
                     highlight_ridge(Feig_filt, RidgeFrequencies[ridge];
                         color, label="Ridge $ridge", ax, subtract_sectoral)
                 end
@@ -1116,6 +1172,7 @@ function spectrum_with_datadispersion((Feig, Feig_filt)::NTuple{2,FilteredEigen}
         filename = "spectrum_$(!V_symmetric ? "a" : "")sym$tag.eps"
         savefiginfo(f, filename)
     end
+    f, axlist
 end
 
 function piformatter(x, _)
@@ -1807,9 +1864,13 @@ end
 
 function plot_diffrot_solar(; operators,
         rotation_profile = :solar_latrad_squished,
+        ΔΩ_smoothing_param = 0.05,
+        smoothing_param=1e-4,
         ΔΩprofile_deriv = SolarModel.solar_differential_rotation_profile_derivatives_Fun(;
             operators,
-            rotation_profile = RossbyWaveSpectrum.rotationtag(rotation_profile)),
+            rotation_profile = RossbyWaveSpectrum.rotationtag(rotation_profile),
+            ΔΩ_smoothing_param,
+            smoothing_param),
         f = figure(),
         ax = f.add_subplot(projection="polar"), kw...)
 
@@ -1840,10 +1901,18 @@ function plot_diffrot_solar(; operators,
     end
 end
 
+function plot_diffrot_solar(Feig::FilteredEigen; kw...)
+    plot_diffrot_solar(; Feig.operators, Feig.kw..., kw...)
+end
+
 function plot_diffrot_solar_and_radialsection(; operators,
         rotation_profile = :solar_latrad_squished,
+        ΔΩ_smoothing_param = 0.05,
+        smoothing_param=1e-4,
         ΔΩprofile_deriv = SolarModel.solar_differential_rotation_profile_derivatives_Fun(;
             operators,
+            ΔΩ_smoothing_param,
+            smoothing_param,
             rotation_profile = RossbyWaveSpectrum.rotationtag(rotation_profile)),
         kw...)
 
@@ -2186,7 +2255,7 @@ function plot_density_scale_heights(; operators, kw...)
     f.tight_layout()
 end
 
-function load_and_filter_output(nr, nℓ, rotscales = [0.0, 0.25, 0.5, 0.75];
+function load_and_filter_output(nr, nℓ, rotscales = [0.1, 0.2, 0.3, 0.5];
         rottag = "dr_solar_latrad_squished", symtag = "sym",
         r_in = 0.65, r_out = 0.985, nu = 5.0e11,
         filterflags=Filters.EIGVAL|Filters.SPATIAL,
@@ -2240,6 +2309,12 @@ function spectra_different_rotation(Feigs::Vector{FilteredEigen}; layout = (2,2)
         ax.axvline(m, ls="dotted", color="black", zorder=0)
         s
     end
+    for ax in @view axlist[1:end-1, :]
+        ax.set(xlabel=nothing)
+    end
+    for ax in @view axlist[:, 2:end]
+        ax.set(ylabel=nothing)
+    end
     if haskey(kw, :xlim)
         axlist[1,1].set_xlim(kw[:xlim])
     end
@@ -2250,6 +2325,33 @@ function spectra_different_rotation(Feigs::Vector{FilteredEigen}; layout = (2,2)
         savefiginfo(f, filename)
     end
     f, axlist, sps
+end
+
+function spectrum_with_datadispersion_Bekki(Feig; kw...)
+    f, axlist = spectrum_with_datadispersion(Feig;
+        plotzoom=false, legend_subplot=false,
+        nodes_cutoff=nothing, Δl_filter=nothing,
+        highlight_ridge=false,
+        datadispersion=Dict(:Liang=>false, :HansonHighm=>false, :HansonGONG=>false, :Proxauf=>true),
+        kw...,
+        save=false)
+
+    ax = first(axlist)
+
+    bekki_n0 = readdlm(joinpath(@__DIR__, "bekkin0_nu100.csv"), ',', Float64)
+    bekki_n1 = readdlm(joinpath(@__DIR__, "bekkin1_nu100.csv"), ',', Float64)
+    ax.plot(bekki_n0[:,1], bekki_n0[:,2], label="B22, n = 0",
+        marker="d", ms=4, ls="dashed", color="0.6", mec="0.2")
+    ax.plot(bekki_n1[:,1], bekki_n1[:,2], label="B22, n = 1",
+        marker="s", ms=4, ls="dashed", color="0.6", mec="0.2")
+    f.set_size_inches(5,4)
+    ax.legend(loc="best")
+    f.tight_layout()
+    if get(kw, :save, false)
+        filename = "spectrum_bekki.eps"
+        savefiginfo(f, filename, bbox_inches="tight")
+    end
+    f, ax
 end
 
 end # module plots

@@ -30,7 +30,8 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
 
     hostname = Libc.gethostname()
     @show hostname
-    @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac smoothing_param ΔΩ_scale ΔΩ_frac
+    @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac
+    @show smoothing_param ΔΩ_smoothing_param ΔΩ_scale ΔΩ_frac
     @show superadiabaticityparams
     @show V_symmetric diffrot rotation_profile viscosity
     @show extrakw
@@ -46,7 +47,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
 
     spectrumfn! = @timeit timer "spectrumfn" begin
         RossbyWaveSpectrum.RotMatrix(Val(:spectrum), V_symmetric, diffrot, rotation_profile;
-            operators, smoothing_param, ΔΩ_scale, ΔΩ_frac)
+            operators, smoothing_param, ΔΩ_scale, ΔΩ_frac, ΔΩ_smoothing_param)
     end
 
     println(timer)

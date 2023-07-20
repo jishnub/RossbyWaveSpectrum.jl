@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --time="9:00:00"
+#SBATCH --time="6:00:00"
 #SBATCH --job-name=solar
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -36,6 +36,8 @@ diffrot=true
 rotation_profile = :solar_latrad_squished
 # rotation_profile = :solar_constant
 # superadiabaticityparams = (; δrad = -1e-6)
+ΔΩ_smoothing_param = 0.01
+smoothing_param=1e-4
 modeltag = "nu$(viscosity)_rin$(round(r_in_frac, digits=3))_rout$(round(r_out_frac, digits=3))_track$(trackingrate)"
 modeltag *= diffrot && !isone(ΔΩ_scale) ? "_rotscale$(round(ΔΩ_scale, digits=2))" : ""
 filterflags = Filters.EIGEN | Filters.EIGVEC | Filters.EIGVAL | Filters.BC | Filters.SPATIAL_EQUATOR
@@ -43,4 +45,4 @@ filterflags = Filters.EIGEN | Filters.EIGVEC | Filters.EIGVAL | Filters.BC | Fil
 ComputeRossbySpectrum.main(V_symmetric;
 nr, nℓ, mrange, diffrot, rotation_profile, r_in_frac,
 r_out_frac, trackingrate, ΔΩ_scale, Δl_cutoff, n_cutoff,
-modeltag, viscosity, filterflags)'
+modeltag, viscosity, filterflags, ΔΩ_smoothing_param, smoothing_param)'

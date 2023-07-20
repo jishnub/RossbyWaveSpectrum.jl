@@ -671,6 +671,14 @@ function solar_rotation_profile_and_derivative_grid(; squished = false, operator
     solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts_maybestretched, θpts)
 end
 
+function solar_surface_rotation_profile_and_derivative_grid(; squished = false, operators, kw...)
+    @unpack nℓ, r_out = operators.radial_params
+    θpts = points(ChebyshevInterval(), nℓ)
+    splΔΩ2D = solar_diffrot_profile_spline(; operators, kw...)
+    r_out_maybesquished = maybe_stretched_radius(r_out; operators, squished)
+    splΔΩ2D.(r_out_maybesquished, θpts')
+end
+
 function _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts)
     equator_coord = 0.0 # cos(θ) for θ = pi/2
     ΔΩ_r = splΔΩ2D.(rpts, equator_coord)
@@ -793,6 +801,13 @@ function solar_differential_rotation_profile_derivatives_grid(;
         ΔΩ = repeat(ΔΩ_r_, 1, nℓ)
         dr_ΔΩ = repeat(ddrΔΩ_r_, 1, nℓ)
         d2r_ΔΩ = repeat(d2dr2ΔΩ_r_, 1, nℓ)
+    elseif rotation_profile ∈ (:surface, :surface_squished)
+        ΔΩ_θ =
+            solar_surface_rotation_profile_and_derivative_grid(; operators,
+                squished = rotation_profile == :surface_squished,
+                kw...)
+        ΔΩ = repeat(ΔΩ_θ, nr, 1)
+        dr_ΔΩ, d2r_ΔΩ = (zeros(nr, nθ) for i in 1:2)
     elseif rotation_profile ∈ (:latrad, :latrad_squished)
         ΔΩ, dr_ΔΩ, d2r_ΔΩ =
             solar_rotation_profile_and_derivative_grid(; operators,
