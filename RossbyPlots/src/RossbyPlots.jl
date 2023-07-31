@@ -344,7 +344,7 @@ function spectrum(lams::AbstractArray, mr;
     rectpatchcoords = nothing,
     kw...)
 
-    ax.set_xlabel("m", fontsize = 12)
+    ax.set_xlabel("Azimuthal order m", fontsize = 12)
     ax.set_ylabel(L"\Re[\nu]" * (subtract_sectoral ? L"\,-\,\frac{2Ω_0}{m+1}" : "") * " [nHz]", fontsize = 12)
     ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
     ax.xaxis.set_major_locator(ticker.MaxNLocator(5, integer = true))
@@ -688,8 +688,8 @@ function damping_ridge(λs_ridge, mr; operators, f = figure(), ax = subplot(), k
             scale_freq)
     end
 
-    ax.set_ylabel("FWHM [nHz]", fontsize = 12)
-    ax.set_xlabel("m", fontsize = 12)
+    ax.set_ylabel("FWHM [nHz]", fontsize = 15)
+    ax.set_xlabel("Azimuthal order m", fontsize = 15)
     ax.legend(loc="best")
     ax.yaxis.set_major_locator(ticker.MaxNLocator(4))
 
@@ -716,7 +716,9 @@ function damping_multipleridges(Feig::FilteredEigen; kw...)
             plot_dispersion = false,
             kw...)
     end
-    f.set_size_inches(7,4.5)
+    ax.legend(ncol=2, fontsize=11)
+    f.set_size_inches(6, 5)
+    ax.tick_params(labelsize=13)
     if get(kw, :save, false)
         filename = "damping_multiridges.eps"
         savefiginfo(f, filename)
@@ -1340,12 +1342,8 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
             shading = "auto")
         axprofile.yaxis.set_major_locator(ticker.MaxNLocator(3))
         axprofile.xaxis.set_major_locator(ticker.MaxNLocator(3))
-        if get(kw, :showxlabel, true)
-            axprofile.set_xlabel(L"x/R_\odot", fontsize=12)
-        end
-        if get(kw, :showylabel, true)
-            axprofile.set_ylabel(L"z/R_\odot", fontsize=12)
-        end
+        axprofile.set_xlabel(L"x/R_\odot", fontsize=17)
+        axprofile.set_ylabel(L"z/R_\odot", fontsize=17)
         if get(kw, :set_figsize, true)
             f.set_size_inches(3, 3)
         end
@@ -1358,6 +1356,7 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         if get(kw, :colorbar, true)
             cb = colorbar(mappable=p, ax=axprofile)
             cb.ax.get_yaxis().set_major_locator(ticker.MaxNLocator(4))
+            cb.ax.tick_params(labelsize=12)
         end
     end
 
@@ -1405,7 +1404,7 @@ function eigenfunction(v::AbstractVector{<:Number}, m::Integer; operators, kw...
     eigenfunction(VWSinv, θ, m; operators, kw...)
 end
 
-function eigenfunctions(Feig::FilteredEigen, ms, inds; layout=(2,length(inds)÷2), kw...)
+function eigenfunctions(Feig::FilteredEigen, ms, inds; layout=(1,length(inds)), kw...)
     fig = plt.figure(constrained_layout = true, figsize = (3*layout[2], 2.5*layout[1]))
     subfigs = permutedims(fig.subfigures(layout...))
     CIaxes = CartesianIndices(size(subfigs))
@@ -1415,7 +1414,7 @@ function eigenfunctions(Feig::FilteredEigen, ms, inds; layout=(2,length(inds)÷2
     end
     ms2 = ms isa Integer ? fill(ms, length(inds)) : ms
     titlem = !(ms isa Integer)
-    for (m, ind, sf, CI) in zip(ms2, inds, subfigs, CIaxes)
+    _ret = map(zip(ms2, inds, subfigs, CIaxes)) do (m, ind, sf, CI)
         eigenfunction(Feig, m, ind; f = sf,
             constrained_layout=true, title_eigval=true,
             set_figsize = false,
@@ -1426,13 +1425,25 @@ function eigenfunctions(Feig::FilteredEigen, ms, inds; layout=(2,length(inds)÷2
             titlefreq = get(kw, :titlefreq, false),
             kwd...)
     end
+
+    axlists = first.(last.(_ret))
+    for (ind, ax) in enumerate(axlists)
+        if ind != 1
+            ax.yaxis.label.set_visible(false)
+        end
+        ax.tick_params(labelsize=14)
+        ax.xaxis.label.set_size(15)
+        ax.yaxis.label.set_size(15)
+        ax.title.set_size(15)
+    end
+
     fig.set_size_inches(layout[2]*4, layout[1]*4)
     if get(kw, :save, false)
         tag = get(kw, :filenametag, join(ms, "_"))
         filename = joinpath(plotdir, "eigenfn_m$tag.eps")
         savefiginfo(fig, filename)
     end
-    fig, subfigs
+    fig, subfigs, axlists
 end
 
 function eigenfunctions_ridge(Feig::FilteredEigen, ms, ridgeno=2; kw...)
@@ -2318,6 +2329,7 @@ function spectra_different_rotation(Feigs::Vector{FilteredEigen}; layout = (2,2)
     if haskey(kw, :xlim)
         axlist[1,1].set_xlim(kw[:xlim])
     end
+    f.subplots_adjust(hspace=0.5)
     f.set_size_inches(layout[1]*5, layout[2]*3.5)
     f.tight_layout()
     if get(kw, :save, false)
