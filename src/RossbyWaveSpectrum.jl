@@ -5,7 +5,6 @@ using MKL
 using Reexport
 
 @reexport using ApproxFun
-using ApproxFun: SpaceOperator
 @reexport using ApproxFunAssociatedLegendre
 @reexport using BlockArrays
 using BlockBandedMatrices
