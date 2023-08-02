@@ -13,7 +13,7 @@ DomainSets = "5b8099bc-c8ec-5219-889f-1d9e522a28bf"
 HalfIntegers = "f0d1745a-41c9-11e9-1dd9-e5d34d218721"
 
 [compat]
-ApproxFunBase = "0.7, 0.8"
+ApproxFunBase = "0.7, 0.8, 0.9"
 ApproxFunOrthogonalPolynomials = "0.5, 0.6"
 ApproxFunSingularities = "0.3.11"
 Aqua = "0.6"
