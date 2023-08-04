@@ -284,7 +284,7 @@ function radial_operators(operatorparams...)
     r_in = r_in_frac * Rsun;
     r_out = r_out_frac * Rsun;
     radialdomain = UniqueInterval(r_in..r_out)
-    radialspace = Chebyshev(radialdomain)
+    radialspace = Space(radialdomain)
     radial_params = parameters(nr, nℓ; r_in, r_out);
     @unpack Δr, nchebyr, r_mid = radial_params;
     rpts = points(radialspace, nr);

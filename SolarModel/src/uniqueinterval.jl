@@ -1,6 +1,7 @@
 using IntervalSets: AbstractInterval
 import IntervalSets: endpoints, closedendpoints
-using ApproxFun: Space
+import ApproxFun: Space
+using ApproxFunBase
 
 struct UniqueInterval{T, I<:AbstractInterval{T}} <: AbstractInterval{T}
 	parentinterval :: I
