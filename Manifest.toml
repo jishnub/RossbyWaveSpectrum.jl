@@ -64,9 +64,9 @@ version = "0.1.0"
 
 [[deps.ApproxFunBase]]
 deps = ["AbstractFFTs", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "Calculus", "Combinatorics", "DSP", "DomainSets", "DualNumbers", "FFTW", "FillArrays", "InfiniteArrays", "IntervalSets", "LazyArrays", "LinearAlgebra", "LowRankMatrices", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics"]
-git-tree-sha1 = "0c922a0cea5349622689433402cf8036e1c1a93d"
+git-tree-sha1 = "0d6f0db1260ad5fa9801e155da747b38007c34c1"
 uuid = "fbd15aa5-315a-5a7d-a8a4-24992e37be05"
-version = "0.9.7"
+version = "0.9.8"
 
 [[deps.ApproxFunFourier]]
 deps = ["AbstractFFTs", "ApproxFunBase", "BandedMatrices", "DomainSets", "FFTW", "FastTransforms", "InfiniteArrays", "IntervalSets", "LinearAlgebra", "Reexport", "StaticArrays"]
@@ -538,15 +538,15 @@ weakdeps = ["FillArrays"]
 
 [[deps.MKL]]
 deps = ["Artifacts", "Libdl", "LinearAlgebra", "MKL_jll"]
-git-tree-sha1 = "99d923f343425a26eb4f1596d2a6a1118635d73a"
+git-tree-sha1 = "100521a1d2181cb39036ee1a6955d6b9686bb363"
 uuid = "33e6dc65-8f57-5167-99aa-e5a354878fb2"
-version = "0.6.0"
+version = "0.6.1"
 
 [[deps.MKL_jll]]
 deps = ["Artifacts", "IntelOpenMP_jll", "JLLWrappers", "LazyArtifacts", "Libdl", "Pkg"]
-git-tree-sha1 = "2ce8695e1e699b68702c03402672a69f54b8aca9"
+git-tree-sha1 = "eb006abbd7041c28e0d16260e50a24f8f9104913"
 uuid = "856f044c-d86e-5d09-b602-aeab76dc8ba7"
-version = "2022.2.0+0"
+version = "2023.2.0+0"
 
 [[deps.MPFR_jll]]
 deps = ["Artifacts", "GMP_jll", "Libdl"]
