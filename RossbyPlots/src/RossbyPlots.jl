@@ -1,8 +1,5 @@
 module RossbyPlots
 
-__precompile__(false)
-Base.Experimental.@optlevel 1
-
 using PyCall
 using PyPlot
 export PyPlot
@@ -44,6 +41,8 @@ export plot_matrix_block
 const plotdir = dirname(@__DIR__)
 const ticker = PyNULL()
 const axes_grid1 = PyNULL()
+
+const ext = Ref{String}("eps")
 
 function __init__()
 	copy!(ticker, pyimport("matplotlib.ticker"))
@@ -550,7 +549,7 @@ function spectrum(lams::AbstractArray, mr;
         V_symmetric_str = V_symmetric ? "sym" : "asym"
         filenametag = get(kw, :filenametag, V_symmetric_str)
         rotation = get(kw, :rotation, "uniform")
-        filename = "$(rotation)_rotation_spectrum_$(filenametag).eps"
+        filename = "$(rotation)_rotation_spectrum_$(filenametag).$(ext[])"
         savefiginfo(f, filename)
     end
     f, ax, s, rectpatchcoords
@@ -601,7 +600,7 @@ function uniform_rotation_spectrum(fsym::FilteredEigen, fasym::FilteredEigen;
     f.set_size_inches(4.5 .* (1 + plot_linewidths), 6)
     f.tight_layout()
     if get(kw, :save, false)
-        fpath = "spectrum_sym_asym.eps"
+        fpath = "spectrum_sym_asym.$(ext[])"
         savefiginfo(f, fpath)
     end
     return f, axlist
@@ -797,7 +796,7 @@ function damping_multipleridges(Feig::FilteredEigen; kw...)
     f.set_size_inches(6, 5)
     ax.tick_params(labelsize=13)
     if get(kw, :save, false)
-        filename = "damping_multiridges.eps"
+        filename = "damping_multiridges.$(ext[])"
         savefiginfo(f, filename)
     end
     f, ax
@@ -816,7 +815,7 @@ function damping_rossbyridge(lams, mr; operators, f = figure(), ax = subplot(), 
         kw...)
     ax.set_title("Rossby-ridge linewidths", fontsize = 12)
     if get(kw, :save, false)
-        filename = "damping_rossby.eps"
+        filename = "damping_rossby.$(ext[])"
         savefiginfo(f, filename)
     end
     return f, ax
@@ -877,7 +876,7 @@ function damping_highfreqridge(lams, mr; operators, f = figure(), ax = subplot()
 
     f.tight_layout()
     if get(kw, :save, false)
-        filename =  "damping_highfreqridge.eps"
+        filename =  "damping_highfreqridge.$(ext[])"
         savefiginfo(f, filename)
     end
     return f, ax
@@ -890,7 +889,7 @@ function rossby_ridge_data(lams, mr; operators, f = figure(), ax = subplot(), kw
     ax.set_xlim(extrema(mr) .+ (-0.5, 0.5))
 
     if get(kw, :save, false)
-        filename = "rossbyridge.eps"
+        filename = "rossbyridge.$(ext[])"
         savefiginfo(f, filename)
     end
     return f, ax
@@ -904,7 +903,7 @@ function high_frequency_ridge_data(lams, mr; operators, f = figure(), ax = subpl
     ax.set_xlim(extrema(mr) .+ (-0.5, 0.5))
 
     if get(kw, :save, false)
-        filename = "highfreqridge.eps"
+        filename = "highfreqridge.$(ext[])"
         savefiginfo(f, filename)
     end
     return f, ax
@@ -1014,7 +1013,7 @@ function diffrot_rossby_ridge(Fsym,
 
     if get(kw, :save, false)
         rotation_profile = Fsym.kw[:rotation_profile]
-        filename = "freqdiff_diffrot_$rotation_profile.eps"
+        filename = "freqdiff_diffrot_$rotation_profile.$(ext[])"
         savefiginfo(f, filename)
     end
 end
@@ -1343,7 +1342,7 @@ function spectrum_with_datadispersion((Feig, Feig_filt)::NTuple{2,FilteredEigen}
     f.tight_layout()
     if get(kw, :save, false)
         tag = get(kw, :filenametag, "")
-        filename = "spectrum_$(!V_symmetric ? "a" : "")sym$tag.eps"
+        filename = "spectrum_$(!V_symmetric ? "a" : "")sym$tag.$(ext[])"
         savefiginfo(f, filename)
     end
     f, axlist
@@ -1407,7 +1406,7 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
     f.tight_layout()
     f.tight_layout()
     if get(kw, :save, false)
-        filename = "diff_rot_spectrum.eps"
+        filename = "diff_rot_spectrum.$(ext[])"
         savefiginfo(f, filename)
     end
     return nothing
@@ -1559,7 +1558,7 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
         f.tight_layout()
     end
     if get(kw, :save, false)
-        filename = "eigenfunction.eps"
+        filename = "eigenfunction.$(ext[])"
         savefiginfo(f, filename)
     end
     f, axlist
@@ -1612,7 +1611,7 @@ function eigenfunctions(Feig::FilteredEigen, ms, inds; layout=(1,length(inds)), 
     fig.set_size_inches(layout[2]*4, layout[1]*4)
     if get(kw, :save, false)
         tag = get(kw, :filenametag, join(ms, "_"))
-        filename = joinpath(plotdir, "eigenfn_m$tag.eps")
+        filename = joinpath(plotdir, "eigenfn_m$tag.$(ext[])")
         savefiginfo(fig, filename)
     end
     fig, subfigs, axlists
@@ -1669,7 +1668,7 @@ function eigenfunctions_allstreamfn(VWSinv::NamedTuple, θ, m; operators, kw...)
         subfigs[ind].suptitle(string(component)*"("*title_str[field]*")", x = 0.8)
     end
     if get(kw, :save, false)
-        fname = "eigenfunctions_allstreamfn_m$(m).eps"
+        fname = "eigenfunctions_allstreamfn_m$(m).$(ext[])"
         savefiginfo(f, fname)
     end
 end
@@ -1791,7 +1790,7 @@ function eigenfunction_rossbyridge_allstreamfn(Feig::FilteredEigen, m; kw...)
     multiple_eigenfunctions_radial_m(Feig, m; f = subfigs[3],
         kw..., constrained_layout = true, save=false)
     if get(kw, :save, false)
-        savefiginfo(fig, "eigenfunction_rossby_all.eps")
+        savefiginfo(fig, "eigenfunction_rossby_all.$(ext[])")
     end
 end
 
@@ -2084,7 +2083,7 @@ function plot_diffrot_solar(; operators,
     ax.set_rmax(r_out)
 
     if get(kw, :save, false)
-        filename = "rotprof.eps"
+        filename = "rotprof.$(ext[])"
         savefiginfo(f, filename, dpi=get(kw, :dpi, 200))
     end
 end
@@ -2146,7 +2145,7 @@ function plot_diffrot_solar_and_radialsection(; operators,
     f.tight_layout()
     f.subplots_adjust(wspace=0.5)
     if get(kw, :save, false)
-        filename = "solarrotprof_radsection.eps"
+        filename = "solarrotprof_radsection.$(ext[])"
         savefiginfo(f, filename, dpi=get(kw, :dpi, 200))
     end
 end
@@ -2406,7 +2405,7 @@ function plot_constraint_basis(; operators, constraints = RossbyWaveSpectrum.con
     f.tight_layout()
 
     if get(kw, :save, false)
-        fname = "bc_basis.eps"
+        fname = "bc_basis.$(ext[])"
         savefiginfo(f, fname)
     end
     return nothing
@@ -2438,7 +2437,7 @@ function plot_scale_heights(; operators, kw...)
     f.set_size_inches(5,2.5)
     f.tight_layout()
     if get(kw, :save, false)
-        fname = "scale_heights.eps"
+        fname = "scale_heights.$(ext[])"
         savefiginfo(f, fname)
     end
     return nothing
@@ -2706,7 +2705,7 @@ function spectra_different_rotation(Feigs::Vector{FilteredEigen};
     f.set_size_inches(length(axlist)*3.5, 3.5)
     f.tight_layout()
     if get(kw, :save, false)
-        filename = "spectra_rotscale.pdf"
+        filename = "spectra_rotscale.$(ext[])"
         savefiginfo(f, filename)
     end
     f, axlist
@@ -2738,7 +2737,7 @@ function spectrum_with_datadispersion_Bekki(Feig; kw...)
     ax.yaxis.set_major_locator(ticker.MaxNLocator(5))
     f.tight_layout()
     if get(kw, :save, false)
-        filename = "spectrum_bekki.eps"
+        filename = "spectrum_bekki.$(ext[])"
         savefiginfo(f, filename, bbox_inches="tight")
     end
     f, ax
