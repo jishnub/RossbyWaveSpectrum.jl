@@ -1,0 +1,31 @@
+name = "ApproxFunAssociatedLegendre"
+uuid = "48bd048b-2bcf-409a-92a0-8749fd24560e"
+authors = ["Jishnu Bhattacharya <jishnu.bhattacharya@nyu.edu>"]
+version = "0.1.0"
+
+[deps]
+ApproxFunBase = "fbd15aa5-315a-5a7d-a8a4-24992e37be05"
+ApproxFunOrthogonalPolynomials = "b70543e2-c0d9-56b8-a290-0d4d6d4de211"
+ApproxFunSingularities = "f8fcb915-6b99-5be2-b79a-d6dbef8e6e7e"
+BandedMatrices = "aae01518-5342-5314-be14-df237901396f"
+BlockBandedMatrices = "ffab5731-97b5-5995-9138-79e8c1846df0"
+DomainSets = "5b8099bc-c8ec-5219-889f-1d9e522a28bf"
+HalfIntegers = "f0d1745a-41c9-11e9-1dd9-e5d34d218721"
+
+[compat]
+ApproxFunBase = "0.7, 0.8, 0.9"
+ApproxFunOrthogonalPolynomials = "0.5, 0.6"
+ApproxFunSingularities = "0.3.11"
+Aqua = "0.6"
+BandedMatrices = "0.17"
+BlockBandedMatrices = "0.11, 0.12"
+DomainSets = "0.5, 0.6"
+HalfIntegers = "1"
+
+[extras]
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Aqua", "Test", "LinearAlgebra"]

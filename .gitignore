@@ -1,5 +1,8 @@
 dev
 test/dev
 *.eps
+*.pdf
 *.png
+.vscode
+*.ipynb
 

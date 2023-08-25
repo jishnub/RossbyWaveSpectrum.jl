@@ -1,3 +1,4 @@
+using PerformanceTestTools
 PerformanceTestTools.@include_foreach(
     "test_threaded.jl",
     [nothing,

@@ -2,191 +2,171 @@ module RossbyWaveSpectrum
 
 using MKL
 
-using ApproxFun
-using BandedMatrices
-using BlockArrays
+using Reexport
+
+@reexport using ApproxFun
+@reexport using ApproxFunAssociatedLegendre
+@reexport using BlockArrays
 using BlockBandedMatrices
-using Dierckx
-using FillArrays
+import Dierckx
 using Folds
 using JLD2
-using LinearAlgebra
+@reexport using LinearAlgebra
 using LinearAlgebra: BLAS
 using LegendrePolynomials
 using OffsetArrays
-using DelimitedFiles: readdlm
+using SolarModel
 using SparseArrays
 using StructArrays
 using TimerOutputs
-using UnPack
+using Trapz
+@reexport using UnPack
 using ZChop
 
+export rossby_ridge
 export datadir
 export rossbyeigenfilename
 export Filters
-export filteredeigen
+export eigvalspairs
 export FilteredEigen
 export Rsun
-
-include("uniqueinterval.jl")
+export SolarModel
 
 const SCRATCH = Ref("")
 const DATADIR = Ref("")
-const SOLARMODELDIR = Ref("")
-
-# cgs units
-const G = 6.6743e-8
-const Msun = 1.989e+33
-const Rsun = 6.959894677e+10
-
-const Tmul = typeof(Multiplication(Fun()) * Derivative())
-const Tplus = typeof(Multiplication(Fun()) + Derivative())
-
-const StructMatrix{T} = StructArray{T,2}
-const BlockMatrixType = BlockMatrix{Float64, Matrix{BlockBandedMatrix{Float64}},
-    Tuple{BlockedUnitRange{Vector{Int64}}, BlockedUnitRange{Vector{Int64}}}}
 
 function __init__()
     SCRATCH[] = get(ENV, "SCRATCH", homedir())
     DATADIR[] = get(ENV, "DATADIR", joinpath(SCRATCH[], "RossbyWaves"))
-    SOLARMODELDIR[] = joinpath(@__DIR__, "solarmodel")
     if !ispath(RossbyWaveSpectrum.DATADIR[])
         mkdir(RossbyWaveSpectrum.DATADIR[])
     end
 end
 
-grid_to_fun(v::AbstractVector, space) = Fun(space, transform(space, v))
-grid_to_fun(v::AbstractMatrix, space) = LowRankFun(ProductFun(transform(space, v), space))
+struct FilteredEigen
+    lams :: Vector{Vector{ComplexF64}}
+    vs :: Vector{StructArray{ComplexF64, 2, NamedTuple{(:re, :im), NTuple{2,Matrix{Float64}}}, Int64}}
+    mr :: UnitRange{Int}
+    kw :: Dict{Symbol, Any}
+    operators
+    constraints::NamedTuple{(:BC, :ZC), NTuple{2,SparseArrays.SparseMatrixCSC{Float64, Int64}}}
+end
+
+Base.show(io::IO, f::FilteredEigen) = print(io, "Filtered eigen with m range = $(f.mr)")
+
+m_index(Feig, m) = findfirst(==(m), Feig.mr)
+
+function FilteredEigen(lams, vs, mr, kw, operators)
+    constraints = constraintmatrix(operators)
+    FilteredEigen(lams, vs, mr, kw, operators, constraints)
+end
+
+function FilteredEigen(fname::String)
+    isfile(fname) || throw(ArgumentError("Couldn't find $fname"))
+    lam, vec, mr, kw, operatorparams =
+        load(fname, "lam", "vec", "mr", "kw", "operatorparams");
+    operators = radial_operators(operatorparams...)
+    FilteredEigen(lam, vec, mr, kw, operators)
+end
+
+function Base.getindex(Feig::FilteredEigen, m::Integer)
+    mind = m_index(Feig, m)
+    m in Feig.mr || throw(ArgumentError("m = $m is not contained in $f"))
+    FilteredEigenOneOrder(Feig.lams[mind], Feig.vs[mind], m, Feig.kw, Feig.operators, Feig.constraints)
+end
+
+function Base.getindex(Feig::FilteredEigen, mr::UnitRange{<:Integer})
+    ((mr ∩ Feig.mr) == mr) || throw(ArgumentError("m range $mr is not contained in $f"))
+    minds = m_index(Feig, minimum(mr)):m_index(Feig, maximum(mr))
+    FilteredEigenOneOrder(Feig.lams[minds], Feig.vs[minds], m, Feig.kw, Feig.operators, Feig.constraints)
+end
+
+struct FilteredEigenOneOrder
+    lams::Vector{ComplexF64}
+    vs :: StructArray{ComplexF64, 2, NamedTuple{(:re, :im), NTuple{2,Matrix{Float64}}}, Int64}
+    m :: Int
+    kw :: Dict{Symbol, Any}
+    operators
+    constraints::NamedTuple{(:BC, :ZC), NTuple{2,SparseArrays.SparseMatrixCSC{Float64, Int64}}}
+end
+
+eigvalspairs(f::FilteredEigenOneOrder) = pairs(f.lams)
+
+Base.show(io::IO, f::FilteredEigenOneOrder) = print(io, "Filtered eigen with m = $(f.m)")
+
+function Base.getindex(f::FilteredEigenOneOrder, ind::Integer)
+    (; λ = f.lams[ind], v = f.vs[:, ind])
+end
+
+struct RotMatrix{TV,TW,F}
+    V_symmetric :: Bool
+    rotation_profile :: Symbol
+    ΔΩprofile_deriv :: TV
+    ωΩ_deriv :: TW
+    f :: F
+end
+function updaterotatationprofile(d::RotMatrix; operators, timer = TimerOutput(), kw...)
+    if String(d.rotation_profile) == "constant"
+        ΔΩprofile_deriv = @timeit timer "velocity" begin nothing end
+        ωΩ_deriv = @timeit timer "vorticity" begin nothing end
+    elseif startswith(String(d.rotation_profile), "radial")
+        ΔΩprofile_deriv = @timeit timer "velocity" begin
+            radial_differential_rotation_profile_derivatives_Fun(; operators,
+            rotation_profile = rotationtag(d.rotation_profile), kw...)
+        end
+        ωΩ_deriv = @timeit timer "vorticity" begin nothing end
+    elseif startswith(String(d.rotation_profile), "solar")
+        rotation_profile = rotationtag(d.rotation_profile)
+        ΔΩprofile_deriv = @timeit timer "velocity" begin
+            solar_differential_rotation_profile_derivatives_Fun(;
+                operators, rotation_profile, kw...)
+        end
+        ωΩ_deriv = @timeit timer "vorticity" begin
+            solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
+        end
+    else
+        error("unknown rotation profile, must be one of :constant, :radial_* or solar_*")
+    end
+    return RotMatrix(d.V_symmetric, d.rotation_profile, ΔΩprofile_deriv, ωΩ_deriv, d.f)
+end
+updaterotatationprofile(d; kw...) = d
+
+(d::RotMatrix)(args...; kw...) = d.f(args...;
+    rotation_profile = d.rotation_profile,
+    ΔΩprofile_deriv = d.ΔΩprofile_deriv,
+    V_symmetric = d.V_symmetric,
+    ωΩ_deriv = d.ωΩ_deriv,
+    kw...)
+
+function RotMatrix(::Val{T}, V_symmetric, diffrot, rotation_profile; operators, kw...) where {T}
+    T ∈ (:spectrum, :matrix) || error("unknown code ", T)
+    if !diffrot
+        RotMatrix(V_symmetric, :uniform, nothing, nothing,
+            T == :matrix ? uniform_rotation_matrix! : uniform_rotation_spectrum!)
+    else
+        d = RotMatrix(V_symmetric, rotation_profile, nothing, nothing,
+            T == :matrix ? differential_rotation_matrix! : differential_rotation_spectrum!)
+        updaterotatationprofile(d; operators, kw...)
+    end
+end
+
+function updaterotatationprofile(F::FilteredEigen; kw...)
+    @unpack operators = F
+    @unpack V_symmetric, rotation_profile = F.kw
+    matrixfn! = F.kw[:diffrot] ? differential_rotation_matrix! : uniform_rotation_matrix!
+    R = RotMatrix(V_symmetric, rotation_profile, nothing, nothing, matrixfn!)
+    updaterotatationprofile(R; operators, kw...)
+end
 
 datadir(f) = joinpath(DATADIR[], f)
-
-function operatormatrix(f::Fun, nr, spaceconversion::Pair)
-    operatormatrix(Multiplication(f), nr, spaceconversion)
-end
-
-function operatormatrix(A, nr, spaceconversion::Pair)::Matrix{Float64}
-    domain_space, range_space = first(spaceconversion), last(spaceconversion)
-    C = A:domain_space → range_space
-    C[1:nr, 1:nr]
-end
-
-function gausslegendre_theta_grid(ntheta)
-    costheta, w = reverse.(gausslegendre(ntheta))
-    thetaGL = acos.(costheta)
-    (; thetaGL, costheta, w)
-end
-
-function ntheta_ℓmax(nℓ, m)
-    ℓmax = nℓ + m - 1
-    #= degree ℓmax polynomial may be represented using ℓmax + 1 points, but this
-    might need to be increased as the functions are not polynomials in general
-    =#
-    ℓmax + 1
-end
-
-function V_boundary_op(operators)
-    @unpack r = operators.rad_terms;
-    @unpack ddr = operators.diff_operators;
-
-    (r * ddr - 2) : operators.radialspace;
-end
-
-function constraintmatrix(operators)
-    @unpack radial_params = operators;
-    @unpack r_in, r_out = radial_params;
-    @unpack nr, nℓ, Δr = operators.radial_params;
-    @unpack nvariables = operators;
-    @unpack r = operators.rad_terms;
-    @unpack ddr = operators.diff_operators;
-
-    V_BC_op = V_boundary_op(operators);
-    CV = [Evaluation(r_in) * V_BC_op; Evaluation(r_out) * V_BC_op];
-    nradconstraintsVS = size(CV,1);
-    MVn = Matrix(CV[:, 1:nr]);
-    QV = QuotientSpace(operators.radialspace, CV);
-    PV = Conversion(QV, operators.radialspace);
-    ZMVn = PV[1:nr, 1:nr-nradconstraintsVS];
-
-    CW = [Dirichlet(operators.radialspace); Dirichlet(operators.radialspace, 1) * Δr/2];
-    nradconstraintsW = size(CW,1);
-    MWn = Matrix(CW[:, 1:nr]);
-    QW = QuotientSpace(operators.radialspace, CW);
-    PW = Conversion(QW, operators.radialspace);
-    ZMWn = PW[1:nr, 1:nr-nradconstraintsW];
-
-    CS = Dirichlet(operators.radialspace, 1) * Δr/2;
-    MSn = Matrix(CS[:, 1:nr]);
-    QS = QuotientSpace(operators.radialspace, CS);
-    PS = Conversion(QS, operators.radialspace);
-    ZMSn = PS[1:nr, 1:nr-nradconstraintsVS];
-
-    rowsB_VS = Fill(nradconstraintsVS, nℓ);
-    rowsB_W = Fill(nradconstraintsW, nℓ);
-    colsB = Fill(nr, nℓ);
-    B_blocks = if nvariables == 3
-        [blockdiagzero(rowsB_VS, colsB), blockdiagzero(rowsB_W, colsB), blockdiagzero(rowsB_VS, colsB)]
-    else
-        [blockdiagzero(rowsB_VS, colsB), blockdiagzero(rowsB_W, colsB)]
-    end;
-
-    BC_block = mortar(Diagonal(B_blocks))
-
-    rowsZ = Fill(nr, nℓ)
-    colsZ_VS = Fill(nr - nradconstraintsVS, nℓ)
-    colsZ_W = Fill(nr - nradconstraintsW, nℓ)
-    Z_blocks = if nvariables == 3
-        [blockdiagzero(rowsZ, colsZ_VS), blockdiagzero(rowsZ, colsZ_W), blockdiagzero(rowsZ, colsZ_VS)]
-    else
-        [blockdiagzero(rowsZ, colsZ_VS), blockdiagzero(rowsZ, colsZ_W)]
-    end;
-    ZC_block = mortar(Diagonal(Z_blocks))
-
-    BCmatrices = nvariables == 3 ? [MVn, MWn, MSn] : [MVn, MWn]
-
-    for (Mind, M) in enumerate(BCmatrices)
-        BCi = B_blocks[Mind]
-        for ℓind = 1:nℓ
-            BCi[Block(ℓind, ℓind)] = M
-        end
-    end
-    nullspacematrices = nvariables == 3 ? [ZMVn, ZMWn, ZMSn] : [ZMVn, ZMWn];
-    for (Zind, Z) in enumerate(nullspacematrices)
-        ZCi = Z_blocks[Zind]
-        for ℓind = 1:nℓ
-            ZCi[Block(ℓind, ℓind)] = Z
-        end
-    end
-
-    BC = computesparse(BC_block)
-    ZC = computesparse(ZC_block)
-
-    (; BC, ZC, nullspacematrices, BCmatrices)
-end
-
-function parameters(nr, nℓ; r_in = 0.7Rsun, r_out = 0.98Rsun)
-    nchebyr = nr
-    r_mid = (r_in + r_out) / 2
-    Δr = r_out - r_in
-    nparams = nchebyr * nℓ
-    return (; nchebyr, r_in, r_out, Δr, nr, nparams, nℓ, r_mid)
-end
-
-function superadiabaticity(r::Real; r_out = Rsun)
-    δcz = 3e-6
-    δtop = 3e-5
-    dtrans = dtop = 0.05Rsun
-    r_sub = 0.8 * Rsun
-    r_tran = 0.725 * Rsun
-    δrad = -1e-3
-    δconv = δtop * exp((r - r_out) / dtop) + δcz * (r - r_sub) / (r_out - r_sub)
-    δconv + (δrad - δconv) * 1 / 2 * (1 - tanh((r - r_tran) / dtrans))
-end
 
 function sph_points(N)
     @assert N > 0
     M = 2 * N - 1
     return π / N * (0.5:(N-0.5)), 2π / M * (0:(M-1))
 end
+
+reversedview(v::AbstractVector) = view(v, reverse(eachindex(v)))
 
 # Legedre expansion constants
 α⁻ℓm(ℓ, m) = (ℓ < abs(m) ? 0.0 : oftype(0.0, √((ℓ - m) * (ℓ + m) / ((2ℓ - 1) * (2ℓ + 1)))))
@@ -195,307 +175,16 @@ end
 γ⁺ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ+1, m)
 γ⁻ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ, m) - β⁻ℓm(ℓ, m)
 
-function costheta_operator(nℓ, m)
-    dl = [α⁻ℓm(ℓ, m) for ℓ in m .+ (1:nℓ-1)]
-    d = zeros(nℓ)
-    SymTridiagonal(d, dl)'
+function costheta_operator_matrix(nℓ, m)
+    space = NormalizedPlm(m)
+    C = cosθ_Operator(space)
+    C[1:nℓ, 1:nℓ]
 end
 
-function sintheta_dtheta_operator(nℓ, m)
-    dl = [γ⁻ℓm(ℓ, m) for ℓ in m .+ (1:nℓ-1)]
-    d = zeros(nℓ)
-    du = [γ⁺ℓm(ℓ, m) for ℓ in m .+ (0:nℓ-2)]
-    Tridiagonal(dl, d, du)'
-end
-
-read_solar_model() = readdlm(joinpath(SOLARMODELDIR[], "ModelS.detailed"))::Matrix{Float64}
-
-function solar_structure_parameter_splines(; r_in = 0.7Rsun, r_out = Rsun, _stratified #= only for tests =# = true)
-    ModelS = read_solar_model()
-    r_modelS = @view ModelS[:, 1];
-    r_inds = r_in .<= r_modelS .<= r_out;
-    r_modelS = reverse(r_modelS[r_inds]);
-    q_modelS = exp.(reverse(ModelS[r_inds, 2]));
-    T_modelS = reverse(ModelS[r_inds, 3]);
-    ρ_modelS = reverse(ModelS[r_inds, 5]);
-    if !_stratified
-        ρ_modelS = fill(ρ_modelS[1], length(ρ_modelS));
-        T_modelS = fill(T_modelS[1], length(T_modelS));
-    end
-    logρ_modelS = log.(ρ_modelS);
-    logT_modelS = log.(T_modelS);
-
-    sρ = Spline1D(r_modelS, ρ_modelS);
-    slogρ = smoothed_spline(r_modelS, logρ_modelS, s = 1e-6);
-    ddrlogρ_modelS = Dierckx.derivative(slogρ, r_modelS);
-    if !_stratified
-        ddrlogρ_modelS .= 0
-    end
-    sηρ = smoothed_spline(r_modelS, ddrlogρ_modelS, s = 1e-4);
-    sηρ_by_r = smoothed_spline(r_modelS, ddrlogρ_modelS ./ r_modelS, s = 1e-5);
-    sηρ_by_r2 = smoothed_spline(r_modelS, ddrlogρ_modelS ./ r_modelS.^2, s = 1e-6);
-    ddrsηρ = smoothed_spline(r_modelS, derivative(sηρ, r_modelS), s = 1e-5);
-    ddrsηρ_by_r = smoothed_spline(r_modelS, derivative(sηρ_by_r, r_modelS), s = 1e-4);
-    ddrsηρ_by_r2 = smoothed_spline(r_modelS, derivative(sηρ_by_r2, r_modelS), s = 1e-4);
-    d2dr2sηρ = smoothed_spline(r_modelS, derivative(ddrsηρ, r_modelS), s = 1e-4)
-    d3dr3sηρ = smoothed_spline(r_modelS, derivative(ddrsηρ, r_modelS, nu=2), s = 1e-4)
-
-    sT = Spline1D(r_modelS, T_modelS);
-    slogT = smoothed_spline(r_modelS, logT_modelS, s = 1e-7);
-    ddrlogT = Dierckx.derivative(slogT, r_modelS);
-    if !_stratified
-        ddrlogT .= 0
-    end
-    sηT = smoothed_spline(r_modelS, ddrlogT, s = 1e-7);
-
-    g_modelS = @. G * Msun * q_modelS / r_modelS^2;
-    sg = smoothed_spline(r_modelS, g_modelS, s = 1e-2);
-
-    rad_terms = Dict{Symbol, Vector{Float64}}()
-    @pack! rad_terms = r_modelS, ρ_modelS, logρ_modelS, ddrlogρ_modelS, T_modelS, g_modelS
-
-    splines = Dict{Symbol, typeof(sρ)}()
-    @pack! splines = sρ, sT, sg, slogρ, sηρ, sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, ddrsηρ, d2dr2sηρ, d3dr3sηρ, sηT
-    (; splines, rad_terms)
-end
-
-iszerofun(v) = ncoefficients(v) == 0 || (ncoefficients(v) == 1 && coefficients(v)[] == 0.0)
-function replaceemptywitheps(f::Fun, eps = 1e-100)
-    T = eltype(coefficients(f))
-    iszerofun(f) ? typeof(f)(space(f), T[eps]) : f
-end
-
-function checkncoeff(v, vname, nr)
-    if ncoefficients(v) > 2/3*nr
-        @debug "number of coefficients in $vname is $(ncoefficients(v)), but nr = $nr"
-    end
-    return nothing
-end
-macro checkncoeff(v, nr)
-    :(checkncoeff($(esc(v)), $(String(v)), $(esc(nr))))
-end
-
-struct OperatorWrap{T}
-    x::T
-end
-Base.show(io::IO, ::Type{<:OperatorWrap}) = print(io, "Operators")
-Base.show(io::IO, o::OperatorWrap) = print(io, "Operators")
-Base.getproperty(y::OperatorWrap, name::Symbol) = getproperty(getfield(y, :x), name)
-Base.propertynames(y::OperatorWrap) = Base.propertynames(getfield(y, :x))
-
-const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e6, Weqglobalscaling = 1e-3, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
-function radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, _stratified = true, nvariables = 3, ν = 1e10,
-    trackingrate = :cutoff,
-    scalings = DefaultScalings)
-    scalings = merge(DefaultScalings, scalings)
-    radial_operators(nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate, Tuple(scalings))
-end
-function radial_operators(operatorparams...)
-    nr, nℓ, r_in_frac, r_out_frac, _stratified, nvariables, ν, trackingrate, scalings = operatorparams
-
-    Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling = scalings
-
-    r_in = r_in_frac * Rsun;
-    r_out = r_out_frac * Rsun;
-    radialdomain = UniqueInterval(r_in..r_out)
-    radialspace = Chebyshev(radialdomain)
-    radial_params = parameters(nr, nℓ; r_in, r_out);
-    @unpack Δr, nchebyr, r_mid = radial_params;
-    rpts = points(radialspace, nr);
-
-    r = Fun(radialspace);
-    r2 = r^2;
-    r3 = r^3;
-    r4 = r2^2;
-
-    @unpack splines = solar_structure_parameter_splines(; r_in, r_out, _stratified);
-
-    @unpack sg, sηρ, ddrsηρ, d2dr2sηρ,
-        sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, d3dr3sηρ, sηT = splines;
-
-    ddr = ApproxFun.Derivative();
-    rddr = (r * ddr)::Tmul;
-    d2dr2 = ApproxFun.Derivative(2);
-    d3dr3 = ApproxFun.Derivative(3);
-    d4dr4 = ApproxFun.Derivative(4);
-    r2d2dr2 = (r2 * d2dr2)::Tmul;
-
-    # density stratification
-    ηρ = replaceemptywitheps(ApproxFun.chop(Fun(sηρ, radialspace), 1e-3));
-    @checkncoeff ηρ nr
-
-    ηT = replaceemptywitheps(ApproxFun.chop(Fun(sηT, radialspace), 1e-2));
-    @checkncoeff ηT nr
-
-    ηρT = ηρ + ηT
-
-    DDr = (ddr + ηρ)::Tplus
-    rDDr = (r * DDr)::Tmul
-
-    onebyr = (1 / r)::typeof(r)
-    twobyr = 2onebyr
-    onebyr2 = onebyr*onebyr
-    onebyr3 = onebyr2*onebyr
-    onebyr4 = onebyr2*onebyr2
-    DDr_minus_2byr = (DDr - 2onebyr)::Tplus
-    ddr_plus_2byr = (ddr + 2onebyr)::Tplus
-
-    # ηρ_by_r = onebyr * ηρ
-    ηρ_by_r = chop(Fun(sηρ_by_r, radialspace), 1e-2);
-    @checkncoeff ηρ_by_r nr
-
-    ηρ_by_r2 = ηρ * onebyr2
-    @checkncoeff ηρ_by_r2 nr
-
-    ηρ_by_r3 = ηρ_by_r2 * onebyr
-    @checkncoeff ηρ_by_r3 nr
-
-    ddr_ηρ = chop(Fun(ddrsηρ, radialspace), 1e-2)
-    @checkncoeff ddr_ηρ nr
-
-    ddr_ηρbyr = chop(Fun(ddrsηρ_by_r, radialspace), 1e-2)
-    @checkncoeff ddr_ηρbyr nr
-
-    # ddr_ηρbyr = ddr * ηρ_by_r
-    d2dr2_ηρ = chop!(Fun(d2dr2sηρ, radialspace), 1e-2);
-    @checkncoeff d2dr2_ηρ nr
-
-    d3dr3_ηρ = chop(Fun(d3dr3sηρ, radialspace), 1e-2)
-    @checkncoeff d3dr3_ηρ nr
-
-    ddr_ηρbyr2 = chop(Fun(ddrsηρ_by_r2, radialspace), 5e-3)
-    @checkncoeff ddr_ηρbyr2 nr
-
-    # ddr_ηρbyr2 = ddr * ηρ_by_r2
-    ηρ2_by_r2 = ApproxFun.chop(ηρ_by_r2 * ηρ, 1e-3)
-    @checkncoeff ηρ2_by_r2 nr
-
-    ddrηρ_by_r = ddr_ηρ * onebyr
-    d2dr2ηρ_by_r = d2dr2_ηρ * onebyr
-
-    ddrDDr = (d2dr2 + (ηρ * ddr)::Tmul + ddr_ηρ)::Tplus
-    d2dr2DDr = (d3dr3 + (ηρ * d2dr2)::Tmul + (ddr_ηρ * ddr)::Tmul + d2dr2_ηρ)::Tplus
-
-    g = Fun(sg, radialspace)
-
-    tracking_rate_rad = if trackingrate === :cutoff
-            r_out_frac
-        elseif trackingrate === :surface
-            1.0
-        else
-            throw(ArgumentError("trackingrate must be one of :cutoff or :surface"))
-        end
-    Ω0 = RossbyWaveSpectrum.equatorial_rotation_angular_velocity_surface(tracking_rate_rad) * trackingratescaling
-
-    # viscosity
-    ν /= Ω0 * Rsun^2
-    κ = ν
-
-    δ = Fun(superadiabaticity, radialspace);
-    γ = 1.64
-    cp = 1.7e8
-
-    # ddr_S0_by_cp = γ/cp * δ * ηρ;
-    ddr_S0_by_cp = chop(Fun(x -> γ / cp * superadiabaticity(x) * ηρ(x), radialspace), 1e-3);
-    @checkncoeff ddr_S0_by_cp nr
-
-    ddr_S0_by_cp_by_r2 = chop(onebyr2 * ddr_S0_by_cp, 1e-4)
-
-    # matrix representations
-
-    spaceconversionCU2 = radialspace => rangespace(d2dr2:radialspace)
-    matCU2 = x -> operatormatrix(x, nr, spaceconversionCU2)
-    spaceconversionCU4 = radialspace => rangespace(d4dr4:radialspace)
-    matCU4 = x -> operatormatrix(x, nr, spaceconversionCU4)
-
-    # matrix forms of operators
-    onebyrMCU2 = matCU2(onebyr)
-    onebyrMCU4 = matCU4(onebyr)
-    onebyr2MCU2 = matCU2(onebyr2)
-    onebyr2MCU4 = matCU4(onebyr2);
-
-    ddrMCU4 = matCU4(ddr)
-    rMCU4 = matCU4(r)
-    ddr_minus_2byrMCU4 = @. ddrMCU4 - 2*onebyrMCU4
-    d2dr2MCU2 = matCU2(d2dr2)
-    d2dr2MCU4 = matCU4(d2dr2)
-    d3dr3MCU4 = matCU4(d3dr3)
-    d4dr4MCU4 = matCU4(d4dr4)
-    DDrMCU2 = matCU2(DDr)
-    DDr_minus_2byrMCU2 = matCU2(DDr_minus_2byr)
-    ddrDDrMCU4 = matCU4(ddrDDr);
-    gMCU4 = matCU4(g)
-
-    # uniform rotation terms
-    onebyr2_IplusrηρMCU4 = matCU4(onebyr2 + ηρ * onebyr);
-    ∇r2_plus_ddr_lnρT_ddr = (d2dr2 + (twobyr * ddr)::Tmul + (ηρT * ddr)::Tmul)::Tplus;
-    κ_∇r2_plus_ddr_lnρT_ddrMCU2 = lmul!(κ, matCU2(∇r2_plus_ddr_lnρT_ddr));
-    κ_by_r2MCU2 = lmul!(κ, matCU2(onebyr2));
-    ddr_S0_by_cp_by_r2MCU2 = matCU2(ddr_S0_by_cp_by_r2);
-
-    # terms for viscosity
-    ddr_minus_2byr = (ddr - twobyr)::Tplus;
-    ηρ_ddr_minus_2byrMCU2 = matCU2((ηρ * ddr_minus_2byr)::Tmul);
-    onebyr2_d2dr2MCU4 = matCU4((onebyr2 * d2dr2)::Tmul);
-    onebyr3_ddrMCU4 = matCU4((onebyr3 * ddr)::Tmul);
-    onebyr4_chebyMCU4 = matCU4(onebyr4);
-
-    ηρ_by_rMCU4 = matCU4(ηρ_by_r)
-    ηρ2_by_r2MCU4 = matCU4(ηρ2_by_r2)
-    ηρ_by_r3MCU4 = matCU4(ηρ * onebyr3)
-
-    IU2 = matCU2(I);
-
-    scalings = Dict{Symbol, Float64}()
-    @pack! scalings = Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling, trackingratescaling
-
-    constants = (; κ, ν, Ω0) |> pairs |> Dict
-
-    rad_terms = Dict{Symbol, typeof(r)}();
-    @pack! rad_terms = onebyr, ηρ, ηT,
-        onebyr2, onebyr3, onebyr4,
-        ηρT, g, r, r2,
-        ηρ_by_r, ηρ_by_r2, ηρ2_by_r2, ddr_ηρbyr, ddr_ηρbyr2, ηρ_by_r3,
-        ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddr_S0_by_cp_by_r2,
-        ddrηρ_by_r, d2dr2ηρ_by_r
-
-    diff_operators = (; DDr, DDr_minus_2byr, rDDr, rddr, ddrDDr, d2dr2DDr,
-        ddr, d2dr2, d3dr3, d4dr4, r2d2dr2, ddr_plus_2byr)
-
-    operator_matrices = Dict{Symbol, typeof(IU2)}();
-    @pack! operator_matrices = DDrMCU2,
-        ddrMCU4, d2dr2MCU2, d2dr2MCU4,
-        ddrDDrMCU4,
-        ddr_minus_2byrMCU4, DDr_minus_2byrMCU2,
-        d3dr3MCU4, d4dr4MCU4,
-        # uniform rotation terms
-        κ_∇r2_plus_ddr_lnρT_ddrMCU2,
-        # viscosity terms
-        ηρ_ddr_minus_2byrMCU2, onebyr2_d2dr2MCU4, onebyr3_ddrMCU4,
-        onebyrMCU2, onebyrMCU4, onebyr2MCU2,
-        onebyr2MCU4, ddr_S0_by_cp_by_r2MCU2, κ_by_r2MCU2,
-        gMCU4, ηρ_by_rMCU4, ηρ2_by_r2MCU4, ηρ_by_r3MCU4,
-        onebyr2_IplusrηρMCU4, onebyr4_chebyMCU4,
-        rMCU4, IU2
-
-    op = (;
-        radialdomain,
-        radialspace,
-        nvariables,
-        constants,
-        rad_terms,
-        scalings,
-        splines,
-        diff_operators,
-        rpts,
-        radial_params,
-        operator_matrices,
-        matCU2,
-        matCU4,
-        operatorparams,
-    )
-
-    OperatorWrap(op)
+function sintheta_dtheta_operator_matrix(nℓ, m)
+    space = NormalizedPlm(m)
+    S = sinθdθ_Operator(space)
+    S[1:nℓ, 1:nℓ]
 end
 
 function blockinds((m, nr), ℓ, ℓ′ = ℓ)
@@ -522,72 +211,29 @@ function matrix_block(M::AbstractMatrix, rowind, colind, nblocks = 3)
     @view M[inds]
 end
 
-matrix_block_maximum(f, M::AbstractMatrix, nblocks = 3) = [maximum(f, matrix_block(M, i, j, nblocks)) for i in 1:nblocks, j in 1:nblocks]
-function matrix_block_maximum(f, M::BlockBandedMatrix, nblocks = 3)
-    maximum(f, (maximum(f, b) for b in blocks(M)))
+matrix_block_apply(fred, f, M::AbstractMatrix, nblocks = 3) = [fred(f, matrix_block(M, i, j, nblocks)) for i in 1:nblocks, j in 1:nblocks]
+
+matrix_block_maximum(f, M::AbstractMatrix, nblocks = 3) = matrix_block_apply(maximum, f, M, nblocks)
+matrix_block_maximum(M::AbstractMatrix, nblocks = 3) = matrix_block_apply(maximum, M, nblocks)
+
+function matrix_block_apply(fred, f, M::BlockBandedMatrix, nblocks = 3)
+    fred(f, (fred(f, b) for b in blocks(M)))
 end
-function matrix_block_maximum(f, M::BlockMatrix, nblocks = 3)
-    [matrix_block_maximum(f, Mb, nblocks) for Mb in blocks(M)]
+function matrix_block_apply(fred, f, M::BlockMatrix, nblocks = 3)
+    [matrix_block_apply(fred, f, Mb, nblocks) for Mb in blocks(M)]
 end
-function matrix_block_maximum(M::StructMatrix{<:Complex}, nblocks = 3)
-    R = matrix_block_maximum(abs, M.re, nblocks)
-    I = matrix_block_maximum(abs, M.im, nblocks)
+function matrix_block_apply(fred, M::StructMatrix{<:Complex}, nblocks = 3)
+    R = matrix_block_apply(fred, abs, M.re, nblocks)
+    I = matrix_block_apply(fred, abs, M.im, nblocks)
     [R I]
 end
-function matrix_block_maximum(M::AbstractMatrix{<:Complex}, nblocks = 3)
-    R = matrix_block_maximum(abs∘real, M, nblocks)
-    I = matrix_block_maximum(abs∘imag, M, nblocks)
+function matrix_block_apply(fred, M::AbstractMatrix{<:Complex}, nblocks = 3)
+    R = matrix_block_apply(fred, abs∘real, M, nblocks)
+    I = matrix_block_apply(fred, abs∘imag, M, nblocks)
     [R I]
 end
-function matrix_block_maximum(M::AbstractMatrix{<:Real}, nblocks = 3)
-    matrix_block_maximum(abs∘real, M, nblocks)
-end
-
-function computesparse(M::StructMatrix{<:Complex})
-    SR = computesparse(M.re)
-    SI = computesparse(M.im)
-    StructArray{eltype(M)}((SR, SI))
-end
-
-function computesparse(M::BlockMatrix)
-    v = [sparse(M[j, i]) for (i,j) in Iterators.product(blockaxes(M)...)]
-    TS = SparseMatrixCSC{eltype(M),Int}
-    if blocksize(M, 2) == 3
-        hvcat((3,3,3), v...)::TS
-    elseif blocksize(M, 2) == 2
-        hvcat((2,2), v...)::TS
-    else
-        error("unsupported block size")
-    end
-end
-
-computesparse(M::AbstractMatrix) = sparse(M)
-computesparse(S::SparseMatrixCSC) = S
-
-blockbandedzero(rows, cols, (l, u)) = BlockBandedMatrix(Zeros(sum(rows), sum(cols)), rows, cols, (l,u))
-blockdiagzero(rows, cols) = blockbandedzero(rows, cols, (0, 0))
-
-function allocate_block_matrix(nvariables, bandwidth, rows, cols = rows)
-    l,u = bandwidth, bandwidth # block bandwidths
-    mortar(reshape(
-            [blockbandedzero(rows, cols, (l,u)) for _ in 1:nvariables^2],
-                nvariables, nvariables))::BlockMatrixType
-end
-
-function allocate_operator_matrix(operators, bandwidth = 2)
-    @unpack nr, nℓ = operators.radial_params
-    @unpack nvariables = operators
-    rows = Fill(nr, nℓ) # block sizes
-    R = allocate_block_matrix(nvariables, bandwidth, rows)
-    I = allocate_block_matrix(nvariables, 0, rows)
-    StructArray{ComplexF64}((R, I))
-end
-
-function allocate_mass_matrix(operators)
-    @unpack nr, nℓ = operators.radial_params
-    @unpack nvariables = operators
-    rows = Fill(nr, nℓ) # block sizes
-    allocate_block_matrix(nvariables, 0, rows)
+function matrix_block_apply(fred, M::AbstractMatrix{<:Real}, nblocks = 3)
+    matrix_block_apply(fred, abs∘real, M, nblocks)
 end
 
 ℓrange(m, nℓ, symmetric) = range(m + !symmetric, length = nℓ, step = 2)
@@ -597,646 +243,569 @@ function mass_matrix(m; operators, kw...)
     mass_matrix!(B, m; operators, kw...)
     return B
 end
-function mass_matrix!(B, m; operators, V_symmetric = true, kw...)
-    @unpack nr, nℓ = operators.radial_params
-    @unpack nvariables = operators
-    @unpack ddrDDrMCU4, onebyr2MCU4, IU2 = operators.operator_matrices;
-    @unpack Weqglobalscaling = operators.scalings
+function mass_matrix!(B, m; operators, V_symmetric, kw...)
+    @unpack nr, nℓ = operators.radial_params;
+    @unpack Weqglobalscaling = operators.scalings;
+
+    @unpack onebyr2 = operators.rad_terms;
+    @unpack ddrDDr = operators.diff_operators;
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces
+
+    latitudinal_space = NormalizedPlm(m);
+
+    Ir = ConstantOperator(I);
+    Iℓ = I : latitudinal_space;
+    space2d = radialspace ⊗ latitudinal_space;
+
+    ∇² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇²;
 
     B .= 0
 
     VV = matrix_block(B, 1, 1)
     WW = matrix_block(B, 2, 2)
-    if nvariables == 3
-        SS = matrix_block(B, 3, 3)
-    end
+    SS = matrix_block(B, 3, 3)
 
-    # V terms
-    V_ℓs = ℓrange(m, nℓ, V_symmetric)
+    V_ℓinds = ℓrange(1, nℓ, V_symmetric)
+    W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    # W, S terms
-    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
+    space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
+    I2d_D2 = ((Ir ⊗ Iℓ) : space2d → space2d_D2) |> expand
 
-    @views for ℓind in eachindex(V_ℓs)
-        VV[Block(ℓind, ℓind)] .= IU2
-        if nvariables == 3
-            SS[Block(ℓind, ℓind)] .= IU2
-        end
-    end
+    VV_ = real(kronmatrix(I2d_D2, nr, V_ℓinds, V_ℓinds));
+    VV .= VV_
+    SS .= VV_
 
-    T = similar(ddrDDrMCU4);
-    @views for (ℓind, ℓ) in enumerate(W_ℓs)
-        ℓℓp1 = ℓ * (ℓ+1)
-
-        @. T = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
-        WW[Block(ℓind, ℓind)] .= (Weqglobalscaling * Rsun^2) .* T
-    end
+    space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
+    WWop = ((ddrDDr ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op) : space2d → space2d_D4) |> expand
+    WW_ = real(kronmatrix(WWop, nr, W_ℓinds, W_ℓinds));
+    WW .= (Weqglobalscaling * Rsun^2) .* WW_
 
     return B
 end
 
 function uniform_rotation_matrix(m; operators, kw...)
-    A = allocate_operator_matrix(operators)
+    A = allocate_operator_matrix(operators, 2)
     uniform_rotation_matrix!(A, m; operators, kw...)
     return A
 end
 
-function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_symmetric = true, kw...)
-    @unpack nvariables = operators;
+function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_symmetric, kw...)
     @unpack Ω0 = operators.constants;
     @unpack nr, nℓ = operators.radial_params
     @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
 
-    @unpack ddrMCU4, DDrMCU2, DDr_minus_2byrMCU2, ddrDDrMCU4, κ_∇r2_plus_ddr_lnρT_ddrMCU2,
-        onebyrMCU2, onebyrMCU4, onebyr2MCU4, ηρ_by_rMCU4, ddr_S0_by_cp_by_r2MCU2,
-        κ_by_r2MCU2, gMCU4, ddr_minus_2byrMCU4, IU2 = operators.operator_matrices;
+    @unpack onebyr, onebyr2, r, r2, g, ηρ, ddr_S0_by_Cp_by_r2 = operators.rad_terms;
+    @unpack ddr, d2dr2, DDr, ddrDDr, DDr_minus_2byr, ∇r2_plus_ddr_lnρT_ddr = operators.diff_operators;
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
+    @unpack constants = operators;
+    @unpack κ = constants;
 
     A.re .= 0
     A.im .= 0
 
-    VV = matrix_block(A.re, 1, 1)
-    VW = matrix_block(A.re, 1, 2)
-    WV = matrix_block(A.re, 2, 1)
-    WW = matrix_block(A.re, 2, 2)
-    # the following are only valid if S is included
-    if nvariables == 3
-        WS = matrix_block(A.re, 2, 3)
-        SW = matrix_block(A.re, 3, 2)
-        SS = matrix_block(A.im, 3, 3)
-    end
+    VV = matrix_block(A.re, 1, 1);
+    VW = matrix_block(A.re, 1, 2);
+    WV = matrix_block(A.re, 2, 1);
+    WW = matrix_block(A.re, 2, 2);
+    WS = matrix_block(A.re, 2, 3);
+    SW = matrix_block(A.re, 3, 2);
+    SS = matrix_block(A.im, 3, 3);
 
     nCS = 2nℓ+1
     ℓs = range(m, length = nCS)
-    cosθ = OffsetArray(costheta_operator(nCS, m), ℓs, ℓs);
-    sinθdθ = OffsetArray(sintheta_dtheta_operator(nCS, m), ℓs, ℓs);
 
-    T = zeros(nr, nr)
+    latitudinal_space = NormalizedPlm(m);
 
-    # V terms
-    V_ℓs = ℓrange(m, nℓ, V_symmetric)
-    # W, S terms
-    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
+    Ir = ConstantOperator(I);
+    Iℓ = I : latitudinal_space;
+    space2d = radialspace ⊗ latitudinal_space;
 
-    @views for (ℓind, ℓ) in enumerate(V_ℓs)
-        ℓℓp1 = ℓ * (ℓ + 1)
+    sinθdθop = sinθdθ_Operator(latitudinal_space);
+    cosθop = cosθ_Operator(latitudinal_space);
+    ∇² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇²;
+    inv_ℓℓp1 = inv(ℓℓp1op)
+    two_by_ℓℓp1 = 2inv_ℓℓp1
+    twom_by_ℓℓp1 = m * two_by_ℓℓp1
 
-        twom_by_ℓℓp1 = 2m/ℓℓp1
+    scaled_curl_u_x_ω_r_tmp = OpVector(V = Ir ⊗ twom_by_ℓℓp1,
+        iW = (Ir ⊗ two_by_ℓℓp1) * (
+            DDr_minus_2byr ⊗ (cosθop * ∇²)
+            - DDr ⊗ sinθdθop - onebyr ⊗ (sinθdθop * ∇²))
+        )
 
-        VV[Block(ℓind, ℓind)] .= twom_by_ℓℓp1 .* IU2
+    space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
+    scaled_curl_u_x_ω_r = (scaled_curl_u_x_ω_r_tmp : space2d → space2d_D2) |> expand;
 
-        for ℓ′ in intersect(W_ℓs, ℓ-1:2:ℓ+1)
-            ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
+    V_ℓinds = ℓrange(1, nℓ, V_symmetric)
+    W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-            @. T = (-2/ℓℓp1) * (ℓ′ℓ′p1 * DDr_minus_2byrMCU2 * cosθ[ℓ, ℓ′] +
-                    (DDrMCU2 - ℓ′ℓ′p1 * onebyrMCU2) * sinθdθ[ℓ, ℓ′]) * Rsun / Wscaling
-            VW[Block(ℓind, ℓ′ind)] .= T
-        end
-    end
+    temp = zeros(eltype(A), nr * nℓ, nr * nℓ)
 
-    @views for (ℓind, ℓ) in enumerate(W_ℓs)
-        ℓℓp1 = ℓ * (ℓ + 1)
-        twom_by_ℓℓp1 = 2m/ℓℓp1
+    VV_ = kronmatrix!(temp, scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds);
+    VV .= real.(VV_);
 
-        @. T = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4
+    VW_ = kronmatrix!(temp, scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds);
+    VW .= (Rsun / Wscaling) .* real.(VW_);
 
-        WW[Block(ℓind, ℓind)] .= (Weqglobalscaling * twom_by_ℓℓp1 * Rsun^2) .*
-                                (T .- ℓℓp1 .* ηρ_by_rMCU4)
+    scaled_curl_curl_u_x_ω_r_tmp = OpVector(
+        V = (Ir ⊗ two_by_ℓℓp1) * (
+            (ddr - 2*onebyr) ⊗ (cosθop * ∇²)
+            - ddr ⊗ sinθdθop - onebyr ⊗ (sinθdθop * ∇²)),
+        iW = (Ir ⊗ twom_by_ℓℓp1) * (ddrDDr ⊗ Iℓ - ((1 + ηρ*r)*onebyr2) ⊗ ℓℓp1op),
+        )
+    space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
+    scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
 
-        if nvariables == 3
-            @. T = - gMCU4 / (Ω0^2 * Rsun)  * Wscaling/Sscaling
-            WS[Block(ℓind, ℓind)] .= Weqglobalscaling .* T
-            @. T = ℓℓp1 * ddr_S0_by_cp_by_r2MCU2 * (Rsun^3 * Sscaling/Wscaling)
-            SW[Block(ℓind, ℓind)] .= Seqglobalscaling .* T
-            @. T = -(κ_∇r2_plus_ddr_lnρT_ddrMCU2 - ℓℓp1 * κ_by_r2MCU2) * Rsun^2
-            SS[Block(ℓind, ℓind)] .= Seqglobalscaling .* T
-        end
+    WV_ = kronmatrix!(temp, scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds);
+    WV .= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
 
-        for ℓ′ in intersect(V_ℓs, ℓ-1:2:ℓ+1)
-            ℓ′ind = findfirst(isequal(ℓ′), V_ℓs)
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
+    WW_ = kronmatrix!(temp, scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds);
+    WW .= (Weqglobalscaling * Rsun^2) .* real.(WW_);
 
-            @. T = (-2/ℓℓp1) * (ℓ′ℓ′p1 * ddr_minus_2byrMCU4 * cosθ[ℓ, ℓ′] +
-                    (ddrMCU4 - ℓ′ℓ′p1 * onebyrMCU4) * sinθdθ[ℓ, ℓ′]) * Rsun * Wscaling
+    WSop = (-g/(Ω0^2 * Rsun) ⊗ Iℓ) : space2d → space2d_D4
+    WS_ = kronmatrix!(temp, WSop, nr, W_ℓinds, W_ℓinds);
+    WS .= real.(WS_) .* (Wscaling/Sscaling) * Weqglobalscaling
 
-            WV[Block(ℓind, ℓ′ind)] .= Weqglobalscaling .* T
-        end
-    end
+    SWop = (ddr_S0_by_Cp_by_r2 ⊗ ℓℓp1op) : space2d → space2d_D2
+    SW_ = kronmatrix!(temp, SWop, nr, W_ℓinds, W_ℓinds);
+    SW .= real.(SW_) .* (Rsun^3 * Seqglobalscaling * Sscaling/Wscaling)
+
+    SSop = ((-κ * (∇r2_plus_ddr_lnρT_ddr ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)) : space2d → space2d_D2) |> expand
+    SS_ = kronmatrix!(temp, SSop, nr, W_ℓinds, W_ℓinds);
+    SS .= real.(SS_) .* (Rsun^2 * Seqglobalscaling)
 
     viscosity_terms!(A, m; operators, V_symmetric, kw...)
 
     return A
 end
 
-function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric = true, kw...)
+function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric, kw...)
     @unpack nr, nℓ = operators.radial_params;
-
-    @unpack ddrMCU4, d2dr2MCU2, d3dr3MCU4, onebyr2MCU2,
-        ηρ_ddr_minus_2byrMCU2, onebyr2_d2dr2MCU4,
-        onebyr3_ddrMCU4, onebyr4_chebyMCU4, d4dr4MCU4, ηρ2_by_r2MCU4,
-        ηρ_by_r3MCU4 = operators.operator_matrices;
-
-    @unpack ddr, d2dr2, d3dr3, DDr, ddrDDr, d2dr2DDr = operators.diff_operators;
-
-    @unpack ddr_ηρbyr, ηρ, ddr_ηρ, d2dr2_ηρ, d3dr3_ηρ, ddrηρ_by_r, d2dr2ηρ_by_r, ηρ_by_r,
-        ηρ_by_r2, ddr_ηρbyr2, onebyr2, onebyr = operators.rad_terms;
-
-    @unpack nvariables = operators;
+    @unpack ddr, d2dr2, d3dr3, DDr, d2dr2_ηρbyr_op = operators.diff_operators;
+    @unpack ηρ, ηρ_by_r, ηρ_by_r2, onebyr2, onebyr, r, ηρ2_by_r2 = operators.rad_terms;
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
     @unpack ν = operators.constants;
-    @unpack matCU4, matCU2 = operators;
     @unpack Weqglobalscaling = operators.scalings;
 
     VVim = matrix_block(A.im, 1, 1)
     WWim = matrix_block(A.im, 2, 2)
 
-    # caches for the WW term
-    T1_1 = zeros(nr, nr);
-    T1_2 = zeros(nr, nr);
-    T3_1 = zeros(nr, nr);
-    T3_2 = zeros(nr, nr);
-    T4 = zeros(nr, nr);
-    WWop = zeros(nr, nr);
+    latitudinal_space = NormalizedPlm(m);
 
-    # T1_1 terms
-    d3dr3ηρMCU4 = matCU4(d3dr3_ηρ);
-    ηρ_d3dr3MCU4 = matCU4(ηρ * d3dr3);
-    d2dr2ηρ_by_rMCU4 = matCU4(d2dr2ηρ_by_r);
-    threeddrηρ_min_4ηρbyr_d2dr2MCU4 = matCU4((3*ddr_ηρ - 4*ηρ_by_r)*d2dr2);
-    threed2dr2ηρ_min_8ddrηρ_by_r_plus_ηρ_by_r2_ddrMCU4 = matCU4((3*d2dr2_ηρ - 8*ddrηρ_by_r + 8*ηρ_by_r2)*ddr);
-    ddrηρ_by_r2MCU4 = matCU4(ddr_ηρ * onebyr2);
-    ηρ_by_r2_ddrMCU4 = matCU4(ηρ_by_r2 * ddr);
+    Ir = ConstantOperator(I);
+    Iℓ = I : latitudinal_space;
+    space2d = radialspace ⊗ latitudinal_space;
+    ∇² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇²;
 
-    # T1_2 terms
-    ηρ_by_r_d2dr2MCU4 = matCU4(ηρ_by_r * d2dr2);
-    ddrηρ_by_r_ddr_min_ηρ_by_r2_ddrMCU4 = matCU4(ddrηρ_by_r * ddr) .- matCU4(ηρ_by_r2 * ddr);
-    d2dr2ηρ_by_r_min_2ddrηρ_by_r2MCU4 = matCU4(d2dr2_ηρ * onebyr) .- 2 .* matCU4(ddr_ηρ * onebyr2);
+    V_ℓinds = ℓrange(1, nℓ, V_symmetric)
+    W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    # T3_1 terms
-    ddrηρbyr2MCU4 = matCU4(ddr_ηρbyr2);
-    ddrηρ_min_2ηρbyr_ddrDDrMCU4 = matCU4((ddr_ηρ - 2ηρ_by_r)*ddrDDr);
-    ηρd2dr2DDrMCU4 = matCU4(ηρ * d2dr2DDr);
-    ddr_ηρbyr_DDrMCU4 = matCU4(ddr_ηρbyr * DDr);
+    temp = zeros(eltype(A), nr * nℓ, nr * nℓ)
 
-    # V terms
-    V_ℓs = ℓrange(m, nℓ, V_symmetric)
+    space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
+    VVop_ = -ν * ((d2dr2 + ηρ * (ddr - 2onebyr)) ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)
+    VVop = (VVop_ : space2d → space2d_D2) |> expand
+    VV_ = kronmatrix!(temp, VVop, nr, V_ℓinds, V_ℓinds)
+    VVim .= real.(VV_) * Rsun^2
 
-    @views for (ℓind, ℓ) in enumerate(V_ℓs)
-        ℓℓp1 = ℓ * (ℓ + 1)
-        @. T1_1 = -ν * (d2dr2MCU2 - ℓℓp1 * onebyr2MCU2 + ηρ_ddr_minus_2byrMCU2) * Rsun^2
-
-        VVim[Block(ℓind, ℓind)] .= T1_1
-    end
-
-    # W, S terms
-    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
-
-    @views for (ℓind, ℓ) in enumerate(W_ℓs)
-        ℓℓp1 = ℓ * (ℓ + 1)
-        neg2by3_ℓℓp1 = -2ℓℓp1 / 3
-
-        ℓpre = (ℓ-2)*ℓ*(ℓ+1)*(ℓ+3)
-        @. T1_1 = ((d3dr3ηρMCU4 -4*d2dr2ηρ_by_rMCU4 + 8*ddrηρ_by_r2MCU4 - 8*ηρ_by_r3MCU4)
-                    + threeddrηρ_min_4ηρbyr_d2dr2MCU4
-                    + threed2dr2ηρ_min_8ddrηρ_by_r_plus_ηρ_by_r2_ddrMCU4
-                    + ηρ_d3dr3MCU4
-                    - (ℓℓp1 - 2)*(ηρ_by_r2_ddrMCU4 + ddrηρ_by_r2MCU4 - 4*ηρ_by_r3MCU4)
-                    )
-        @. T1_2 = (d4dr4MCU4 + ℓpre * onebyr4_chebyMCU4 - 2ℓℓp1*onebyr2_d2dr2MCU4 + 4ℓℓp1*onebyr3_ddrMCU4
-                + 4(ηρ_by_r_d2dr2MCU4 + 2 * ddrηρ_by_r_ddr_min_ηρ_by_r2_ddrMCU4 + d2dr2ηρ_by_r_min_2ddrηρ_by_r2MCU4)
-                -4(ℓℓp1 -2)*ηρ_by_r3MCU4
-                )
-
-        @. T3_1 = (ddrηρ_min_2ηρbyr_ddrDDrMCU4 + ηρd2dr2DDrMCU4 - 2*ddr_ηρbyr_DDrMCU4
-            + ℓℓp1 * (ddrηρbyr2MCU4 + ηρ_by_r2_ddrMCU4))
-        @. T3_2 = 2ℓℓp1*(ηρ_by_r2_ddrMCU4 -2*ηρ_by_r3MCU4)
-
-        @. T4 = neg2by3_ℓℓp1 * ηρ2_by_r2MCU4
-
-        @. WWop = -ν * (T1_1 + T1_2 + T3_1 + T3_2 + T4) * Rsun^4
-
-        WWim[Block(ℓind, ℓind)] .= Weqglobalscaling .* WWop
-    end
+    WWop_ = -ν * (
+        ((ddr - 2onebyr) ⊗ Iℓ) * ((r * d2dr2_ηρbyr_op) ⊗ Iℓ - ηρ_by_r2 ⊗ ℓℓp1op)
+        + (d2dr2 ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op) * ((d2dr2 + 4ηρ_by_r) ⊗ Iℓ - onebyr2 ⊗ ℓℓp1op)
+        + (ddr ⊗ Iℓ) * ((ηρ * (ddr - 2onebyr) * DDr) ⊗ Iℓ + ηρ_by_r2 ⊗ ℓℓp1op)
+        - ((ηρ_by_r2 * (ddr - 2onebyr)) ⊗ 2ℓℓp1op)
+        - (ηρ2_by_r2 ⊗ (2/3 * ℓℓp1op))
+        )
+    space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
+    WWop = (WWop_ : space2d → space2d_D4) |> expand
+    WW_ = kronmatrix!(temp, WWop, nr, W_ℓinds, W_ℓinds)
+    WWim .= real.(WW_) .* (Rsun^4 * Weqglobalscaling)
 
     return A
 end
 
-smoothed_spline(rpts, v; s) = Spline1D(rpts, v, s = sum(abs2, v) * s)
-function interp1d(xin, z, xout = xin; s = 0.0)
-    p = sortperm(xin)
-    spline = smoothed_spline(xin[p], z[p]; s)
-    spline(xout)
-end
-
-function interp2d(xin, yin, z, xout = xin, yout = yin; s = 0.0)
-    px = sortperm(xin)
-    py = sortperm(yin)
-    evalgrid(Spline2D(xin[px], yin[py], z[px, py]; s = sum(abs2, z) * s), xout, yout)
-end
-
-function solar_rotation_profile_radii(dir = SOLARMODELDIR[])
-    r_ΔΩ_raw = vec(readdlm(joinpath(dir, "rmesh.orig")))::Vector{Float64}
-    r_ΔΩ_raw[1:4:end]
-end
-
-function solar_rotation_profile_raw_hemisphere(dir = SOLARMODELDIR[])
-    readdlm(joinpath(dir, "rot2d.hmiv72d.ave"))::Matrix{Float64}
-end
-
-function solar_rotation_profile_raw(dir = SOLARMODELDIR[])
-    ν_raw = solar_rotation_profile_raw_hemisphere(dir)
-    ν_raw = [ν_raw reverse(ν_raw[:, 1:end-1], dims = 2)]
-    2pi * 1e-9 * ν_raw
-end
-
-function equatorial_rotation_angular_velocity_surface(r_frac::Number = 1.0,
-        r_ΔΩ_raw = solar_rotation_profile_radii(), Ω_raw = solar_rotation_profile_raw())
-    Ω_raw_r_eq = equatorial_rotation_angular_velocity_radial_profile(Ω_raw)
-    r_frac_ind = findmin(abs, r_ΔΩ_raw .- r_frac)[2]
-    Ω_raw_r_eq[r_frac_ind]
-end
-
-function equatorial_rotation_angular_velocity_radial_profile(Ω_raw = solar_rotation_profile_raw())
-    nθ = size(Ω_raw, 2)
-    lats_raw = range(0, pi, length=nθ)
-    θind_equator = findmin(abs, lats_raw .- pi/2)[2]
-    @view Ω_raw[:, θind_equator]
-end
-
-function laplacian_operator(nℓ, m)
-    ℓs = range(m, length = nℓ)
-    Diagonal(@. -ℓs * (ℓs + 1))
-end
-
 function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
-        operators, ΔΩ_frac = 0.01, V_symmetric = true, kw...)
+        operators, ΔΩ_frac = 0.01, V_symmetric, kw...)
 
     @unpack nr, nℓ = operators.radial_params;
-    @unpack nvariables = operators
-    @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
+    @unpack Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
 
-    @unpack ddrMCU4, DDrMCU2, onebyrMCU2, onebyrMCU4,
-            DDr_minus_2byrMCU2, ηρ_by_rMCU4, ddrDDrMCU4,
-            onebyr2MCU4, IU2 = operators.operator_matrices;
+    @unpack ddr, DDr, ddrDDr, DDr_minus_2byr = operators.diff_operators;
+    @unpack onebyr, onebyr2, ηρ_by_r = operators.rad_terms;
 
-    VV = matrix_block(M.re, 1, 1, nvariables)
-    VW = matrix_block(M.re, 1, 2, nvariables)
-    WV = matrix_block(M.re, 2, 1, nvariables)
-    WW = matrix_block(M.re, 2, 2, nvariables)
-    if nvariables == 3
-        SS = matrix_block(M.re, 3, 3, nvariables)
-    end
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
 
-    nCS = 2nℓ+1
-    ℓs = range(m, length = nCS)
+    VV = matrix_block(M.re, 1, 1)
+    VW = matrix_block(M.re, 1, 2)
+    WV = matrix_block(M.re, 2, 1)
+    WW = matrix_block(M.re, 2, 2)
+    SS = matrix_block(M.re, 3, 3)
 
-    cosθo = OffsetArray(costheta_operator(nCS, m), ℓs, ℓs)
-    sinθdθo = OffsetArray(sintheta_dtheta_operator(nCS, m), ℓs, ℓs)
-    laplacian_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * parent(sinθdθo), ℓs, ℓs)
+    latitudinal_space = NormalizedPlm(m);
 
-    DDr_minus_2byrMCU2 = @. DDrMCU2 - 2 * onebyrMCU2
+    Ir = ConstantOperator(I);
+    Iℓ = I : latitudinal_space;
+    space2d = radialspace ⊗ latitudinal_space;
+    sinθdθop = sinθdθ_Operator(latitudinal_space);
+    cosθop = cosθ_Operator(latitudinal_space);
+    ∇² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇²;
+    inv_ℓℓp1 = inv(ℓℓp1op)
+    two_by_ℓℓp1 = 2inv_ℓℓp1
 
-    ddr_plus_2byrMCU4 = @. ddrMCU4 + 2 * onebyrMCU4
+    V_ℓinds = ℓrange(1, nℓ, V_symmetric)
+    W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    ddrDDr_minus_ℓℓp1_by_r2MCU4 = zeros(nr, nr);
+    VVop_ = ΔΩ_frac * m * (Ir ⊗ (4inv_ℓℓp1 - 1))
+    VWop_ = ΔΩ_frac * (Ir ⊗ (-4inv_ℓℓp1)) * (DDr_minus_2byr ⊗ (cosθop * ℓℓp1op) +
+                    DDr ⊗ sinθdθop - onebyr ⊗ (sinθdθop * ℓℓp1op))
 
-    T = zeros(nr, nr);
+    temp = zeros(eltype(M), nr * nℓ, nr * nℓ)
 
-    # V terms
-    V_ℓs = ℓrange(m, nℓ, V_symmetric)
-    # W, S terms
-    W_ℓs = ℓrange(m, nℓ, !V_symmetric)
+    space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
+    VVop = (VVop_ : space2d → space2d_D2) |> expand
+    VWop = (VWop_ : space2d → space2d_D2) |> expand
+    VV_ = kronmatrix!(temp, VVop, nr, V_ℓinds, V_ℓinds)
+    VV .+= real.(VV_)
+    VW_ = kronmatrix!(temp, VWop, nr, V_ℓinds, W_ℓinds)
+    VW .+= (Rsun / Wscaling) .* real.(VW_)
 
-    @views for (ℓind, ℓ) in enumerate(V_ℓs)
-        # numerical green function
-        ℓℓp1 = ℓ * (ℓ + 1)
-        two_over_ℓℓp1 = 2 / ℓℓp1
+    WVop_ = -ΔΩ_frac * (Ir ⊗ inv_ℓℓp1) * (ddr ⊗ (8cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 4)) +
+        (ddr + 4onebyr) ⊗ (∇² * sinθdθop))
+    WWop_ = m * (-ΔΩ_frac) * (4ηρ_by_r ⊗ Iℓ - ddrDDr ⊗ (4inv_ℓℓp1 - 1) + onebyr2 ⊗ (4 - ℓℓp1op))
 
-        dopplerterm = -m * ΔΩ_frac
-        diagterm = m * two_over_ℓℓp1 * ΔΩ_frac + dopplerterm
+    space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
+    WVop = (WVop_ : space2d → space2d_D4) |> expand
+    WWop = (WWop_ : space2d → space2d_D4) |> expand
+    WV_ = kronmatrix!(temp, WVop, nr, W_ℓinds, V_ℓinds);
+    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
+    WW_ = kronmatrix!(temp, WWop, nr, W_ℓinds, W_ℓinds);
+    WW .+= (Weqglobalscaling * Rsun^2) .* real.(WW_);
 
-        VV[Block(ℓind, ℓind)] .+= diagterm .* IU2
-
-        for ℓ′ in intersect(ℓ-1:2:ℓ+1, W_ℓs)
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-            ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
-
-            @. T = -two_over_ℓℓp1 *
-                                    ΔΩ_frac * (
-                                        ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] * DDr_minus_2byrMCU2 +
-                                        (DDrMCU2 - ℓ′ℓ′p1 * onebyrMCU2) * sinθdθo[ℓ, ℓ′]
-                                    ) * Rsun / Wscaling
-
-            VW[Block(ℓind, ℓ′ind)] .+= T
-        end
-    end
-
-    @views for (ℓind, ℓ) in enumerate(W_ℓs)
-        # numerical green function
-        ℓℓp1 = ℓ * (ℓ + 1)
-        two_over_ℓℓp1 = 2 / ℓℓp1
-
-        dopplerterm = -m * ΔΩ_frac
-        diagterm = m * two_over_ℓℓp1 * ΔΩ_frac + dopplerterm
-
-        @. ddrDDr_minus_ℓℓp1_by_r2MCU4 = ddrDDrMCU4 - ℓℓp1 * onebyr2MCU4;
-
-        WW[Block(ℓind, ℓind)] .+= (Weqglobalscaling * Rsun^2) .* (diagterm .* ddrDDr_minus_ℓℓp1_by_r2MCU4 .+ 2dopplerterm .* ηρ_by_rMCU4)
-
-        if nvariables == 3
-            SS[Block(ℓind, ℓind)] .+= Seqglobalscaling .* dopplerterm .* IU2
-        end
-
-        for ℓ′ in intersect(ℓ-1:2:ℓ+1, V_ℓs)
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
-            ℓ′ind = findfirst(isequal(ℓ′), V_ℓs)
-
-            @. T = -Rsun * ΔΩ_frac / ℓℓp1 *
-                                    ((4ℓ′ℓ′p1 * cosθo[ℓ, ℓ′] + (ℓ′ℓ′p1 + 2) * sinθdθo[ℓ, ℓ′]) * ddrMCU4
-                                        +
-                                        ddr_plus_2byrMCU4 * laplacian_sinθdθo[ℓ, ℓ′]) * Wscaling
-
-            WV[Block(ℓind, ℓ′ind)] .+= Weqglobalscaling .* T
-        end
-    end
+    SSop_ = -m * ΔΩ_frac * (Ir ⊗ Iℓ)
+    SSop = (SSop_ : space2d → space2d_D2) |> expand
+    SS_ = kronmatrix!(temp, SSop, nr, W_ℓinds, W_ℓinds);
+    SS .+= Seqglobalscaling .* real.(SS_)
 
     return M
-end
-
-function solar_rotation_profile_spline(; operators, smoothing_param = 1e-5)
-    @unpack r_out = operators.radial_params;
-    @unpack Ω0 = operators.constants;
-
-    r_ΔΩ_raw = solar_rotation_profile_radii(SOLARMODELDIR[])
-    Ω_raw = solar_rotation_profile_raw(SOLARMODELDIR[])
-    ΔΩ_raw = Ω_raw .- Ω0
-
-    nθ = size(ΔΩ_raw, 2)
-    lats_raw = LinRange(0, pi, nθ)
-    cos_lats_raw = cos.(lats_raw) # decreasing order, must be flipped in Spline2D
-
-    Spline2D(r_ΔΩ_raw * Rsun, reverse(cos_lats_raw), reverse(ΔΩ_raw, dims=2); s = sum(abs2, ΔΩ_raw)*smoothing_param)
-end
-
-function solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts, θpts)
-    ΔΩ = splΔΩ2D(rpts, θpts)
-    ∂r_ΔΩ = derivative(splΔΩ2D, rpts, θpts, nux = 1, nuy = 0)
-    ∂θ_ΔΩ = derivative(splΔΩ2D, rpts, θpts, nux = 0, nuy = 1)
-    ∂2r_ΔΩ = derivative(splΔΩ2D, rpts, θpts, nux = 2, nuy = 0)
-    ∂r∂θ_ΔΩ = derivative(splΔΩ2D, rpts, θpts, nux = 1, nuy = 1)
-    ∂2θ_ΔΩ = derivative(splΔΩ2D, rpts, θpts, nux = 0, nuy = 2)
-    ΔΩ, ∂r_ΔΩ, ∂θ_ΔΩ, ∂2r_ΔΩ, ∂r∂θ_ΔΩ, ∂2θ_ΔΩ
-end
-function solar_rotation_profile_and_derivative_grid(; operators, kw...)
-    @unpack rpts = operators
-    @unpack nℓ = operators.radial_params
-    θpts = points(ChebyshevInterval(), nℓ)
-    splΔΩ2D = solar_rotation_profile_spline(; operators, kw...)
-    solar_rotation_profile_and_derivative_grid(splΔΩ2D, rpts, θpts)
-end
-
-function _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts)
-    equator_coord = 0.0 # cos(θ) for θ = pi/2
-    ΔΩ_r = splΔΩ2D.(rpts, equator_coord)
-    ddrΔΩ_r = derivative.((splΔΩ2D,), rpts, equator_coord, nux = 1, nuy = 0)
-    d2dr2ΔΩ_r = derivative.((splΔΩ2D,), rpts, equator_coord, nux = 2, nuy = 0)
-    ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
-end
-function equatorial_rotation_profile_and_derivative_grid(; operators, kw...)
-    @unpack rpts = operators
-    splΔΩ2D = solar_rotation_profile_spline(; operators, kw...)
-    _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts)
-end
-
-function equatorial_rotation_profile_and_derivative_squished_grid(; operators, kw...)
-    @unpack rpts = operators;
-    @unpack r_out = operators.radial_params;
-    splΔΩ2D = solar_rotation_profile_spline(; operators, kw...)
-    rpts_stretched = rpts ./ r_out .* Rsun
-    _equatorial_rotation_profile_and_derivative_grid(splΔΩ2D, rpts_stretched)
-end
-
-function radial_differential_rotation_profile_derivatives_grid(;
-            operators, rotation_profile = :solar_equator, ΔΩ_frac = 0.01, kw...)
-
-    @unpack rpts = operators
-    @unpack r_out, nr, r_in = operators.radial_params
-    @unpack Ω0 = operators.constants
-
-    if rotation_profile == :solar_equator
-        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r =
-            equatorial_rotation_profile_and_derivative_grid(; operators, kw...)
-    elseif rotation_profile == :solar_equator_squished
-        ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r =
-            equatorial_rotation_profile_and_derivative_squished_grid(; operators, kw...)
-    elseif rotation_profile == :linear # for testing
-        f = ΔΩ_frac / (r_in / Rsun - 1)
-        ΔΩ_r = @. Ω0 * f * (rpts / Rsun - 1)
-        ddrΔΩ_r = fill(Ω0 * f / Rsun, nr)
-        d2dr2ΔΩ_r = zero(ΔΩ_r)
-    elseif rotation_profile == :constant # for testing
-        ΔΩ_r = fill(ΔΩ_frac * Ω0, nr)
-        ddrΔΩ_r = zero(ΔΩ_r)
-        d2dr2ΔΩ_r = zero(ΔΩ_r)
-    elseif rotation_profile == :core
-        pre = (Ω0*ΔΩ_frac)*5
-        σr = 0.08Rsun
-        r0 = 0.6Rsun
-        ΔΩ_r = @. pre * (1 - tanh((rpts - r0)/σr))
-        ddrΔΩ_r = @. pre * (-sech((rpts - r0)/σr)^2 * 1/σr)
-        d2dr2ΔΩ_r = @. pre * (2sech((rpts - r0)/σr)^2 * tanh((rpts - r0)/σr) * 1/σr^2)
-    elseif rotation_profile == :solar_equator_core
-        ΔΩ_r_sun, = equatorial_radial_rotation_profile(; operators, kw...)
-        σr = 0.08Rsun
-        r0 = 0.6Rsun
-        ΔΩ_r_core = maximum(abs, ΔΩ_r_sun)/5 * @. (1 - tanh((rpts - r0)/σr))/2
-        r_cutoff = 0.4Rsun
-        Δr_cutoff = 0.1Rsun
-        r_in_inds = rpts .<= (r_cutoff-Δr_cutoff)
-        r_out_inds = rpts .>= (r_cutoff+Δr_cutoff)
-        r_in = rpts[r_in_inds]
-        r_out = rpts[r_out_inds]
-        perminds_in = sortperm(r_in)
-        perminds_out = sortperm(r_out)
-        r_new = [r_in[perminds_in]; r_out[perminds_out]]
-        ΔΩ_r_new = [ΔΩ_r_core[r_in_inds][perminds_in]; ΔΩ_r_sun[r_out_inds][perminds_out]]
-        ΔΩ_spl = smoothed_spline(r_new, ΔΩ_r_new; s = get(kw, :smoothing_param, 1e-5))
-        ΔΩ_r = ΔΩ_spl(rpts)
-        ddrΔΩ_r = derivative.((ΔΩ_spl,), rpts)
-        d2dr2ΔΩ_r = derivative.((ΔΩ_spl,), rpts, nu=2)
-    else
-        error("$rotation_profile is not a valid rotation model")
-    end
-    ΔΩ_r ./= Ω0
-    ddrΔΩ_r ./= Ω0
-    d2dr2ΔΩ_r ./= Ω0
-    return ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r
-end
-
-function radial_differential_rotation_profile_derivatives_Fun(; operators, kw...)
-    @unpack rpts, radialspace = operators;
-    ΔΩ_terms = radial_differential_rotation_profile_derivatives_grid(; operators, kw...);
-    ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r = ΔΩ_terms
-    nr = length(ΔΩ_r)
-
-    ΔΩ = chop(grid_to_fun(ΔΩ_r, radialspace), 1e-2);
-    @checkncoeff ΔΩ nr
-
-    ddrΔΩ = chop(grid_to_fun(interp1d(rpts, ddrΔΩ_r, s = 1e-2), radialspace), 1e-2);
-    @checkncoeff ddrΔΩ nr
-
-    d2dr2ΔΩ = chop(grid_to_fun(interp1d(rpts, d2dr2ΔΩ_r, s = 1e-2), radialspace), 1e-2);
-    @checkncoeff d2dr2ΔΩ nr
-
-    ΔΩ, ddrΔΩ, d2dr2ΔΩ = map(replaceemptywitheps, (ΔΩ, ddrΔΩ, d2dr2ΔΩ))
-    (; ΔΩ, ddrΔΩ, d2dr2ΔΩ)
 end
 
 function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, rotation_profile = :solar_equator,
         ΔΩ_frac = 0.01, # only used to test the constant case
+        ΔΩ_scale = 1.0,
         ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives_Fun(;
-                            operators, rotation_profile, ΔΩ_frac),
-        V_symmetric = true, kw...)
+                            operators, rotation_profile, ΔΩ_frac, ΔΩ_scale),
+        V_symmetric, kw...)
 
-    @unpack nr, nℓ = operators.radial_params
-    @unpack nvariables = operators;
-    @unpack DDr, ddr, ddrDDr = operators.diff_operators;
-    @unpack ddrMCU4 = operators.operator_matrices;
-    @unpack onebyr, g, ηρ_by_r, onebyr2 = operators.rad_terms;
-    @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings
-    @unpack matCU4, matCU2 = operators;
+    @unpack nr, nℓ = operators.radial_params;
+    @unpack DDr, ddr, ddrDDr, DDr_minus_2byr = operators.diff_operators;
+    @unpack onebyr, g, ηρ_by_r, onebyr2, twobyr = operators.rad_terms;
+    @unpack Sscaling, Wscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
+    @unpack Ω0 = operators.constants;
+
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
 
     VV = matrix_block(M.re, 1, 1);
     VW = matrix_block(M.re, 1, 2);
     WV = matrix_block(M.re, 2, 1);
     WW = matrix_block(M.re, 2, 2);
-    if nvariables === 3
-        SV = matrix_block(M.re, 3, 1);
-        SW = matrix_block(M.re, 3, 2);
-        SS = matrix_block(M.re, 3, 3);
-    end
+    SV = matrix_block(M.re, 3, 1);
+    SW = matrix_block(M.re, 3, 2);
+    SS = matrix_block(M.re, 3, 3);
 
-    # @unpack Ω0 = operators.constants;
     @unpack r_out = operators.radial_params;
     (; ΔΩ, ddrΔΩ, d2dr2ΔΩ) = ΔΩprofile_deriv;
-    Ω0 = ΔΩ(r_out)
 
-    ΔΩMCU2 = matCU2(ΔΩ);
-    ddrΔΩMCU2 = matCU2(ddrΔΩ);
-    d2dr2ΔΩMCU4 = matCU4(d2dr2ΔΩ);
+    latitudinal_space = NormalizedPlm(m);
 
-    ddrΔΩ_over_g = ddrΔΩ / g;
-    ddrΔΩ_over_gMCU2 = matCU2(ddrΔΩ_over_g);
-    ddrΔΩ_over_g_DDr = (ddrΔΩ_over_g * DDr)::Tmul;
-    ddrΔΩ_over_g_DDrMCU2 = matCU2(ddrΔΩ_over_g_DDr);
-    ddrΔΩ_plus_ΔΩddr = (ddrΔΩ + (ΔΩ * ddr)::Tmul)::Tplus;
+    Ir = ConstantOperator(I);
+    Iℓ = I : latitudinal_space;
+    space2d = radialspace ⊗ latitudinal_space;
+    sinθdθop = sinθdθ_Operator(latitudinal_space);
+    cosθop = cosθ_Operator(latitudinal_space);
+    ∇² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇²;
+    inv_ℓℓp1 = inv(ℓℓp1op)
+    two_by_ℓℓp1 = 2inv_ℓℓp1
+    two_by_ℓℓp1_min_1 = two_by_ℓℓp1 - 1
 
-    nCS = 2nℓ+1
-    ℓs = range(m, length = nCS)
-    cosθ = costheta_operator(nCS, m);
-    sinθdθ = sintheta_dtheta_operator(nCS, m);
-    cosθsinθdθ = (costheta_operator(nCS + 1, m) * sintheta_dtheta_operator(nCS + 1, m))[1:end-1, 1:end-1];
+    V_ℓinds = ℓrange(1, nℓ, V_symmetric)
+    W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
 
-    cosθo = OffsetArray(cosθ, ℓs, ℓs);
-    sinθdθo = OffsetArray(sinθdθ, ℓs, ℓs);
-    cosθsinθdθo = OffsetArray(cosθsinθdθ, ℓs, ℓs);
-    ∇²_sinθdθo = OffsetArray(Diagonal(@. -ℓs * (ℓs + 1)) * sinθdθ, ℓs, ℓs);
+    VVop_ = m * (ΔΩ ⊗ (4inv_ℓℓp1 - 1))
+    VWop_ = -(Ir ⊗ 4inv_ℓℓp1) * (
+        (ΔΩ * DDr_minus_2byr - ddrΔΩ) ⊗ (cosθop * ℓℓp1op) +
+        (ΔΩ * DDr) ⊗ sinθdθop - (ΔΩ * onebyr + ddrΔΩ/4) ⊗ (sinθdθop * ℓℓp1op)
+    )
 
-    DDr_min_2byr = (DDr - 2onebyr)::Tplus;
-    ΔΩ_DDr_min_2byr = (ΔΩ * DDr_min_2byr)::Tmul;
-    ΔΩ_DDr = (ΔΩ * DDr)::Tmul;
-    ΔΩ_by_r = ΔΩ * onebyr;
-    ΔΩ_by_r2 = ΔΩ * onebyr2;
+    temp = zeros(eltype(M), nr * nℓ, nr * nℓ)
 
-    ΔΩ_by_rMCU2, ΔΩ_DDrMCU2, ΔΩ_DDr_min_2byrMCU2 =
-        map(matCU2, (ΔΩ_by_r, ΔΩ_DDr, ΔΩ_DDr_min_2byr, ddrΔΩ_plus_ΔΩddr));
-
-    ddrΔΩ_plus_ΔΩddrMCU4, twoΔΩ_by_rMCU4, ddrΔΩ_DDrMCU4, ΔΩ_ddrDDrMCU4,
-        ΔΩ_by_r2MCU4, ddrΔΩ_ddr_plus_2byrMCU4, ΔΩ_ηρ_by_rMCU4 =
-        map(matCU4, (ddrΔΩ_plus_ΔΩddr, 2ΔΩ_by_r, ddrΔΩ * DDr, ΔΩ * ddrDDr,
-            ΔΩ_by_r2, ddrΔΩ * (ddr + 2onebyr), ΔΩ * ηρ_by_r))
-
-    ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4 = zeros(nr, nr);
-    T = zeros(nr, nr);
+    space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
+    VVop = (VVop_ : space2d → space2d_D2) |> expand
+    VWop = (VWop_ : space2d → space2d_D2) |> expand
+    VV_ = kronmatrix!(temp, VVop, nr, V_ℓinds, V_ℓinds)
+    VV .+= real.(VV_)
+    VW_ = kronmatrix!(temp, VWop, nr, V_ℓinds, W_ℓinds)
+    VW .+= (Rsun / Wscaling) .* real.(VW_)
 
     # V terms
     V_ℓs = ℓrange(m, nℓ, V_symmetric);
     # W, S terms
     W_ℓs = ℓrange(m, nℓ, !V_symmetric);
 
-    @views for (ℓind, ℓ) in enumerate(V_ℓs)
-        ℓℓp1 = ℓ * (ℓ + 1)
-        two_over_ℓℓp1 = 2/ℓℓp1
-        two_over_ℓℓp1_min_1 = two_over_ℓℓp1 - 1
+    WVop_ = -(Ir ⊗ inv_ℓℓp1) * (
+        (ΔΩ * ddr + ddrΔΩ) ⊗ (4cosθop * ℓℓp1op + sinθdθop * (ℓℓp1op + 2) + ∇² * sinθdθop) +
+        (2ΔΩ *onebyr) ⊗ (∇² * sinθdθop))
+    WWop_ = m * (-2ΔΩ * ηρ_by_r ⊗ Iℓ + (ddrΔΩ * DDr) ⊗ (two_by_ℓℓp1 - 1)
+        + (ΔΩ * ddrDDr) ⊗ (two_by_ℓℓp1 - 1)
+        - (ΔΩ * onebyr2) ⊗ ((two_by_ℓℓp1 - 1) * ℓℓp1op)
+        + (d2dr2ΔΩ + ddrΔΩ * (ddr + twobyr)) ⊗ Iℓ
+        )
 
-        @. T = m * two_over_ℓℓp1_min_1 * ΔΩMCU2
+    space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
+    WVop = (WVop_ : space2d → space2d_D4) |> expand
+    WWop = (WWop_ : space2d → space2d_D4) |> expand
+    WV_ = kronmatrix!(temp, WVop, nr, W_ℓinds, V_ℓinds);
+    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
+    WW_ = kronmatrix!(temp, WWop, nr, W_ℓinds, W_ℓinds);
+    WW .+= (Weqglobalscaling * Rsun^2) .* real.(WW_);
 
-        VV[Block(ℓind, ℓind)] .+= T
+    # ddrΔΩ_over_g = ddrΔΩ / g;
+    # SVop_ = -m * 2ddrΔΩ_over_g ⊗ cosθop
+    # SVop = (SVop_ : space2d → space2d_D2) |> expand
+    # SV_ = real(kronmatrix!(temp, SVop, nr, W_ℓinds, V_ℓinds));
+    # SV .+= (Ω0^2 * Rsun^2 * Seqglobalscaling * Sscaling) .* SV_
 
-        for ℓ′ in intersect(W_ℓs, ℓ-1:2:ℓ+1)
-            ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
+    # SWop_ = (2ddrΔΩ_over_g * DDr) ⊗ (cosθop * sinθdθop)
+    # SWop = (SWop_ : space2d → space2d_D2) |> expand
+    # SW_ = real(kronmatrix!(temp, SWop, nr, W_ℓinds, W_ℓinds));
+    # SW .+= (Ω0^2 * Rsun^3 * Seqglobalscaling * Sscaling/Wscaling) .* SW_
 
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
+    SSop_ = -m * (ΔΩ ⊗ Iℓ)
+    SSop = (SSop_ : space2d → space2d_D2) |> expand
+    SS_ = kronmatrix!(temp, SSop, nr, W_ℓinds, W_ℓinds);
+    SS .+= Seqglobalscaling .* real.(SS_)
 
-            cosθ_ℓℓ′ = cosθo[ℓ, ℓ′]
-            sinθdθ_ℓℓ′ = sinθdθo[ℓ, ℓ′]
+    return M
+end
 
-            @. T = -Rsun * two_over_ℓℓp1 *
-                    (ℓ′ℓ′p1 * cosθ_ℓℓ′ * (ΔΩ_DDr_min_2byrMCU2 - ddrΔΩMCU2) +
-                    sinθdθ_ℓℓ′ * ((ΔΩ_DDrMCU2 - ℓ′ℓ′p1 * ΔΩ_by_rMCU2) - ℓ′ℓ′p1 / 2 * ddrΔΩMCU2)) / Wscaling
+struct OpVector{VT,WT}
+    V :: VT
+    iW :: WT
+end
+OpVector(t::Tuple) = OpVector(t...)
+OpVector(t::NamedTuple{(:V, :iW)}) = OpVector(t.V, t.iW)
+OpVector(; V, iW) = OpVector(V, iW)
+Base.:(*)(O::Operator, B::OpVector) = OpVector(O * B.V, O * B.iW)
+Base.:(*)(O::Union{Function, Number}, B::OpVector) = OpVector(O * B.V, O * B.iW)
+Base.:(*)(A::OpVector, O::Operator) = OpVector(A.B * O, A.iW * O)
+Base.:(*)(A::OpVector, O::Union{Function, Number}) = OpVector(A.B * O, A.iW * O)
+Base.:(+)(A::OpVector) = A
+Base.:(-)(A::OpVector) = OpVector(-A.V, -A.iW)
+Base.:(+)(A::OpVector, B::OpVector) = OpVector(A.V + B.V, A.iW + B.iW)
+Base.:(-)(A::OpVector, B::OpVector) = OpVector(A.V - B.V, A.iW - B.iW)
+Base.:(*)(A::OpVector, B::OpVector) = OpVector(A.V * B.V, A.iW * B.iW)
 
-            VW[Block(ℓind, ℓ′ind)] .+= T
-        end
-    end
+Base.:(:)(A::OpVector, s::Space) = OpVector(A.V : s, A.iW : s)
+ApproxFunBase.:(→)(A::OpVector, s::Space) = OpVector(A.V → s, A.iW → s)
 
-    @views for (ℓind, ℓ) in enumerate(W_ℓs)
-        inds_ℓℓ = blockinds((m, nr), ℓ, ℓ);
+ApproxFunAssociatedLegendre.expand(A::OpVector) = OpVector(expand(A.V), expand(A.iW))
 
-        ℓℓp1 = ℓ * (ℓ + 1)
-        two_over_ℓℓp1 = 2/ℓℓp1
-        two_over_ℓℓp1_min_1 = two_over_ℓℓp1 - 1
+function Base.show(io::IO, O::OpVector)
+    print(io, "OpVector(V = ")
+    show(io, O.V)
+    print(io, ", iW = ")
+    show(io, O.iW)
+    print(io, ")")
+end
 
-        @. ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4 = ΔΩ_ddrDDrMCU4 - ℓℓp1 * ΔΩ_by_r2MCU4
+function SolarModel.solar_differential_rotation_profile_derivatives_Fun(Feig::FilteredEigen; kw...)
+    rotation_profile = rotationtag(Feig.kw[:rotation_profile])
+    solar_differential_rotation_profile_derivatives_Fun(; Feig.operators,
+        Feig.kw..., rotation_profile, kw...)
+end
 
-        @. T = m * Rsun^2 * (two_over_ℓℓp1_min_1 * (ddrΔΩ_DDrMCU4 + ΔΩ_ddrDDr_min_ℓℓp1byr2MCU4)
-                - 2ΔΩ_ηρ_by_rMCU4 + d2dr2ΔΩMCU4 + ddrΔΩ_ddr_plus_2byrMCU4)
+function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
+    @unpack onebyr, r, onebyr2, twobyr = operators.rad_terms;
+    @unpack ddr, d2dr2 = operators.diff_operators;
 
-        WW[Block(ℓind, ℓind)] .+= Weqglobalscaling .* T
+    (; ΔΩ, dr_ΔΩ, d2r_ΔΩ) = ΔΩprofile_deriv;
 
-        if nvariables == 3
-            SS[Block(ℓind, ℓind)] .+= Seqglobalscaling .* (-m) .* ΔΩMCU2
-        end
+    @unpack radialspace = operators.radialspaces;
+    # velocity and its derivatives are expanded in Legendre poly
+    latitudinal_space = NormalizedPlm(0);
+    space2d = radialspace ⊗ latitudinal_space
 
-        for ℓ′ in intersect(V_ℓs, ℓ-1:2:ℓ+1)
-            ℓ′ind = findfirst(isequal(ℓ′), V_ℓs)
+    angularsp = Ultraspherical(Legendre())
+    cosθ = Fun(angularsp);
+    Ir = I : radialspace;
+    Iℓ = I : latitudinal_space;
+    ∇² = HorizontalLaplacian(latitudinal_space);
 
-            ℓ′ℓ′p1 = ℓ′ * (ℓ′ + 1)
+    sinθdθ_plus_2cosθ = sinθdθ_plus_2cosθ_Operator(latitudinal_space);
+    ωΩr = (Ir ⊗ sinθdθ_plus_2cosθ) * ΔΩ;
+    ∂rωΩr = (Ir ⊗ sinθdθ_plus_2cosθ) * dr_ΔΩ;
+    # cotθddθ = cosθ * 1/sinθ * d/dθ = -cosθ * d/d(cosθ) = -x*d/dx
+    cotθdθ = KroneckerOperator(Ir, -cosθ * Derivative(angularsp),
+        radialspace * angularsp,
+        radialspace * rangespace(Derivative(angularsp)));
 
-            cosθ_ℓℓ′ = cosθo[ℓ, ℓ′]
-            sinθdθ_ℓℓ′ = sinθdθo[ℓ, ℓ′]
-            ∇²_sinθdθ_ℓℓ′ = ∇²_sinθdθo[ℓ, ℓ′]
+    cotθdθΔΩ = Fun(cotθdθ * ΔΩ, space2d);
 
-            @. T = -1/ℓℓp1 * Rsun * (
-                        (4ℓ′ℓ′p1 * cosθ_ℓℓ′ + (ℓ′ℓ′p1 + 2) * sinθdθ_ℓℓ′ + ∇²_sinθdθ_ℓℓ′) * ddrΔΩ_plus_ΔΩddrMCU4 +
-                        ∇²_sinθdθ_ℓℓ′ * twoΔΩ_by_rMCU4
-                    ) * Wscaling
+    ∇²_min_2 = ∇²-2;
+    inv_sinθ_∂θωΩr = (Ir ⊗ ∇²_min_2) * ΔΩ + 2cotθdθΔΩ;
+    cotθdθdr_ΔΩ = Fun(cotθdθ * dr_ΔΩ, space2d);
+    inv_sinθ_∂r∂θωΩr = (Ir ⊗ ∇²_min_2) * dr_ΔΩ + 2cotθdθdr_ΔΩ;
+    inv_rsinθ_ωΩθ = Fun(-(dr_ΔΩ + (twobyr ⊗ Iℓ) * ΔΩ), space2d);
+    ∂r_inv_rsinθ_ωΩθ = Fun(-(d2r_ΔΩ + (twobyr ⊗ Iℓ) * dr_ΔΩ - (2onebyr2 ⊗ Iℓ) * ΔΩ), space2d);
 
-            WV[Block(ℓind, ℓ′ind)] .+= Weqglobalscaling .* T
+    ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_sinθ_∂r∂θωΩr, inv_rsinθ_ωΩθ, ∂r_inv_rsinθ_ωΩθ =
+        promote(map(replaceemptywitheps ∘ chop,
+            (ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_sinθ_∂r∂θωΩr, inv_rsinθ_ωΩθ, ∂r_inv_rsinθ_ωΩθ))...)
 
-            # if nvariables == 3
-            #     @. T = -(Ω0^2 * Rsun^2) * 2m * cosθo[ℓ, ℓ′] * ddrΔΩ_over_gMCU2 * Sscaling;
-            #     SV[Block(ℓind, ℓ′ind)] .+= Seqglobalscaling .* T
-            # end
-        end
+    # Add the Coriolis force terms, that is ωΩ -> ωΩ + 2ΔΩ
+    ωΩr_plus_2ΔΩr = ωΩr + Fun((Ir ⊗ 2cosθ) * ΔΩ, space2d)
+    ∂r_ωΩr_plus_2ΔΩr = ∂rωΩr + Fun((Ir ⊗ 2cosθ) * dr_ΔΩ, space2d)
+    inv_sinθ_∂θ_ωΩr_plus_2ΔΩr = inv_sinθ_∂θωΩr + Fun(2(cotθdθ * ΔΩ - ΔΩ), space2d)
+    inv_sinθ_∂r∂θ_ωΩr_plus_2ΔΩr = inv_sinθ_∂r∂θωΩr + Fun(2(cotθdθ * dr_ΔΩ - dr_ΔΩ), space2d)
+    inv_rsinθ_ωΩθ_plus_2ΔΩθ = inv_rsinθ_ωΩθ - Fun(2(onebyr ⊗ Iℓ) * ΔΩ, space2d)
+    ∂r_inv_rsinθ_ωΩθ_plus_2ΔΩθ = ∂r_inv_rsinθ_ωΩθ - Fun(2*((onebyr ⊗ Iℓ) * dr_ΔΩ - (onebyr2 ⊗ Iℓ) * ΔΩ), space2d)
 
-        # for ℓ′ in intersect(W_ℓs, ℓ-2:2:ℓ+2)
-        #     ℓ′ind = findfirst(isequal(ℓ′), W_ℓs)
-        #     if nvariables == 3
-        #         @. T = (Ω0^2 * Rsun^3) * 2cosθsinθdθo[ℓ, ℓ′] * ddrΔΩ_over_g_DDrMCU2 * Sscaling/Wscaling;
-        #         SW[Block(ℓind, ℓ′ind)] .+= Seqglobalscaling .* T
-        #     end
-        # end
-    end
+    ωΩr_plus_2ΔΩr, ∂r_ωΩr_plus_2ΔΩr, inv_sinθ_∂θ_ωΩr_plus_2ΔΩr,
+            inv_sinθ_∂r∂θ_ωΩr_plus_2ΔΩr, inv_rsinθ_ωΩθ_plus_2ΔΩθ, ∂r_inv_rsinθ_ωΩθ_plus_2ΔΩθ =
+        map(replaceemptywitheps ∘ chop,
+            (ωΩr_plus_2ΔΩr, ∂r_ωΩr_plus_2ΔΩr, inv_sinθ_∂θ_ωΩr_plus_2ΔΩr,
+                inv_sinθ_∂r∂θ_ωΩr_plus_2ΔΩr, inv_rsinθ_ωΩθ_plus_2ΔΩθ, ∂r_inv_rsinθ_ωΩθ_plus_2ΔΩθ))
+
+    raw = (; ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_rsinθ_ωΩθ, inv_sinθ_∂r∂θωΩr, ∂r_inv_rsinθ_ωΩθ)
+    coriolis = NamedTuple{keys(raw)}((ωΩr_plus_2ΔΩr, ∂r_ωΩr_plus_2ΔΩr, inv_sinθ_∂θ_ωΩr_plus_2ΔΩr,
+        inv_rsinθ_ωΩθ_plus_2ΔΩθ, inv_sinθ_∂r∂θ_ωΩr_plus_2ΔΩr, ∂r_inv_rsinθ_ωΩθ_plus_2ΔΩθ))
+    (; raw, coriolis)
+end
+
+function solar_differential_rotation_vorticity_Fun(Feig::FilteredEigen; kw...)
+    ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(Feig; kw...)
+    solar_differential_rotation_vorticity_Fun(; Feig.operators, ΔΩprofile_deriv)
+end
+
+function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
+        operators, rotation_profile = :latrad,
+        ΔΩ_frac = 0.01, # only used to test the constant case
+        ΔΩ_scale = 1.0, # scale the diff rot profile, for testing
+        ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(;
+                            operators, rotation_profile, ΔΩ_frac, ΔΩ_scale),
+        ωΩ_deriv = solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv),
+        V_symmetric, kw...)
+
+    VV = matrix_block(M.re, 1, 1);
+    VW = matrix_block(M.re, 1, 2);
+    WV = matrix_block(M.re, 2, 1);
+    WW = matrix_block(M.re, 2, 2);
+    SV = matrix_block(M.re, 3, 1);
+    SW = matrix_block(M.re, 3, 2);
+    SS = matrix_block(M.re, 3, 3);
+
+    @unpack nr, nℓ = operators.radial_params;
+    @unpack onebyr, onebyr2, r2, g = operators.rad_terms;
+    @unpack ddr, d2dr2, DDr, ddrDDr = operators.diff_operators;
+    @unpack radialspaces = operators;
+    @unpack radialspace, radialspace_D2, radialspace_D4 = radialspaces;
+    @unpack Wscaling, Sscaling, Weqglobalscaling, Seqglobalscaling = operators.scalings;
+    @unpack Ω0 = operators.constants;
+
+    latitudinal_space = NormalizedPlm(m);
+
+    Ir = ConstantOperator(I);
+    Iℓ = I : latitudinal_space;
+    unsetspace2d = domainspace(Ir) ⊗ latitudinal_space;
+    space2d = radialspace ⊗ latitudinal_space;
+    I2d_unset = I : unsetspace2d;
+
+    sinθdθop = sinθdθ_Operator(latitudinal_space);
+    ∇h² = HorizontalLaplacian(latitudinal_space);
+    ℓℓp1op = -∇h²;
+
+    (; ΔΩ, dr_ΔΩ, dz_ΔΩ) = ΔΩprofile_deriv;
+    (; ωΩr, ∂rωΩr, inv_sinθ_∂θωΩr, inv_rsinθ_ωΩθ, inv_sinθ_∂r∂θωΩr,
+        ∂r_inv_rsinθ_ωΩθ, ∂r_inv_rsinθ_ωΩθ) = ωΩ_deriv.coriolis;
+
+    onebyr2op = Multiplication(onebyr2);
+    ufr_W = onebyr2op ⊗ ℓℓp1op;
+    ufr = OpVector(V = 0 * I2d_unset, iW = -im * ufr_W);
+    ωfr = OpVector(V = ufr_W, iW = 0 * I2d_unset);
+
+    rsinθufθ = OpVector(V = im * m * I2d_unset, iW = -im * DDr ⊗ sinθdθop);
+    rsinθωfθ = OpVector(V = ddr ⊗ sinθdθop, iW = m * (onebyr2op ⊗ ℓℓp1op - ddrDDr ⊗ Iℓ));
+
+    rsinθufϕ = OpVector(V = -Ir ⊗ sinθdθop, iW = (m * DDr) ⊗ Iℓ);
+    rsinθωfϕ = OpVector(V = im * m * ddr ⊗ Iℓ, iW = -im * (ddrDDr ⊗ Iℓ - onebyr2op ⊗ ℓℓp1op));
+
+    curl_uf_x_ωΩ_r = ((ωΩr * (DDr ⊗ Iℓ) + inv_rsinθ_ωΩθ * (Ir ⊗ sinθdθop) - ∂rωΩr) * ufr +
+        ((-onebyr2 ⊗ Iℓ) * inv_sinθ_∂θωΩr) * rsinθufθ);
+    curl_uΩ_x_ωf_r = -im * m * ΔΩ * ωfr;
+    curl_u_x_ω_r = curl_uf_x_ωΩ_r + curl_uΩ_x_ωf_r;
+    scaled_curl_u_x_ω_r_tmp = ((-im * r2) ⊗ inv(ℓℓp1op)) * curl_u_x_ω_r;
+    space2d_D2 = radialspace_D2 ⊗ NormalizedPlm(m)
+    scaled_curl_u_x_ω_r = (scaled_curl_u_x_ω_r_tmp : space2d → space2d_D2) |> expand;
+
+    V_ℓinds = ℓrange(1, nℓ, V_symmetric)
+    W_ℓinds = ℓrange(1, nℓ, !V_symmetric)
+
+    temp = zeros(eltype(M), nr * nℓ, nr * nℓ)
+
+    VV_ = kronmatrix!(temp, scaled_curl_u_x_ω_r.V, nr, V_ℓinds, V_ℓinds)
+    VV .+= real.(VV_);
+
+    VW_ = kronmatrix!(temp, scaled_curl_u_x_ω_r.iW, nr, V_ℓinds, W_ℓinds)
+    VW .+= (Rsun / Wscaling) .* real.(VW_);
+
+    # we compute the derivative of rdiv_ucrossω_h analytically
+    # this lets us use the more accurate representations of ddrDDr instead of using ddr * DDr
+    ddr_rdiv_ucrossω_h = OpVector(
+        V = ((2ωΩr + ΔΩ * (Ir ⊗ sinθdθop)) * (ddr ⊗ ℓℓp1op) - inv_sinθ_∂θωΩr * (ddr ⊗ sinθdθop)
+            + (2∂rωΩr + dr_ΔΩ * (Ir ⊗ sinθdθop)) * (Ir ⊗ ℓℓp1op) - inv_sinθ_∂r∂θωΩr * (Ir ⊗ sinθdθop)
+            ),
+        iW = m *
+            (inv_sinθ_∂θωΩr * (ddrDDr ⊗ Iℓ) + inv_rsinθ_ωΩθ * (ddr ⊗ ℓℓp1op)
+            + inv_sinθ_∂r∂θωΩr * (DDr ⊗ Iℓ) + ∂r_inv_rsinθ_ωΩθ * (Ir ⊗ ℓℓp1op)
+            )
+    );
+
+    uf_x_ωΩ_r = -inv_rsinθ_ωΩθ * rsinθufϕ;
+    uΩ_x_ωf_r = -ΔΩ * rsinθωfθ;
+    u_x_ω_r = uf_x_ωΩ_r + uΩ_x_ωf_r;
+    ∇h²_u_x_ω_r = (Ir ⊗ ∇h²) * u_x_ω_r;
+
+    scaled_curl_curl_u_x_ω_r_tmp = (Ir ⊗ inv(ℓℓp1op)) * (-ddr_rdiv_ucrossω_h + ∇h²_u_x_ω_r);
+    space2d_D4 = radialspace_D4 ⊗ NormalizedPlm(m)
+    scaled_curl_curl_u_x_ω_r = (scaled_curl_curl_u_x_ω_r_tmp : space2d → space2d_D4) |> expand;
+
+    WV_ = kronmatrix!(temp, scaled_curl_curl_u_x_ω_r.V, nr, W_ℓinds, V_ℓinds)
+    WV .+= (Weqglobalscaling * Rsun * Wscaling) .* real.(WV_);
+
+    WW_ = kronmatrix!(temp, scaled_curl_curl_u_x_ω_r.iW, nr, W_ℓinds, W_ℓinds)
+    WW .+= (Weqglobalscaling * Rsun^2) .* real.(WW_);
+
+    # entropy terms
+    # thermal_wind_term_tmp = im*((2/g) ⊗ Iℓ) * dz_ΔΩ * rsinθufθ
+    # thermal_wind_term = expand(thermal_wind_term_tmp : space2d → space2d_D2)
+    # SV_ = kronmatrix(thermal_wind_term.V, nr, W_ℓinds, V_ℓinds);
+    # SV .+= (Seqglobalscaling * (Ω0^2 * Rsun^2) * Sscaling) .* real.(SV_)
+    # SW_ = kronmatrix(thermal_wind_term.iW, nr, W_ℓinds, W_ℓinds);
+    # SW .+= (Seqglobalscaling * (Ω0^2 * Rsun^3) * Sscaling/Wscaling) .* real.(SW_)
+
+    SS_doppler_term = expand(-m*ΔΩ * I : space2d → space2d_D2)
+    SS_ = kronmatrix!(temp, SS_doppler_term, nr, W_ℓinds, W_ℓinds);
+    SS .+= Seqglobalscaling .* real.(SS_);
+
     return M
 end
 
@@ -1244,6 +813,8 @@ function rotationtag(rotation_profile)
     rstr = String(rotation_profile)
     if startswith(rstr, "radial")
         return Symbol(split(rstr, "radial_")[2])
+    elseif startswith(rstr, "solar")
+        return Symbol(split(rstr, "solar_")[2])
     else
         return Symbol(rotation_profile)
     end
@@ -1254,6 +825,8 @@ function _differential_rotation_matrix!(M, m; rotation_profile, kw...)
     tag = rotationtag(rotation_profile)
     if startswith(rstr, "radial")
         radial_differential_rotation_terms!(M, m; rotation_profile = tag, kw...)
+    elseif startswith(rstr, "solar")
+        solar_differential_rotation_terms!(M, m; rotation_profile = tag, kw...)
     elseif Symbol(rotation_profile) == :constant
         constant_differential_rotation_terms!(M, m; kw...)
     else
@@ -1261,9 +834,12 @@ function _differential_rotation_matrix!(M, m; rotation_profile, kw...)
     end
     return M
 end
-function differential_rotation_matrix(m; operators, kw...)
-    M = allocate_operator_matrix(operators)
-    differential_rotation_matrix!(M, m; operators, kw...)
+function differential_rotation_matrix(m; operators, rotation_profile, kw...)
+    @unpack nℓ = operators.radial_params;
+    rstr = String(rotation_profile)
+    bandwidth = (rstr == "constant" || startswith(rstr, "radial")) ? 2 : nℓ
+    M = allocate_operator_matrix(operators, bandwidth)
+    differential_rotation_matrix!(M, m; operators, rotation_profile, kw...)
     return M
 end
 function differential_rotation_matrix!(M, m; kw...)
@@ -1324,9 +900,6 @@ end
 function constrained_eigensystem_timed(AB; timer = TimerOutput(), kw...)
     Y = map(computesparse, AB)
     X = @timeit timer "eigen" constrained_eigensystem(Y; timer, kw...)
-    if get(kw, :print_timer, false)
-        println(timer)
-    end
     X
 end
 function constrained_eigensystem((A, B);
@@ -1342,18 +915,21 @@ function constrained_eigensystem((A, B);
         A_constrained = compute_constrained_matrix(A, constraints, cache)
         B_constrained = compute_constrained_matrix(B, constraints, cache)
     end
-    @timeit timer "eigen" λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(A_constrained, B_constrained)
+    @timeit timer "eigen!" λ::Vector{ComplexF64}, w::Matrix{ComplexF64} = eigen!(A_constrained, B_constrained)
     @timeit timer "projectback" v = realmatcomplexmatmul(constraints.ZC, w, temp_projectback)
+    # normalize the eigenvectors
+    for c in eachcol(v)
+        c ./= c[1] # remove extra phase
+        normalize!(c)
+    end
     λ, v, (A, B)
 end
 
 function uniform_rotation_spectrum(m; operators, kw...)
-    A = allocate_operator_matrix(operators)
-    B = allocate_mass_matrix(operators)
-    uniform_rotation_spectrum!((A, B), m; operators, kw...)
+    AB = allocate_operator_mass_matrix(operators, 2)
+    uniform_rotation_spectrum!(AB, m; operators, kw...)
 end
-function uniform_rotation_spectrum!((A, B), m; operators, kw...)
-    timer = TimerOutput()
+function uniform_rotation_spectrum!((A, B), m; operators, timer = TimerOutput(), kw...)
     @timeit timer "matrix" begin
         uniform_rotation_matrix!(A, m; operators, kw...)
         mass_matrix!(B, m; operators, kw...)
@@ -1361,49 +937,37 @@ function uniform_rotation_spectrum!((A, B), m; operators, kw...)
     constrained_eigensystem_timed((A, B); operators, timer, kw...)
 end
 
-function differential_rotation_spectrum(m::Integer; operators, kw...)
-    A = allocate_operator_matrix(operators)
-    B = allocate_mass_matrix(operators)
-    differential_rotation_spectrum!((A, B), m; operators, kw...)
+function getbw(rotation_profile, nℓ)
+    rotation_profile == :uniform && return 2
+    rotation_profile == :constant && return 2
+    startswith(String(rotation_profile), "radial") && return 2
+    nℓ
+end
+
+function differential_rotation_spectrum(m::Integer; operators, rotation_profile, kw...)
+    (; nℓ) = operators.radial_params
+    bw = getbw(rotation_profile, nℓ)
+    AB = allocate_operator_mass_matrix(operators, bw)
+    differential_rotation_spectrum!(AB, m; operators, rotation_profile, kw...)
 end
 function differential_rotation_spectrum!((A, B)::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
-        m::Integer; rotation_profile, operators, kw...)
-    timer = TimerOutput()
+        m::Integer; rotation_profile, operators, timer = TimerOutput(), kw...)
     @timeit timer "matrix" begin
         differential_rotation_matrix!(A, m; operators, rotation_profile, kw...)
-        mass_matrix!(B, m; operators)
+        mass_matrix!(B, m; operators, kw...)
     end
     constrained_eigensystem_timed((A, B); operators, timer, kw...)
 end
 
-struct RotMatrix{T,F}
-    V_symmetric :: Bool
-    rotation_profile :: Symbol
-    ΔΩprofile_deriv :: T
-    f :: F
-end
-function updaterotatationprofile(d::RotMatrix, operators)
-    ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives_Fun(; operators,
-            rotation_profile = rotationtag(d.rotation_profile))
-    return RotMatrix(d.V_symmetric, d.rotation_profile, ΔΩprofile_deriv, d.f)
-end
-updaterotatationprofile(d, _) = d
-
-(d::RotMatrix)(args...; kw...) = d.f(args...;
-    rotation_profile = d.rotation_profile,
-    ΔΩprofile_deriv = d.ΔΩprofile_deriv,
-    V_symmetric = d.V_symmetric,
-    kw...)
-
 rossby_ridge(m; ΔΩ_frac = 0) = 2 / (m + 1) * (1 + ΔΩ_frac) - m * ΔΩ_frac
 
-function eigenvalue_filter(x, m;
-    eig_imag_unstable_cutoff = -1e-6,
-    eig_imag_to_real_ratio_cutoff = 1,
-    eig_imag_stable_cutoff = Inf)
+function eigenvalue_filter(λ, m;
+    eig_imag_unstable_cutoff = DefaultFilterParams[:eig_imag_unstable_cutoff],
+    eig_imag_to_real_ratio_cutoff = DefaultFilterParams[:eig_imag_to_real_ratio_cutoff],
+    eig_imag_stable_cutoff = DefaultFilterParams[:eig_imag_stable_cutoff])
 
     freq_sectoral = 2 / (m + 1)
-    eig_imag_unstable_cutoff <= imag(x) < min(freq_sectoral * eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
+    eig_imag_unstable_cutoff <= imag(λ) < min(freq_sectoral * eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
 end
 function boundary_condition_filter(v::StructVector{<:Complex}, BC::AbstractMatrix{<:Real},
         BCVcache::StructVector{<:Complex} = allocate_BCcache(size(BC,1)), atol = 1e-5)
@@ -1411,125 +975,168 @@ function boundary_condition_filter(v::StructVector{<:Complex}, BC::AbstractMatri
     mul!(BCVcache.im, BC, v.im)
     norm(BCVcache) < atol
 end
-function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
-        AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
-        MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1)), rtol = 1e-1)
 
-    A, B = map(computesparse, AB)
-    Av, λBv = MVcache
+include("eigensystem_satisfy_filter.jl")
 
-    mul!(Av.re, A.re, v.re)
-    mul!(Av.re, A.im, v.im, -1.0, 1.0)
-    mul!(Av.im, A.re, v.im)
-    mul!(Av.im, A.im, v.re,  1.0, 1.0)
-
-    mul!(λBv.re, B, v.re)
-    mul!(λBv.im, B, v.im)
-    λBv .*= λ
-
-    isapprox(Av, λBv; rtol) && return true
-    return false
-end
-
-function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = 1e-4)
+function filterfields(coll, v, nparams, nvariables; filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff])
     Vpow = sum(abs2, @view v[1:nparams])
     Wpow = sum(abs2, @view v[nparams .+ (1:nparams)])
-    Spow = nvariables == 3 ? sum(abs2, @view(v[2nparams .+ (1:nparams)])) : 0.0
+    Spow = sum(abs2, @view(v[2nparams .+ (1:nparams)]))
 
     maxpow = max(Vpow, Wpow, Spow)
 
-    filterfields = typeof(coll.V)[]
+    filterfields = Pair{Symbol, typeof(coll.V)}[]
 
     if Spow/maxpow > filterfieldpowercutoff
-        push!(filterfields, coll.S)
+        push!(filterfields, :S => coll.S)
     end
     if Vpow/maxpow > filterfieldpowercutoff
-        push!(filterfields, coll.V)
+        push!(filterfields, :V => coll.V)
     end
-
     if Wpow/maxpow > filterfieldpowercutoff
-        push!(filterfields, coll.W)
+        push!(filterfields, :W => coll.W)
     end
     return filterfields
 end
 
-function eigvec_spectrum_filter!(F, v, m, operators;
-    n_cutoff = 7, Δl_cutoff = 7, eigvec_spectrum_power_cutoff = 0.9,
-    filterfieldpowercutoff = 1e-4,
-    kw...)
-
-    VW = eigenfunction_spectrum_2D!(F, v; operators, kw...)
-    Δl_inds = Δl_cutoff ÷ 2
-
-    @unpack nparams = operators.radial_params
-    @unpack nvariables = operators
-
-    flag = true
-    fields = filterfields(VW, v, nparams, nvariables; filterfieldpowercutoff)
-
-    @views for X in fields
-        PV_frac = sum(abs2, X[1:n_cutoff, 1:Δl_inds]) / sum(abs2, X)
-        flag &= PV_frac > eigvec_spectrum_power_cutoff
-        flag || break
-    end
-
-    return flag
-end
+include("eigvec_spectrum_filter.jl")
 
 allocate_Pl(m, nℓ) = zeros(range(m, length = 2nℓ + 1))
 
 function peakindabs1(X)
-    findmax(ind -> sum(abs2, @view X[ind, :]), axes(X, 1))[2]
+    findmax(v -> sum(abs2, v), eachrow(X))[2]
 end
 
-function spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
-    θ_cutoff = deg2rad(60), equator_power_cutoff_frac = 0.3;
-    nℓ = operators.radial_params.nℓ,
-    Plcosθ = allocate_Pl(m, nℓ),
-    filterfieldpowercutoff = 1e-4)
+include("spatial_filter.jl")
 
-    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, nℓ, Plcosθ)
+function angularindex_maximum(Vr::AbstractMatrix{<:Real}, θ)
+    equator_ind = angularindex_equator(Vr, θ)
+    nθ = length(θ)
+    Δθ_scan = div(nθ, 5)
+    rangescan = intersect(equator_ind .+ (-Δθ_scan:Δθ_scan), axes(Vr, 2))
+    Vr_section = view(Vr, :, rangescan)
+    Imax = argmax(Vr_section)
+    ind_max = Tuple(Imax)[2]
+    ind_max += first(rangescan) - 1
+end
 
-    eqfilter = true
+angularindex_colatitude(Vr, θ, θi) = findmin(x -> abs(x - θi), θ)[2]
+angularindex_equator(Vr, θ) = angularindex_colatitude(Vr, θ, pi/2)
+indexof_colatitude(θ, θi) = angularindex_colatitude(nothing, θ, θi)
+indexof_equator(θ) = indexof_colatitude(θ, pi/2)
 
-    @unpack nparams = operators.radial_params
-    @unpack nvariables = operators
-    fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
-
-    for X in fields
-        r_ind_peak = peakindabs1(X)
-        peak_latprofile = @view X[r_ind_peak, :]
-        θlowind = searchsortedfirst(θ, θ_cutoff)
-        θhighind = searchsortedlast(θ, pi - θ_cutoff)
-        powfrac = sum(abs2, @view peak_latprofile[θlowind:θhighind]) / sum(abs2, peak_latprofile)
-        powflag = powfrac > equator_power_cutoff_frac
-        peakflag = maximum(abs2, @view peak_latprofile[θlowind:θhighind]) == maximum(abs2, peak_latprofile)
-        eqfilter &= powflag & peakflag
-        eqfilter || break
+function sign_changes(v)
+    isempty(v) && return 0
+    n = Int(iszero(v[1]))
+    for i in eachindex(v)[1:end-1]
+        if sign(v[i]) != sign(v[i+1]) && v[i] != 0
+            n += 1
+        end
     end
-
-    return eqfilter
+    return n
 end
 
-function nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
+function count_num_nodes!(radprof::AbstractVector{<:Real}, rptsrev;
+        nodessmallpowercutoff = DefaultFilterParams[:nodessmallpowercutoff])
+
+    reverse!(radprof)
+    radprof .*= argmax(abs.(extrema(radprof))) == 2 ? 1 : -1
+    zerocrossings = sign_changes(radprof)
+    iszero(zerocrossings) && return 0
+    s = smoothed_spline(rptsrev, radprof)
+    radroots = Dierckx.roots(s, maxn = 4zerocrossings)
+    isempty(radroots) && return 0
+
+    # Discount nodes that appear spurious
+    radprof .= abs.(radprof)
+    sa = smoothed_spline(rptsrev, radprof)
+    unsignedarea = Dierckx.integrate(sa, rptsrev[1], rptsrev[end])
+
+    signed_areas = zeros(Float64, length(radroots)+1)
+    signed_areas[1] = Dierckx.integrate(s, rptsrev[1], radroots[1])
+    for (ind, (spt, ept)) in enumerate(zip(@view(radroots[1:end-1]), @view(radroots[2:end])))
+        signed_areas[ind+1] = Dierckx.integrate(s, spt, ept)
+    end
+    signed_areas[end] = Dierckx.integrate(s, radroots[end], rptsrev[end])
+
+    signed_areas = filter(area -> abs(area / unsignedarea) > nodessmallpowercutoff, signed_areas)
+    ncross = sign_changes(signed_areas)
+
+    min(ncross, zerocrossings)
+end
+function count_radial_nodes(radprof::AbstractVector{<:Real},
+        rptsrev::AbstractVector{<:Real},
+        radproftempreal = copy(radprof))
+    count_num_nodes!(radproftempreal, rptsrev)
+end
+function count_radial_nodes(radprof::AbstractVector{<:Complex},
+        rptsrev::AbstractVector{<:Real},
+        radproftempreal = similar(radprof, real(eltype(radprof))))
+
+    radproftempreal .= real.(radprof)
+    nnodes_real = count_radial_nodes(radproftempreal, rptsrev, radproftempreal)
+    radproftempreal .= imag.(radprof)
+    nnodes_imag = count_radial_nodes(radproftempreal, rptsrev, radproftempreal)
+    nnodes_real, nnodes_imag
+end
+function count_radial_nodes(v::AbstractVector{<:Complex}, m::Integer; operators,
+        angularindex_fn = angularindex_equator,
+        nr = operators.radial_params[:nr],
+        nℓ = operators.radial_params[:nℓ],
+        θ = spharm_θ_grid_uniform(m, nℓ).θ,
+        field = :V,
+        fieldcaches = allocate_field_caches(nr, nℓ, length(θ)),
+        realcache = similar(fieldcaches.VWSinv.V, real(eltype(fieldcaches.VWSinv.V))),
+        kw...)
+
+    @unpack rptsrev = operators
+    @unpack VWSinv, radproftempreal, radproftempcomplex = fieldcaches
+    eigenfunction_realspace!(fieldcaches, v, m; operators, kw...)
+    X = getproperty(VWSinv, field)
+    realcache .= real.(X)
+    eqind = angularindex_fn(realcache, θ)
+    for (i, row) in enumerate(eachrow(X))
+        radproftempcomplex[i] = trapz(θ, row)
+    end
+    count_radial_nodes(radproftempcomplex, rptsrev, radproftempreal)
+end
+
+function count_radial_nodes(Feig::FilteredEigen, m, ind; kw...)
+    count_radial_nodes(Feig[m][ind].v, m; Feig.operators, Feig.kw..., kw...)
+end
+
+function nodes_filter!(filtercache, v, m, operators;
     nℓ = operators.radial_params.nℓ,
     Plcosθ = allocate_Pl(m, nℓ),
-    filterfieldpowercutoff = 1e-4,
-    nnodesmax = 7)
+    filterfieldpowercutoff = DefaultFilterParams[:filterfieldpowercutoff],
+    nnodesmax = DefaultFilterParams[:nnodesmax],
+    compute_invtransform = true,
+    radproftempreal = similar(VWSinv.V, real(eltype(VWSinv.V)), size(VWSinv.V,1)),
+    radproftempcomplex = similar(VWSinv.V, size(VWSinv.V,1)),
+    kw...)
 
     nodesfilter = true
 
+    (; VWSinv, VWSinvsh, F) = filtercache
+
     @unpack nparams = operators.radial_params
-    @unpack nvariables = operators
+    @unpack nvariables, rptsrev = operators
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
-    (; θ) = eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, nℓ, Plcosθ)
-    eqind = argmin(abs.(θ .- pi/2))
+    (; θ) = spharm_θ_grid_uniform(m, nℓ)
+    lowercutoffind = indexof_colatitude(θ, deg2rad(60))
+    eqind = indexof_equator(θ)
 
-    for X in fields
-        radprof = @view X[:, eqind]
-        nnodes_real = count(Bool.(sign.(abs.(diff(sign.(real(radprof)))))))
-        nnodes_imag = count(Bool.(sign.(abs.(diff(sign.(imag(radprof)))))))
+    if compute_invtransform
+        eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, nℓ, Plcosθ, kw...)
+    end
+
+    for _X in fields
+        f, X = first(_X), last(_X)
+        for col in eachcol(@view X[:, lowercutoffind:eqind])
+            radproftempcomplex .+= col
+        end
+        nnodes_real, nnodes_imag = count_radial_nodes(radproftempcomplex, rptsrev, radproftempreal)
         nodesfilter &= nnodes_real <= nnodesmax && nnodes_imag <= nnodesmax
         nodesfilter || break
     end
@@ -1539,14 +1146,16 @@ end
 module Filters
     using BitFlags
     export DefaultFilter
-    @bitflag FilterFlag::UInt8 begin
+    @bitflag FilterFlag::UInt16 begin
         NONE=0
-        EIGEN
-        EIGVAL
-        EIGVEC
-        BC
-        SPATIAL
-        NODES
+        EIGEN # Eigensystem satisfy
+        EIGVAL # Imaginary to real ratio
+        EIGVEC # spectrum power cutoff in n and l
+        BC # boundary conditions
+        SPATIAL_EQUATOR # peak near the equator
+        SPATIAL_HIGHLAT # peak near the equator
+        SPATIAL_RADIAL # power not concentrated at the top/bottom surface layers
+        NODES # number of radial nodes
     end
     FilterFlag(F::FilterFlag) = F
     function Base.:(!)(F::FilterFlag)
@@ -1556,76 +1165,34 @@ module Filters
     Base.in(t::FilterFlag, F::FilterFlag) = (t & F) != NONE
     Base.broadcastable(x::FilterFlag) = Ref(x)
 
-    const DefaultFilter = EIGEN | EIGVAL | EIGVEC | BC | SPATIAL
+    const SPATIAL = SPATIAL_EQUATOR | SPATIAL_RADIAL
+    const DefaultFilter = EIGEN | EIGVAL | EIGVEC | BC | SPATIAL | NODES
 end
 using .Filters
 
-function filterfn(λ, v, m, M, (operators, constraints, filtercache, kw)::NTuple{4,Any}, filterflags)
+include("DefaultFilterParams.jl")
 
-    @unpack BC = constraints
-    @unpack nℓ = operators.radial_params;
+include("filterfn.jl")
 
-    @unpack eig_imag_unstable_cutoff = kw
-    @unpack eig_imag_to_real_ratio_cutoff = kw
-    @unpack eig_imag_stable_cutoff = kw
-    @unpack eigvec_spectrum_power_cutoff = kw
-    @unpack bc_atol = kw
-    @unpack Δl_cutoff = kw
-    @unpack n_cutoff = kw
-    @unpack θ_cutoff = kw
-    @unpack equator_power_cutoff_frac = kw
-    @unpack eigen_rtol = kw
-    @unpack filterfieldpowercutoff = kw
-    @unpack nnodesmax = kw
-
-    (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F) = filtercache;
-
-    allfilters = Filters.FilterFlag(filterflags)
-
-    if Filters.EIGVAL in allfilters
-        f = eigenvalue_filter(λ, m;
-        eig_imag_unstable_cutoff, eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
-        f || (@debug "EIGVAL" f; return false)
-    end
-
-    if Filters.EIGVEC in allfilters
-        f = eigvec_spectrum_filter!(F, v, m, operators;
-            n_cutoff, Δl_cutoff, eigvec_spectrum_power_cutoff,
-            filterfieldpowercutoff)
-        f || (@debug "EIGVEC" f; return false)
-    end
-
-    if Filters.BC in allfilters
-        f = boundary_condition_filter(v, BC, BCVcache, bc_atol)
-        f || (@debug "BC" f; return false)
-    end
-
-    if Filters.SPATIAL in allfilters
-        f = spatial_filter!(VWSinv, VWSinvsh, F, v, m, operators,
-            θ_cutoff, equator_power_cutoff_frac; nℓ, Plcosθ,
-            filterfieldpowercutoff)
-        f || (@debug "SPATIAL" f; return false)
-    end
-
-    if Filters.EIGEN in allfilters
-        f = eigensystem_satisfy_filter(λ, v, M, MVcache, eigen_rtol)
-        f || (@debug "EIGEN" f; return false)
-    end
-
-    if Filters.NODES in allfilters
-        f = nodes_filter(VWSinv, VWSinvsh, F, v, m, operators;
-                nℓ, Plcosθ, filterfieldpowercutoff, nnodesmax)
-        f || (@debug "NODES" f; return false)
-    end
-
-    return true
+function allocate_field_vectors(nr, nℓ)
+    nparams = nr * nℓ
+    (; V = zeros(ComplexF64, nparams), W = zeros(ComplexF64, nparams), S = zeros(ComplexF64, nparams))
 end
 
-function allocate_field_caches(nr, nθ, nℓ)
+function allocate_field_caches(nr, nℓ, nθ)
     VWSinv = (; V = zeros(ComplexF64, nr, nθ), W = zeros(ComplexF64, nr, nθ), S = zeros(ComplexF64, nr, nθ))
     VWSinvsh = (; V = zeros(ComplexF64, nr, nℓ), W = zeros(ComplexF64, nr, nℓ), S = zeros(ComplexF64, nr, nℓ))
-    F = (; V = zeros(ComplexF64, nr * nℓ), W = zeros(ComplexF64, nr * nℓ), S = zeros(ComplexF64, nr * nℓ))
-    (; VWSinv, VWSinvsh, F)
+    F = allocate_field_vectors(nr, nℓ)
+    fieldtempreal = similar(VWSinv.V, real(eltype(VWSinv.V)))
+    radproftempreal = zeros(real(eltype(VWSinv.V)), size(VWSinv.V,1))
+    radproftempcomplex = zeros(eltype(VWSinv.V), size(VWSinv.V,1))
+    (; VWSinv, VWSinvsh, F, radproftempreal, radproftempcomplex, fieldtempreal)
+end
+
+function allocate_field_caches(Feig::FilteredEigen, m)
+    @unpack nr, nℓ = Feig.radial_params
+    nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
+    allocate_field_caches(nr, nℓ, nθ)
 end
 
 function allocate_MVcache(nrows)
@@ -1640,9 +1207,8 @@ end
 function allocate_filter_caches(m; operators, constraints = constraintmatrix(operators))
     @unpack BC = constraints
     @unpack nr, nℓ, nparams = operators.radial_params
-    @unpack nvariables = operators
     # temporary cache arrays
-    nrows = nvariables * nparams
+    nrows = 3nparams
     MVcache = allocate_MVcache(nrows)
 
     n_bc = size(BC, 1)
@@ -1650,34 +1216,15 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
 
     nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
 
-    @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nθ, nℓ)
+    fieldcaches = allocate_field_caches(nr, nℓ, nθ)
 
     Plcosθ = allocate_Pl(m, nℓ)
 
-    return (; MVcache, BCVcache, VWSinv, VWSinvsh, Plcosθ, F)
+    return (; MVcache, BCVcache, Plcosθ, fieldcaches...)
 end
 
-const DefaultFilterParams = Dict(
-    # boundary condition filter
-    :bc_atol => 1e-5,
-    # eigval filter
-    :eig_imag_unstable_cutoff => -1e-6,
-    :eig_imag_to_real_ratio_cutoff => 1,
-    :eig_imag_stable_cutoff => Inf,
-    # eigensystem satisfy filter
-    :eigen_rtol => 0.01,
-    # smooth eigenvector filter
-    :Δl_cutoff => 7,
-    :n_cutoff => 10,
-    :eigvec_spectrum_power_cutoff => 0.9,
-    # spatial localization filter
-    :θ_cutoff => deg2rad(60),
-    :equator_power_cutoff_frac => 0.3,
-    # radial nodes filter
-    :nnodesmax => 10,
-    # exclude a field from a filter if relative power is below a cutoff
-    :filterfieldpowercutoff => 1e-4,
-)
+allocate_filter_caches(Feig::FilteredEigen, m) = allocate_filter_caches(Feig[m])
+allocate_filter_caches(Feig::FilteredEigenOneOrder) = allocate_filter_caches(Feig.m; Feig.operators, Feig.constraints)
 
 function scale_eigenvectors!(v::AbstractMatrix; operators)
     # re-apply scalings
@@ -1702,35 +1249,60 @@ function scale_eigenvectors!(VWSinv::NamedTuple; operators)
     return VWSinv
 end
 
+function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix, m::Integer;
+        operators,
+        V_symmetric,
+        rotation_profile,
+        matrixfn!,
+        kw...)
+
+    matrixfn2! = updaterotatationprofile(
+            RotMatrix(V_symmetric, rotation_profile, nothing, nothing, matrixfn!);
+            operators)
+
+    @unpack nℓ = operators.radial_params
+    bw = getbw(rotation_profile, nℓ) : nℓ
+    if Filters.EIGEN in get(kw, :filterflags, DefaultFilter)
+        M = allocate_operator_mass_matrix(operators, bw)
+        A, B = M
+        matrixfn2!(A, m; operators, kw...)
+        mass_matrix!(B, m; operators, kw...)
+    else
+        M = nothing
+    end
+    filter_eigenvalues(λ, v, M, m; operators, V_symmetric, kw...);
+end
+
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     M, m::Integer;
     operators,
     constraints = constraintmatrix(operators),
     filtercache = allocate_filter_caches(m; operators, constraints),
     filterflags = DefaultFilter,
-    kw...)
+    filterparams...)
 
     @unpack nparams = operators.radial_params;
-    kw2 = merge(DefaultFilterParams, kw);
-    additional_params = (operators, constraints, filtercache, kw2);
+    additional_params = (; operators, constraints, filtercache);
+    Ms = M isa NTuple{2,AbstractMatrix} ? map(computesparse, M) : M
 
-    inds_bool = filterfn.(λ, eachcol(v), m, (map(computesparse, M),), (additional_params,), filterflags)
+    inds_bool = filterfn.(λ, eachcol(v), m, Ref(Ms), Ref(filterparams); additional_params..., filterflags)
     filtinds = axes(λ, 1)[inds_bool]
     λ, v = λ[filtinds], v[:, filtinds]
 
     # re-apply scalings
-    if get(kw, :scale_eigenvectors, false)
+    if get(filterparams, :scale_eigenvectors, false)
         scale_eigenvectors!(v; operators)
     end
 
     λ, v
 end
 
-function filter_map(λm::AbstractVector, vm::AbstractMatrix,
-        AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}}, m::Int, matrixfn!::F; kw...) where {F}
-    A, B = AB
-    matrixfn!(A, m; kw...)
-    mass_matrix!(B, m; kw...)
+function filter_map(λm::AbstractVector, vm::AbstractMatrix, AB, m::Int, matrixfn!::F; kw...) where {F}
+    if AB isa NTuple{2,AbstractMatrix} # standard case, where Filters.EIGEN in kw[:filterflags]
+        A, B = AB
+        matrixfn!(A, m; kw...)
+        mass_matrix!(B, m; kw...)
+    end
     filter_eigenvalues(λm, vm, AB, m; kw...)
 end
 function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:AbstractVector},
@@ -1739,7 +1311,7 @@ function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:Abstrac
     nblasthreads = BLAS.get_num_threads()
     TMapReturnEltype = Tuple{eltype(λs), eltype(vs)}
     try
-        BLAS.set_num_threads(max(1, round(Int, nblasthreads/nt)))
+        BLAS.set_num_threads(max(1, div(nblasthreads, nt)))
         z = zip(λs, vs, mr)
         if length(z) > 0
             Folds.map(z) do (λm, vm, m)
@@ -1762,9 +1334,13 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     operators, constraints = constraintmatrix(operators), kw...)
 
     @unpack nr, nℓ, nparams = operators.radial_params
-    @unpack nvariables = operators
     nthreads = Threads.nthreads();
-    ABs = [(allocate_operator_matrix(operators), allocate_mass_matrix(operators)) for _ in 1:nthreads]
+    bw = matrixfn! isa RotMatrix ? getbw(matrixfn!.rotation_profile, nℓ) : nℓ
+    ABs = if Filters.EIGEN in get(kw, :filterflags, DefaultFilter)
+        [allocate_operator_mass_matrix(operators, bw) for _ in 1:nthreads]
+    else
+        fill(nothing, nthreads)
+    end
     c = Channel{eltype(ABs)}(nthreads);
     for el in ABs
         put!(c, el)
@@ -1774,20 +1350,32 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     map(first, λv), map(last, λv)
 end
 
-function eigvec_spectrum_filter_map!(Ctid, spectrumfn!, m, operators, constraints; kw...)
+function eigvec_spectrum_filter_map!(Ctid, spectrumfn!, m, operators, constraints;
+        timer = TimerOutput(), kw...)
     M, cache, temp_projectback = Ctid;
-    X = spectrumfn!(M, m; operators, constraints, cache, temp_projectback, kw...);
-    filter_eigenvalues(X..., m; operators, constraints, kw...)
+    timerlocal = TimerOutput()
+    @debug "starting computation for m = $m on tid = $(Threads.threadid()) with $(BLAS.get_num_threads()) BLAS threads"
+    X = @timeit timerlocal "m=$m tid=$(Threads.threadid()) spectrum" begin
+        spectrumfn!(M, m; operators, constraints, cache, temp_projectback, timer = timerlocal, kw...)
+    end;
+    @debug "computed eigenvalues for m = $m on tid = $(Threads.threadid()) with $(BLAS.get_num_threads()) BLAS threads"
+    F = @timeit timerlocal "m=$m tid=$(Threads.threadid()) filter" begin
+        filter_eigenvalues(X..., m; operators, constraints, kw...)
+    end;
+    @debug "filtered eigenvalues for m = $m on tid = $(Threads.threadid()) with $(BLAS.get_num_threads()) BLAS threads"
+    merge!(timer, timerlocal, tree_point = ["spectrum_filter"])
+    return F
 end
 
 function eigvec_spectrum_filter_map_nthreads!(c, nt, spectrumfn!, mr, operators, constraints; kw...)
     nblasthreads = BLAS.get_num_threads()
-    nt = Threads.nthreads()
 
     TMapReturnEltype = Tuple{Vector{ComplexF64},
                     StructArray{ComplexF64, 2, @NamedTuple{re::Matrix{Float64},im::Matrix{Float64}}, Int64}}
     try
-        BLAS.set_num_threads(max(1, round(Int, nblasthreads/nt)))
+        nblasthreads_new = max(1, div(nblasthreads, nt))
+        BLAS.set_num_threads(nblasthreads_new)
+        @debug "using $nblasthreads_new BLAS threads for m range = $mr"
         if length(mr) > 0
             Folds.map(mr) do m
                 Ctid = take!(c)
@@ -1806,13 +1394,18 @@ end
 function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
     operators, constraints = constraintmatrix(operators), kw...)
 
-    to = TimerOutput()
+    timer = TimerOutput()
 
-    @timeit to "alloc" begin
+    @timeit timer "alloc" begin
         nthreads = Threads.nthreads()
-        @timeit to "M" ABs = [(allocate_operator_matrix(operators), allocate_mass_matrix(operators)) for _ in 1:nthreads];
-        @timeit to "caches" caches = [constrained_matmul_cache(constraints) for _ in 1:nthreads];
-        @timeit to "projectback" temp_projectback_mats = [allocate_projectback_temp_matrices(size(constraints.ZC)) for _ in 1:nthreads];
+        (; nℓ) = operators.radial_params;
+        bw = spectrumfn! isa RotMatrix ? getbw(spectrumfn!.rotation_profile, nℓ) : nℓ
+        @timeit timer "M" ABs =
+            [allocate_operator_mass_matrix(operators, bw) for _ in 1:nthreads];
+        @timeit timer "caches" caches =
+            [constrained_matmul_cache(constraints) for _ in 1:nthreads];
+        @timeit timer "projectback" temp_projectback_mats =
+            [allocate_projectback_temp_matrices(size(constraints.ZC)) for _ in 1:nthreads];
         z = zip(ABs, caches, temp_projectback_mats);
         c = Channel{eltype(z)}(nthreads);
         for el in z
@@ -1820,7 +1413,7 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
         end
     end
 
-    @timeit to "spectrum + filter" begin
+    @timeit timer "spectrum_filter" begin
         nblasthreads = BLAS.get_num_threads()
         nthreads_trailing_elems = rem(length(mr), nthreads)
 
@@ -1829,106 +1422,113 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
             mr1 = @view mr[1:end-nthreads_trailing_elems]
             mr2 = @view mr[end-nthreads_trailing_elems+1:end]
 
-            λv1 = eigvec_spectrum_filter_map_nthreads!(c, Threads.nthreads(), spectrumfn!, mr1, operators, constraints; kw...)
+            @debug "starting first set for m range = $mr1 with $(Threads.nthreads()) threads"
+            λv1 = eigvec_spectrum_filter_map_nthreads!(c, Threads.nthreads(), spectrumfn!, mr1, operators, constraints;
+                timer, kw...)
 
-            λv2 = eigvec_spectrum_filter_map_nthreads!(c, nthreads_trailing_elems, spectrumfn!, mr2, operators, constraints; kw...)
+            @debug "starting first set for m range = $mr2 with $nthreads_trailing_elems threads"
+            λv2 = eigvec_spectrum_filter_map_nthreads!(c, nthreads_trailing_elems, spectrumfn!, mr2, operators, constraints;
+                timer, kw...)
 
             λs, vs = map(first, λv1), map(last, λv1)
             λs2, vs2 = map(first, λv2), map(last, λv2)
             append!(λs, λs2)
             append!(vs, vs2)
         else
-            λv = eigvec_spectrum_filter_map_nthreads!(c, Threads.nthreads(), spectrumfn!, mr, operators, constraints; kw...)
+            @debug "starting for m range = $mr with $(Threads.nthreads()) threads"
+            λv = eigvec_spectrum_filter_map_nthreads!(c, Threads.nthreads(), spectrumfn!, mr, operators, constraints;
+                timer, kw...)
             λs, vs = map(first, λv), map(last, λv)
         end
     end
-    println(to)
+    get(kw, :print_timer, true) && println(timer)
     λs, vs
 end
-function filter_eigenvalues(filename::String; kw...)
-    λs, vs, mr, nr, nℓ, kwold = load(filename, "lam", "vec", "mr", "nr", "nℓ", "kw");
-    kw = merge(kwold, kw)
-    operators = radial_operators(nr, nℓ)
-    constraints = constraintmatrix(operators)
-    filter_eigenvalues(λs, vs, mr; operators, constraints, kw...)
+
+function filter_eigenvalues(Feig::FilteredEigen; kw...)
+    @unpack operators = Feig
+    kw2 = merge(Feig.kw, kw)
+    matrixfn! = updaterotatationprofile(Feig)
+    λfs, vfs =
+        filter_eigenvalues(Feig.lams, Feig.vs, Feig.mr; operators, matrixfn!, kw2...);
+    FilteredEigen(λfs, vfs, Feig.mr, kw2, operators)
 end
 
-filenamerottag(isdiffrot, diffrot_profile) = isdiffrot ? "dr_$diffrot_profile" : "ur"
+function filter_eigenvalues(filename::String; kw...)
+    Feig = FilteredEigen(filename)
+    filter_eigenvalues(Feig; kw...)
+end
+
+filenamerottag(isdiffrot, rotation_profile) = isdiffrot ? "dr_$rotation_profile" : "ur"
 filenamesymtag(Vsym) = Vsym ? "sym" : "asym"
 rossbyeigenfilename(nr, nℓ, rottag, symtag, modeltag = "") =
     datadir("$(rottag)_nr$(nr)_nl$(nℓ)_$(symtag)$((isempty(modeltag) ? "" : "_") * modeltag).jld2")
 
 function rossbyeigenfilename(; operators, kw...)
     isdiffrot = get(kw, :diffrot, false)
-    diffrotprof = get(kw, :diffrotprof, "")
+    rotation_profile = get(kw, :rotation_profile, "")
     Vsym = kw[:V_symmetric]
-    rottag = filenamerottag(isdiffrot, diffrotprof)
+    modeltag = get(kw, :modeltag, "")
+    rottag = filenamerottag(isdiffrot, rotation_profile)
     symtag = filenamesymtag(Vsym)
     @unpack nr, nℓ = operators.radial_params;
-    return rossbyeigenfilename(nr, nℓ, rottag, symtag)
+    return rossbyeigenfilename(nr, nℓ, rottag, symtag, modeltag)
 end
-function save_eigenvalues(f, mr; operators, kw...)
+function save_eigenvalues(f, mr; operators, save=true, kw...)
     lam, vec = filter_eigenvalues(f, mr; operators, kw...)
-    fname = rossbyeigenfilename(; operators, kw...)
-    @unpack operatorparams = operators
-    @info "saving to $fname"
-    jldsave(fname; lam, vec, mr, kw, operatorparams)
-end
-
-struct FilteredEigen
-    lams :: Vector{Vector{ComplexF64}}
-    vs :: Vector{StructArray{ComplexF64, 2, NamedTuple{(:re, :im), Tuple{Matrix{Float64}, Matrix{Float64}}}, Int64}}
-    mr :: UnitRange{Int}
-    kw :: Dict{Symbol, Any}
-    operators
-end
-
-function FilteredEigen(fname::String)
-    lam, vec, mr, kw, operatorparams =
-        load(fname, "lam", "vec", "mr", "kw", "operatorparams");
-    operators = radial_operators(operatorparams...)
-    FilteredEigen(lam, vec, mr, kw, operators)
-end
-
-function filter_eigenvalues(f::FilteredEigen; kw...)
-    @unpack operators = f
-    kw2 = merge(f.kw, kw)
-    λfs, vfs =
-        filter_eigenvalues(f.lams, f.vs, f.mr; operators, kw2...);
-    FilteredEigen(λfs, vfs, f.mr, kw2, operators)
-end
-
-function filteredeigen(filename::String; kw...)
-    feig = FilteredEigen(filename)
-    operators = feig.operators
-    fkw = feig.kw
-    diffrot = fkw[:diffrot]::Bool
-    V_symmetric = fkw[:V_symmetric]::Bool
-    diffrot_profile = fkw[:diffrotprof]::Symbol
-
-    matrixfn! = if !diffrot
-        RotMatrix(V_symmetric, :uniform, nothing, uniform_rotation_matrix!)
-    else
-        d = RotMatrix(V_symmetric, diffrot_profile, nothing, differential_rotation_matrix!)
-        updaterotatationprofile(d, operators)
+    if save
+        fname = rossbyeigenfilename(; operators, kw...)
+        @unpack operatorparams = operators
+        @info "saving to $fname"
+        jldsave(fname; lam, vec, mr, kw, operatorparams)
     end
-    filter_eigenvalues(feig; matrixfn!, fkw..., kw...)
+end
+
+function differential_rotation_matrix(Feig::FilteredEigen, m; kw...)
+    differential_rotation_matrix(m; Feig.operators, Feig.kw..., kw...)
+end
+
+function mass_matrix(Feig::FilteredEigen, m; kw...)
+    mass_matrix(m; Feig.operators, Feig.kw..., kw...)
+end
+
+function operator_matrices(m; operators, diffrot::Bool, kw...)
+    A = if diffrot
+        differential_rotation_matrix(m; operators, kw...)
+    else
+        uniform_rotation_matrix(m; operators, kw...)
+    end
+    B = mass_matrix(m; operators, kw...)
+    map(computesparse, (A, B))
+end
+
+function operator_matrices(Feig::FilteredEigen, m; kw...)
+    operator_matrices(m; Feig.operators, Feig.kw..., kw...)
 end
 
 function eigenfunction_spectrum_2D!(F, v; operators, kw...)
     @unpack radial_params = operators
     @unpack nparams, nr, nℓ = radial_params
-    @unpack nvariables = operators
 
     F.V .= @view v[1:nparams]
     F.W .= @view v[nparams.+(1:nparams)]
-    F.S .= nvariables == 3 ? @view(v[2nparams.+(1:nparams)]) : 0.0
+    F.S .= @view(v[2nparams.+(1:nparams)])
 
     V = reshape(F.V, nr, nℓ)
     W = reshape(F.W, nr, nℓ)
     S = reshape(F.S, nr, nℓ)
 
     (; V, W, S)
+end
+
+function eigenfunction_spectrum_2D(v; operators, kw...)
+    @unpack nr, nℓ = operators.radial_params
+    F = allocate_field_vectors(nr, nℓ)
+    eigenfunction_spectrum_2D!(F, v; operators, kw...)
+end
+
+function eigenfunction_spectrum_2D(Feig, m, ind; kw...)
+    eigenfunction_spectrum_2D(Feig[m][ind].v; Feig.operators, Feig.kw..., kw...)
 end
 
 function invtransform1!(radialspace::Space, out::AbstractMatrix, coeffs::AbstractMatrix,
@@ -1942,10 +1542,10 @@ function invtransform1!(radialspace::Space, out::AbstractMatrix, coeffs::Abstrac
     return out
 end
 
-function eigenfunction_rad_sh!(VWSinvsh, F, v; operators, n_cutoff = -1, kw...)
+function eigenfunction_rad_sh!(VWSinvsh, F, v; operators, n_lowpass_cutoff::Union{Int,Nothing} = nothing, kw...)
     VWS = eigenfunction_spectrum_2D!(F, v; operators, kw...)
     @unpack V, W, S = VWS
-    @unpack radialspace = operators;
+    @unpack radialspace = operators.radialspaces;
 
     Vinv = VWSinvsh.V
     Winv = VWSinvsh.W
@@ -1953,16 +1553,16 @@ function eigenfunction_rad_sh!(VWSinvsh, F, v; operators, n_cutoff = -1, kw...)
 
     itransplan! = ApproxFunBase.plan_itransform!(radialspace, @view(Vinv[:, 1]))
 
-    if n_cutoff >= 0
+    if !isnothing(n_lowpass_cutoff)
         field_lowpass = similar(V)
         field_lowpass .= V
-        field_lowpass[n_cutoff+1:end, :] .= 0
+        field_lowpass[n_lowpass_cutoff+1:end, :] .= 0
         invtransform1!(radialspace, Vinv, field_lowpass, itransplan!)
         field_lowpass .= W
-        field_lowpass[n_cutoff+1:end, :] .= 0
+        field_lowpass[n_lowpass_cutoff+1:end, :] .= 0
         invtransform1!(radialspace, Winv, field_lowpass, itransplan!)
         field_lowpass .= S
-        field_lowpass[n_cutoff+1:end, :] .= 0
+        field_lowpass[n_lowpass_cutoff+1:end, :] .= 0
         invtransform1!(radialspace, Sinv, field_lowpass, itransplan!)
     else
         invtransform1!(radialspace, Vinv, V, itransplan!)
@@ -1982,10 +1582,10 @@ function spharm_θ_grid_uniform(m, nℓ, ℓmax_mul = 4)
 end
 
 function invshtransform2!(VWSinv, VWS, m;
+    V_symmetric,
     nℓ = size(VWS.V, 2),
     Plcosθ = allocate_Pl(m, nℓ),
-    V_symmetric = true,
-    Δl_cutoff = lastindex(Plcosθ),
+    Δl_lowpass_cutoff = lastindex(Plcosθ),
     kw...)
 
     V_lm = VWS.V
@@ -2010,13 +1610,13 @@ function invshtransform2!(VWSinv, VWS, m;
         collectPlm!(Plcosθ, cos(θi); m, norm = Val(:normalized))
         # V
         for (ℓind, ℓ) in enumerate(V_ℓs)
-            ℓ > m + Δl_cutoff && continue
+            ℓ > m + Δl_lowpass_cutoff && continue
             Plmcosθ = Plcosθ[ℓ]
             @. V[:, θind] += V_lm[:, ℓind] * Plmcosθ
         end
         # W, S
         for (ℓind, ℓ) in enumerate(W_ℓs)
-            ℓ > m + Δl_cutoff && continue
+            ℓ > m + Δl_lowpass_cutoff && continue
             Plmcosθ = Plcosθ[ℓ]
             @. W[:, θind] += W_lm[:, ℓind] * Plmcosθ
             @. S[:, θind] += S_lm[:, ℓind] * Plmcosθ
@@ -2026,12 +1626,13 @@ function invshtransform2!(VWSinv, VWS, m;
     (; VWSinv, θ)
 end
 
-function eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m;
+function eigenfunction_realspace!(fieldcaches, v, m;
     operators,
     nℓ = operators.radial_params.nℓ,
     Plcosθ = allocate_Pl(m, nℓ),
     kw...)
 
+    @unpack VWSinv, VWSinvsh, F = fieldcaches
     eigenfunction_rad_sh!(VWSinvsh, F, v; operators, kw...)
     invshtransform2!(VWSinv, VWSinvsh, m; nℓ, Plcosθ, kw...)
 end
@@ -2041,11 +1642,14 @@ function eigenfunction_realspace(v, m; operators, kw...)
     (; θ) = spharm_θ_grid_uniform(m, nℓ)
     nθ = length(θ)
 
-    @unpack VWSinv, VWSinvsh, F = allocate_field_caches(nr, nθ, nℓ)
-
-    eigenfunction_realspace!(VWSinv, VWSinvsh, F, v, m; operators, kw...)
-
+    fieldcaches = allocate_field_caches(nr, nℓ, nθ)
+    eigenfunction_realspace!(fieldcaches, v, m; operators, kw...)
+    @unpack VWSinv = fieldcaches
     return (; VWSinv, θ)
+end
+
+function eigenfunction_realspace(Feig::FilteredEigen, m, ind; kw...)
+    eigenfunction_realspace(Feig[m][ind].v, m; Feig.operators, Feig.kw..., kw...)
 end
 
 function eigenfunction_n_theta!(VWSinv, F, v, m;
