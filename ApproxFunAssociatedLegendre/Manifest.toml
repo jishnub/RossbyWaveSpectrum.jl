@@ -20,27 +20,29 @@ version = "1.5.0"
 
 [[deps.ApproxFunBase]]
 deps = ["AbstractFFTs", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "Calculus", "Combinatorics", "DSP", "DomainSets", "DualNumbers", "FFTW", "FillArrays", "InfiniteArrays", "IntervalSets", "LazyArrays", "LinearAlgebra", "LowRankMatrices", "SparseArrays", "SpecialFunctions", "StaticArrays", "Statistics"]
-git-tree-sha1 = "c607fa42ac5625c973b2e3ed88656b8258eaffed"
+git-tree-sha1 = "9c5c0989ba3fe00b2e1f515dd08819dfecb4be18"
 uuid = "fbd15aa5-315a-5a7d-a8a4-24992e37be05"
-version = "0.9.11"
+version = "0.9.15"
 
 [[deps.ApproxFunOrthogonalPolynomials]]
 deps = ["ApproxFunBase", "BandedMatrices", "BlockArrays", "BlockBandedMatrices", "DomainSets", "FastGaussQuadrature", "FastTransforms", "FillArrays", "HalfIntegers", "IntervalSets", "LinearAlgebra", "OddEvenIntegers", "Reexport", "SpecialFunctions", "StaticArrays"]
-git-tree-sha1 = "71219dd7a6ea7086f081eb2f99b238f70cb50189"
+git-tree-sha1 = "bd548de5ef31ffa54b2a62bc871e57e6379d5df0"
 uuid = "b70543e2-c0d9-56b8-a290-0d4d6d4de211"
-version = "0.6.45"
+version = "0.6.47"
 
     [deps.ApproxFunOrthogonalPolynomials.extensions]
+    ApproxFunOrthogonalPolynomialsPolynomialsExt = "Polynomials"
     ApproxFunOrthogonalPolynomialsStaticExt = "Static"
 
     [deps.ApproxFunOrthogonalPolynomials.weakdeps]
+    Polynomials = "f27b6e38-b328-58d1-80ce-0feddd5e7a45"
     Static = "aedffcd0-7271-4cad-89d0-dc628f76c6d3"
 
 [[deps.ApproxFunSingularities]]
-deps = ["ApproxFunBase", "ApproxFunOrthogonalPolynomials", "DomainSets", "HalfIntegers", "IntervalSets", "LinearAlgebra", "OddEvenIntegers", "Reexport", "SpecialFunctions"]
-git-tree-sha1 = "89fd1c9dbf497e9aac4e114bf9ad2f5ceb2316fe"
+deps = ["ApproxFunBase", "ApproxFunOrthogonalPolynomials", "BlockBandedMatrices", "DomainSets", "HalfIntegers", "IntervalSets", "LinearAlgebra", "OddEvenIntegers", "Reexport", "SpecialFunctions"]
+git-tree-sha1 = "5d34fbddfc8785b08b79ff366121f95d1124cb29"
 uuid = "f8fcb915-6b99-5be2-b79a-d6dbef8e6e7e"
-version = "0.3.14"
+version = "0.3.18"
 weakdeps = ["StaticArrays"]
 
     [deps.ApproxFunSingularities.extensions]
@@ -51,19 +53,23 @@ uuid = "0dad84c5-d112-42e6-8d28-ef12dabb789f"
 version = "1.1.1"
 
 [[deps.ArrayLayouts]]
-deps = ["FillArrays", "LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "609e6019f91369149556628d90345a1316f8dbd3"
+deps = ["FillArrays", "LinearAlgebra"]
+git-tree-sha1 = "0d61921af2799487b80453a44abb57db7a0c1381"
 uuid = "4c555306-a7a7-4459-81d9-ec55ddd5c99a"
-version = "1.2.1"
+version = "1.4.1"
+weakdeps = ["SparseArrays"]
+
+    [deps.ArrayLayouts.extensions]
+    ArrayLayoutsSparseArraysExt = "SparseArrays"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
 
 [[deps.BandedMatrices]]
 deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra", "PrecompileTools"]
-git-tree-sha1 = "106122bad983acd8e21aef3f7a7f91a3ac739077"
+git-tree-sha1 = "0b816941273b5b162be122a6c94d706e3b3125ca"
 uuid = "aae01518-5342-5314-be14-df237901396f"
-version = "0.17.36"
+version = "0.17.38"
 weakdeps = ["SparseArrays"]
 
     [deps.BandedMatrices.extensions]
@@ -214,9 +220,9 @@ version = "1.5.1"
 
 [[deps.InfiniteArrays]]
 deps = ["ArrayLayouts", "FillArrays", "Infinities", "LazyArrays", "LinearAlgebra"]
-git-tree-sha1 = "3d48980ed8e9cb751b6152c9ec63bf7c167ed302"
+git-tree-sha1 = "cdf72ddf0403f204c14749ce438fafc5b64c47ea"
 uuid = "4858937d-0d70-526a-a4dd-2d5cb5dd786c"
-version = "0.13.0"
+version = "0.13.1"
 weakdeps = ["DSP", "Statistics"]
 
     [deps.InfiniteArrays.extensions]
@@ -272,9 +278,9 @@ version = "15.0.4+0"
 
 [[deps.LazyArrays]]
 deps = ["ArrayLayouts", "FillArrays", "LinearAlgebra", "MacroTools", "MatrixFactorizations", "SparseArrays"]
-git-tree-sha1 = "45700994c91a14c40b8e4f2e3ce7fc9716b0c7c8"
+git-tree-sha1 = "80e1594bc9e58e0c889c0cc3b9e4374cee9ec9b1"
 uuid = "5078a376-72f3-5289-bfd5-ec5146d43c02"
-version = "1.6.1"
+version = "1.8.0"
 weakdeps = ["StaticArrays"]
 
     [deps.LazyArrays.extensions]
@@ -491,9 +497,9 @@ version = "2.3.1"
 
 [[deps.StaticArrays]]
 deps = ["LinearAlgebra", "Random", "StaticArraysCore"]
-git-tree-sha1 = "9cabadf6e7cd2349b6cf49f1915ad2028d65e881"
+git-tree-sha1 = "51621cca8651d9e334a659443a74ce50a3b6dfab"
 uuid = "90137ffa-7385-5640-81b9-e52037218182"
-version = "1.6.2"
+version = "1.6.3"
 weakdeps = ["Statistics"]
 
     [deps.StaticArrays.extensions]
