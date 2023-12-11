@@ -1,6 +1,5 @@
 module ApproxFunAssociatedLegendre
 
-using DomainSets
 using ApproxFunBase
 using ApproxFunBase: SubOperator, UnsetSpace, ConcreteMultiplication, MultiplicationWrapper,
 	ConstantTimesOperator, ConversionWrapper, SpaceOperator
@@ -40,7 +39,7 @@ azimuthalorder(p::NormalizedPlm) = p.m
 
 canonicalspace(A::NormalizedPlm) = A.jacobispace
 function canonicalspace_zerostrip(A::NormalizedPlm)
-	azimuthalorder(A) == 0 ? NormalizedLegendre(domain(A)) : canonicalspace(A)
+	azimuthalorder(A) == 0 ? NormalizedLegendre(ApproxFunBase.domain(A)) : canonicalspace(A)
 end
 
 ApproxFunBase.domain(::NormalizedPlm{T}) where {T} = ChebyshevInterval{T}()
@@ -145,7 +144,7 @@ maybecanonicalfun(f::Fun{<:NormalizedPlm}) = canonicalfun(f)
 maybecanonicalfun(f::Fun) = f
 
 # abs2 necessarily produces a polynomial, so we may decompose this in a Chebyshev space
-Base.abs2(f::Fun{<:NormalizedPlm,<:Real}) = Fun(abs2(canonicalfun(f)), Chebyshev(domain(f)))
+Base.abs2(f::Fun{<:NormalizedPlm,<:Real}) = Fun(abs2(canonicalfun(f)), Chebyshev(ApproxFunBase.domain(f)))
 Base.abs2(f::Fun{<:NormalizedPlm,<:Complex}) = abs2(real(f)) + abs2(imag(f))
 
 function coefficients(f::AbstractVector,
