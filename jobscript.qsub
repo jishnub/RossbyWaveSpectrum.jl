@@ -1,27 +1,26 @@
-#!/bin/bash
-#PBS -l select=1:ncpus=10
+#PBS -l select=1:ncpus=2
 #PBS -N dr10
-#PBS -l walltime=6:00:00
-
+#PBS -l walltime=1:00:00
+#PBS -S /bin/bash
+#PBS -V
 
 echo "############"
 hostname
 echo "############"
 cd $PBS_O_WORKDIR
-export SCRATCH=/tier2/tifr/jishnu
 julia="$HOME/.local/bin/julia-1.10"
 module purge
 project="$HOME/RossbyWaveSpectrum.jl"
 export MKL_DYNAMIC=false
 export MKL_NUM_THREADS=1
-$julia --project=$project --startup-file=no -t 10 -e \
+$julia --project=$project --startup-file=no -t 2 -e \
 'include("$(@__DIR__)/compute_rossby_spectrum.jl");
 using RossbyWaveSpectrum
 using RossbyWaveSpectrum.Filters
 V_symmetric = true
 r_in_frac, r_out_frac = 0.65, 0.985
-nr, nℓ = 60, 30
-mrange = 2:11
+nr, nℓ = 40, 20
+mrange = 2:3
 viscosity = 5e11
 trackingrate = :hanson2020 # :carrington, :hanson2020, :cutoff or :surface
 ΔΩ_scale = 1
@@ -36,7 +35,7 @@ rotation_profile = :solar_latrad_squished
 smoothing_param=1e-4
 modeltag = "nu$(viscosity)_rin$(round(r_in_frac, digits=3))_rout$(round(r_out_frac, digits=3))_track$(trackingrate)"
 modeltag *= diffrot && !isone(ΔΩ_scale) ? "_rotscale$(round(ΔΩ_scale, digits=2))" : ""
-filterflags = Filters.EIGEN | Filters.EIGVEC | Filters.BC
+filterflags = Filters.EIGEN | Filters.EIGVEC | Filters.BC | Filters.SPATIAL_EQUATOR
 
 ComputeRossbySpectrum.main(V_symmetric;
 nr, nℓ, mrange, diffrot, rotation_profile, r_in_frac,
