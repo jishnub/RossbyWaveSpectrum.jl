@@ -3,8 +3,8 @@ module ComputeRossbySpectrum
 using LinearAlgebra
 using TimerOutputs
 
-using ThreadPinning
-pinthreads(:cores)
+# using ThreadPinning
+# pinthreads(:cores)
 
 function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile;
             smoothing_param = 1e-4,
