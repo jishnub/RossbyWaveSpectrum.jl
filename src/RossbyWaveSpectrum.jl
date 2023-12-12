@@ -1309,6 +1309,7 @@ function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:Abstrac
         vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector{<:Integer}, matrixfn!; kw...)
 
     TMapReturnEltype = Tuple{eltype(λs), eltype(vs)}
+    nblasthreads = BLAS.get_num_threads()
     try
         BLAS.set_num_threads(max(1, div(nblasthreads, nt)))
         z = zip(λs, vs, mr)
