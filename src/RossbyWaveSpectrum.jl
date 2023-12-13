@@ -9,6 +9,7 @@ using Reexport
 @reexport using BlockArrays
 using BlockBandedMatrices
 import Dierckx
+using FFTW
 using Folds
 using JLD2
 @reexport using LinearAlgebra
@@ -41,6 +42,7 @@ function __init__()
     if !ispath(RossbyWaveSpectrum.DATADIR[])
         mkdir(RossbyWaveSpectrum.DATADIR[])
     end
+    FFTW.set_num_threads(1)
 end
 
 struct FilteredEigen
