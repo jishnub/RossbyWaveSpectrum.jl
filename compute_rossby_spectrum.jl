@@ -1,5 +1,6 @@
 module ComputeRossbySpectrum
 @time using RossbyWaveSpectrum
+using FFTW
 using LinearAlgebra
 using TimerOutputs
 
@@ -38,7 +39,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
     @show superadiabaticityparams
     @show V_symmetric diffrot rotation_profile viscosity
     @show extrakw
-    @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads()
+    @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads() FFTW.get_num_threads()
 
     timer = TimerOutput()
 
