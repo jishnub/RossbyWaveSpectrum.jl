@@ -56,9 +56,6 @@ jobs:
 
   ApproxFunAssociatedLegendre:
     name: ApproxFunAssociatedLegendre - ${{ github.event_name }}
-    defaults:
-      run:
-        working-directory: ApproxFunAssociatedLegendre
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
