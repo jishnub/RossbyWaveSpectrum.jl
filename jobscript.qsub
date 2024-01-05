@@ -11,6 +11,7 @@ cd $PBS_O_WORKDIR
 julia="$HOME/.local/bin/julia-1.10"
 module purge
 project="$HOME/RossbyWaveSpectrum.jl"
+export SCRATCH="" # set this
 export MKL_DYNAMIC=false
 export MKL_NUM_THREADS=1
 $julia --project=$project --startup-file=no -t 2 -e \
