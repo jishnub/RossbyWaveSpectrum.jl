@@ -1,4 +1,5 @@
 [![CI](https://github.com/jishnub/RossbyWaveSpectrum.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/jishnub/RossbyWaveSpectrum.jl/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/jishnub/RossbyWaveSpectrum.jl/graph/badge.svg?token=ohT5BvJaf8)](https://codecov.io/gh/jishnub/RossbyWaveSpectrum.jl)
 
 # RossbyWaveSpectrum.jl
 Julia code to compute the spectrum of solar intertial waves
