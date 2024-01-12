@@ -1,3 +1,8 @@
+"""
+    DefaultFilterParams
+
+Defailt list of parameters that are used in the filtering process.
+"""
 const DefaultFilterParams = Dict(
     # boundary condition filter
     :bc_atol => 1e-5,

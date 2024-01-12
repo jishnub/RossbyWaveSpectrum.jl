@@ -19,8 +19,6 @@ using Roots
 const StructMatrix{T} = StructArray{T,2}
 
 export spectrum
-export uniform_rotation_spectrum
-export differential_rotation_spectrum
 export diffrot_rossby_ridge
 export plot_diffrot_radial
 export plot_diffrot_radial_derivatives
@@ -30,13 +28,10 @@ export eigenfunction_rossbyridge
 export eigenfunction_rossbyridge_allstreamfn
 export eigenfunctions_allstreamfn
 export multiple_eigenfunctions_surface_m
-export compare_terms
 export plot_scale_heights
 export plot_constraint_basis
 export damping_rossbyridge
 export damping_highfreqridge
-export plot_matrix
-export plot_matrix_block
 
 const plotdir = dirname(@__DIR__)
 const ticker = PyNULL()

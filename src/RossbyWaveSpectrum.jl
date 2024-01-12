@@ -71,6 +71,13 @@ function __init__()
     FFTW.set_num_threads(1)
 end
 
+"""
+    FilteredEigen
+
+Struct to hold the filtered eigenvalues and eigenfunctions for a range of `m`.
+Given a `FilteredEigen` `F`, the eigenfunctions for a specific `m`
+may be obtained using `F[m]`.
+"""
 struct FilteredEigen
     lams :: Vector{Vector{ComplexF64}}
     vs :: Vector{StructArray{ComplexF64, 2, NamedTuple{(:re, :im), NTuple{2,Matrix{Float64}}}, Int64}}
@@ -118,6 +125,15 @@ function Base.getindex(Feig::FilteredEigen, mr::UnitRange{<:Integer})
     FilteredEigen(Feig.lams[minds], Feig.vs[minds], mr, Feig.kw, Feig.operators, Feig.constraints)
 end
 
+"""
+    FilteredEigenSingleOrder
+
+Struct containing the filtered set of eigenvalues and eigenfunctions for a single `m`.
+A `FilteredEigenSingleOrder` is equivalent to a `Vector` of `serial => (eigenvalue, eigenfunction)` pairs,
+with additional metadata stored along with this.
+Indexing into a `FilteredEigenSingleOrder` with a serial number should return a
+`(eigenvalue, eigenfunction)` pair.
+"""
 struct FilteredEigenSingleOrder
     lams::Vector{ComplexF64}
     vs :: StructArray{ComplexF64, 2, NamedTuple{(:re, :im), NTuple{2,Matrix{Float64}}}, Int64}
@@ -139,6 +155,18 @@ function Base.getindex(f::FilteredEigenSingleOrder, ind::Integer)
     (; λ = f.lams[ind], v = f.vs[:, ind])
 end
 
+"""
+    RotMatrix
+
+Struct containing the spectral decomposition of the rotation profile and the vorticity profile
+associated with differential rotation in the Sun, along with informatin about the parity of the
+solutions that are sought and the function that is to be used to generate the matrices.
+
+A `RotMatrix` `R` may be called with arguments as `R(args...; kwargs....)` to generate the matrix
+representations of the operators that are to be diagonalized. These matrices would correspond to the
+rotation profile that `R` corresponds to (which usually is the solar rotation profile, but may be chosen otherwise
+, e.g. for testing purposes).
+"""
 struct RotMatrix{TV,TW,F}
     kw :: @NamedTuple{V_symmetric::Bool, rotation_profile::Symbol}
     ΔΩprofile_deriv :: TV
@@ -244,6 +272,16 @@ function V_boundary_op(operators)
     (r * ddr - 2) : radialspace;
 end
 
+"""
+    constraintmatrix(operators)
+
+Return a collection containing the spectral representation of the boundary condition
+operator `BC`, and a basis `ZC` whose columns lie in its null-space.
+
+The constraint satisfied by the eigenfunctions may be expressed as ``Cv=0``. Given a matrix ``Z``
+that satisfies ``CZ=0``, we may express the eigenfunction as ``v=Zw`` for an arbitrary ``w``.
+This function uses the variable names `BC` for ``C`` and `ZC` for ``Z``.
+"""
 function constraintmatrix(operators, ::Val{extramatrices} = Val(false)) where {extramatrices}
     @unpack radial_params = operators;
     @unpack r_in, r_out = radial_params;
@@ -320,6 +358,25 @@ const SuperAdiabaticityParamsDefault = pairs((; δcz = 3e-6, δtop = 3e-5, δrad
                                         dtrans = 0.05Rsun, dtop = 0.05Rsun,
                                         r_sub = 0.8 * Rsun, r_tran = 0.725 * Rsun))
 
+"""
+    superadiabaticity(r::Real; r_out = Rsun,
+        δcz = 3e-6, δtop = 3e-5, δrad = -1e-3,
+        dtrans = 0.05Rsun, dtop = 0.05Rsun,
+        r_sub = 0.8Rsun, r_tran = 0.725Rsun)
+
+Compute the superadiabaticity profile ``δ`` parameterized by the keyword arguments,
+following [Rempel (2005), ApJ 622:1320 –1332](https://ui.adsabs.harvard.edu/abs/2005ApJ...622.1320R/abstract), section 2.3.
+
+# Keyword arguments
+
+* `δcz`: representative value of superadiabaticity ``δ`` in the bulk of the convection zone
+* `δtop`: representative value of superadiabaticity ``δ`` at the surface
+* `δrad`: representative value of superadiabaticity ``δ`` in the radiative interior
+* `dtrans`: scale over which the profile in the radiative zone transitions to that in the convection zone
+* `dtop`: scale over which the profile in the convection zone transitions to that at the surface
+* `r_tran`: radius below which the radiative profile transitions to strongly subadiabatic (in the overshoot region)
+* `r_sub`: radius below which the radiative profile transitions to weakly subadiabatic within the convection zone
+"""
 function superadiabaticity(r::Real; r_out = Rsun, kw...)
     kw2 = merge(SuperAdiabaticityParamsDefault, kw)
 
@@ -411,6 +468,38 @@ Base.getproperty(y::OperatorWrap, name::Symbol) = getproperty(getfield(y, :x), n
 Base.propertynames(y::OperatorWrap) = Base.propertynames(getfield(y, :x))
 
 const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e3, Weqglobalscaling = 1e-4, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
+"""
+    radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, ν = 5e11,
+        trackingrate = :hanson2020,
+        scalings = DefaultScalings,
+        superadiabaticityparams = (;))
+
+Compute the Chebyshev-basis representation of radial operators such as derivatives and
+factors that appear in the differential equations. The positional arguments `nr` and `nℓ`
+specify the number of radial and latitudinal coefficients in the stream functions.
+
+!!! note
+    The number of coefficients in the factors are chosen adaptively, and are unrelated to
+    the arguments `nr` and `nℓ`.
+
+# Keyword arguments
+* `r_in_frac`: inner boundary of the domain as a fraction of the solar radius
+* `r_out_frac`: outer boundary of the domain as a fraction of the solar radius
+* `ν`: coefficient of viscosity, in CGS units
+* `trackingrate`: the tracking rate `Ω0`. This may either by a number, or one of
+    `:hanson2020` (corresponding to `453.1 nHz`),
+    `:carrington` (corresponding to `456 nHz`),
+    `:cutoff` (corresponding to the rotation rate at the equator at `r = r_out_frac * Rsun`), or
+    `:surface` (corresponding to the rotation rate at the equator at `r = Rsun`).
+* `superadiabaticityparams`: `NamedTuple` of parameters used to choose the superadiabaticity model.
+    Values specified here are passed on to [`superadiabaticity`](@ref), and these supersede the defaults in
+    that function. This is empty by default.
+* `scalings`: scalings applied to the equations to improve the balancing of the matrices to be diagonalized.
+    Default values are `(; Wscaling = 1e1, Sscaling = 1e3, Weqglobalscaling = 1e-4, Seqglobalscaling = 1.0)`,
+    which should typically be good enough. The interpretation is that the fields that feature in the eigenvalue
+    problem are `(V, Wscaling * W, Sscaling * S)` and the equations for `W` and `S` are multiplied by `Weqglobalscaling`
+    and `Seqglobalscaling` respectively. Such scalings leave the eigenvalues unchanged.
+"""
 function radial_operators(nr, nℓ;
         r_in_frac = 0.6, r_out_frac = 0.985,
         _stratified = true,
@@ -639,6 +728,15 @@ function allocate_block_matrix(nvariables, bandwidth, rows, cols = rows)
                 nvariables, nvariables))
 end
 
+"""
+    allocate_operator_matrix(operators)
+
+Allocate the operator matrix ``A`` that features in the eigenvalue problem ``Av=λBv``.
+The argument `operators` is obtained as the output of [`radial_operators`](@ref).
+
+!!! note
+    This does not initialize the matrix.
+"""
 function allocate_operator_matrix(operators, bandwidth = operators.radial_params[:nℓ])
     @unpack nr, nℓ = operators.radial_params
     @unpack nvariables = operators
@@ -648,6 +746,15 @@ function allocate_operator_matrix(operators, bandwidth = operators.radial_params
     StructArray{ComplexF64}((R, I))
 end
 
+"""
+    allocate_mass_matrix(operators)
+
+Allocate the mass matrix ``B`` that features in the eigenvalue problem ``Av=λBv``.
+The argument `operators` is obtained as the output of [`radial_operators`](@ref).
+
+!!! note
+    This does not initialize the matrix.
+"""
 function allocate_mass_matrix(operators)
     @unpack nr, nℓ = operators.radial_params
     @unpack nvariables = operators
@@ -655,6 +762,15 @@ function allocate_mass_matrix(operators)
     allocate_block_matrix(nvariables, 0, rows)
 end
 
+"""
+    allocate_operator_mass_matrices(operators)
+
+Allocate the eigenvalue pencil matrices ``(A,B)``.
+The argument `operators` is obtained as the output of [`radial_operators`](@ref).
+
+!!! note
+    This does not initialize the matrices.
+"""
 allocate_operator_mass_matrices(operators, bw...) = (
     allocate_operator_matrix(operators, bw...),
     allocate_mass_matrix(operators))
@@ -921,6 +1037,33 @@ function radial_differential_rotation_profile_derivatives_Fun(; operators, kw...
 end
 
 # This function lets us choose between various different profiles
+"""
+    solar_differential_rotation_profile_derivatives_grid(; operators, rotation_profile,
+        ΔΩ_frac = 0.01, kw...)
+
+Return the smoothed spatial profile of rotation, corresponding to the model specified by `rotation_profile`.
+This function reads in rotation model files, and interpolates the profile on to Chebyshev nodes in both
+the radial and angular coordinates through smoothing splines.
+This spatial profile is subsequently transformed to spectral coefficients in
+[`solar_differential_rotation_profile_derivatives_Fun`](@ref).
+
+Typically, this is used to load the solar rotation profile, but other profiles
+may be specified for testing the code.
+
+# Keyword arguments
+* `operators`: obtained as the output of `radial_operators`
+* `rotation_profile`: the flag that chooses the model of the rotation profile. Possible options are:
+  * `latrad`: Smoothed solar rotation profile, limited to the radial domain
+  * `latrad_squished`: Same as `latrad`, except the solar surface is projected to the outer boundary of the radial domain.
+  * `radial_equator`: smoothed radial profile of the solar equatorial rotation rate, but limited to the radial domain.
+    This corresponds to the radial profile of the `latrad` model at the equator.
+  * `radial_equator_squished`: same profile as `radial_equator`, except that the solar surface is projected onto
+    the outer boundary of the radial domain. This corresponds to the radial profile of the `latrad_squished` model
+    at the equator.
+  * `:constant`: background medium rotates like a solid body, at a rate `Ω` that differs from the tracking rate `Ω0`
+* `ΔΩ_frac`: In case `rotation_profile == :constant`, the factor by which the tracking rate `Ω0` is increased
+    to obtain the rotation rate of the background medium.
+"""
 function solar_differential_rotation_profile_derivatives_grid(;
         operators, rotation_profile = :latrad, ΔΩ_frac = 0.01,
         ΔΩ_scale = 1.0,
@@ -965,6 +1108,26 @@ function solar_differential_rotation_profile_derivatives_grid(;
     return ΔΩ, dr_ΔΩ, d2r_ΔΩ
 end
 
+"""
+    solar_differential_rotation_profile_derivatives_Fun(; operators, rotation_profile,
+        ΔΩ_smoothing_param = 5e-2, kw...)
+
+Compute the Chebyshev-Ultraspherical decomposition of the rotation profile specified by `rotation_profile`,
+which typically is a smoothed version of the solar rotation profile. The keyword arguments `kw`
+are passed on to `solar_differential_rotation_profile_derivatives_grid`.
+
+Returns a collection `(; ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ)`, where the first term is the spectral approximation to the
+profile of differential rotation, and the subsequent terms are radial and `z`-derivatives.
+
+# Keyword arguments
+* `operators`: obtained as the output of `radial_operators`
+* `rotation_profile`: the flag that chooses the model of the rotation profile.
+    See [`solar_differential_rotation_profile_derivatives_grid`](@ref) for possible options.
+* `ΔΩ_smoothing_param`: the extent of smoothing applied to the rotation profile before performing the spectral
+    transform. Typically, this should be small to match the original profile closely, with the tradeoff
+    being in the number of spectral coefficients that are necessary to represent the model.
+* `kw`: Optional keyword arguments that are passed on to `solar_differential_rotation_profile_derivatives_grid`
+"""
 function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     @unpack rpts, radialspaces = operators;
     @unpack radialspace = radialspaces
@@ -1021,11 +1184,30 @@ end
 
 ℓrange(m, nℓ, symmetric) = range(m + !symmetric, length = nℓ, step = 2)
 
+"""
+    mass_matrix(m::Integer; operators, V_symmetric::Bool)
+
+Compute the mass matrix ``B`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+"""
 function mass_matrix(m; operators, kw...)
     B = allocate_mass_matrix(operators)
     mass_matrix!(B, m; operators, kw...)
     return B
 end
+"""
+    mass_matrix!(B, m::Integer; operators, V_symmetric::Bool)
+
+Compute the mass matrix ``B`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`.
+This operates in-place on the pre-allocated matrix `B`, and overwrites it with the result.
+The matrix `B` may be allocated using [`allocate_mass_matrix`](@ref).
+
+See [`mass_matrix`](@ref) for further details.
+"""
 function mass_matrix!(B, m; operators, V_symmetric, kw...)
     @unpack nr, nℓ = operators.radial_params;
     @unpack Weqglobalscaling = operators.scalings;
@@ -1068,12 +1250,34 @@ function mass_matrix!(B, m; operators, V_symmetric, kw...)
     return B
 end
 
+"""
+    uniform_rotation_matrix(m::Integer; operators, V_symmetric::Bool)
+
+Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
+assuming that the Sun is rotating like a solid body.
+The matrix would therefore not contain any terms corresponding to differential rotation.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+"""
 function uniform_rotation_matrix(m; operators, kw...)
     A = allocate_operator_matrix(operators, 2)
     uniform_rotation_matrix!(A, m; operators, kw...)
     return A
 end
 
+"""
+    uniform_rotation_matrix!(A, m::Integer; operators, V_symmetric::Bool)
+
+Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
+assuming that the Sun is rotating like a solid body.
+This operates in-place on the pre-allocated matrix `A`, and overwrites it with the output.
+The matrix `A` may be allocated using [`allocate_operator_matrix`](@ref).
+
+See [`uniform_rotation_matrix`](@ref) for further details.
+"""
 function uniform_rotation_matrix!(A::StructMatrix{<:Complex}, m; operators, V_symmetric, kw...)
     @unpack Ω0 = operators.constants;
     @unpack nr, nℓ = operators.radial_params
@@ -1212,6 +1416,25 @@ function viscosity_terms!(A::StructMatrix{<:Complex}, m; operators, V_symmetric,
     return A
 end
 
+"""
+    constant_differential_rotation_terms!(A, m::Integer;
+        operators, V_symmetric::Bool, ΔΩ_frac = 0.01)
+
+Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
+assuming that the Sun is rotating like a solid body, albeit at a rotation speed ``Ω`` that exceeds
+the tracking rate ``Ω_0`` by the specified ratio `ΔΩ_frac` (i.e. `Ω = Ω0 * (1 + ΔΩ_frac)`).
+This function serves as a validation test for the differentially rotating model.
+
+This function overwrites the input matrix `A` that is obtained as the output to
+[`uniform_rotation_matrix`](@ref), and adds the extra terms corresponding to the difference in rotation rates to it.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+* `ΔΩ_frac`: Ratio by which the background rotation rate ``Ω`` exceeds the reference rate ``Ω_0``.
+    The relation between the two is given by `Ω = Ω_0 * (1 + ΔΩ_frac)`.
+"""
 function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, ΔΩ_frac = 0.01, V_symmetric, kw...)
 
@@ -1416,6 +1639,17 @@ function solar_differential_rotation_profile_derivatives_Fun(Feig::FilteredEigen
         Feig.kw..., rotation_profile, kw...)
 end
 
+"""
+    solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
+
+Return the spectral approximation to the vorticity profile ``\\boldsymbol{ω} = ∇ × (Ω \\hat{z})``,
+given the rotation profile ``Ω`` and its derivatives.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `ΔΩprofile_deriv`: Collection containing the rotation profile and its derivatives, obtained from
+    [`solar_differential_rotation_profile_derivatives_Fun`](@ref).
+"""
 function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
     @unpack onebyr, r, onebyr2, twobyr = operators.rad_terms;
     @unpack ddr, d2dr2 = operators.diff_operators;
@@ -1479,6 +1713,28 @@ function solar_differential_rotation_vorticity_Fun(Feig::FilteredEigen; kw...)
     solar_differential_rotation_vorticity_Fun(; Feig.operators, ΔΩprofile_deriv)
 end
 
+"""
+    solar_differential_rotation_terms!(A, m::Integer;
+        operators, V_symmetric::Bool, rotation_profile::Symbol, kw...)
+
+Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
+assuming that the Sun is rotating with a solar-like rotation profile. The keyword argument `rotation_profile` specifies
+the specific model that is chosen. Optionally, additional keyword arguments `kw` may be passed to alter the specifics
+of the model. These are detailed below.
+
+This function overwrites the input matrix `A` that is obtained as the output to
+[`uniform_rotation_matrix`](@ref), and adds the extra terms corresponding to differential rotation to it.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+* `rotation_profile`: label to select the rotation profile used to compute the spectrum.
+    See [`solar_differential_rotation_profile_derivatives_grid`](@ref) for the list of possible options.
+* `ΔΩ_frac`: Ratio by which the background rotation rate ``Ω`` exceeds the reference rate ``Ω_0``, optional.
+    The relation between the two is given by `Ω = Ω_0 * (1 + ΔΩ_frac)`.
+    This is only used if `rotation_profile == :constant`, and is chosen to be `0.01` by default.
+"""
 function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, V_symmetric,
         rotation_profile = nothing,
@@ -1618,6 +1874,23 @@ function _differential_rotation_matrix!(M, m; rotation_profile, kw...)
     end
     return M
 end
+
+"""
+    differential_rotation_matrix(m::Integer;
+        operators, rotation_profile::Symbol, V_symmetric::Bool, kw...)
+
+Return the operator matrix ``A`` that features in the eigenvalue problem ``Av=λBv`` for a specified azimuthal
+order `m`, assuming a differentially rotating model of the Sun.
+The profile of rotation may be specified using the
+keyword argument `rotation_profile`.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+* `rotation_profile`: label to select the rotation profile used to compute the spectrum.
+    See [`solar_differential_rotation_profile_derivatives_grid`](@ref) for the list of possible options.
+"""
 function differential_rotation_matrix(m; operators, rotation_profile, kw...)
     @unpack nℓ = operators.radial_params;
     rstr = String(rotation_profile)
@@ -1626,12 +1899,30 @@ function differential_rotation_matrix(m; operators, rotation_profile, kw...)
     differential_rotation_matrix!(M, m; operators, rotation_profile, kw...)
     return M
 end
+
+"""
+    differential_rotation_matrix!(A, m::Integer;
+        operators, rotation_profile::Symbol, V_symmetric::Bool, kw...)
+
+Compute the operator matrix ``A`` that features in the eigenvalue problem ``Av=λBv`` for a specified azimuthal
+order `m` assuming a differentially rotating model of the Sun, and
+store the result in `A` (which will be overwritten).
+
+See [`differential_rotation_matrix`](@ref) for further details.
+"""
 function differential_rotation_matrix!(M, m; kw...)
     uniform_rotation_matrix!(M, m; kw...)
     _differential_rotation_matrix!(M, m; kw...)
     return M
 end
 
+"""
+    constrained_matmul_cache(constraints)
+
+Allocate temporary matrices that are overwritten with ``Z^T A Z`` and ``Z^T B Z`` given the eigenvalue pencil
+``(A, B)``, where the columns of `Z = constraints.ZC` represent the spectral coefficients of a basis
+that satifies the boundary conditions.
+"""
 function constrained_matmul_cache(constraints)
     @unpack ZC = constraints
     sz_constrained = (size(ZC, 2), size(ZC, 2))
@@ -1639,6 +1930,13 @@ function constrained_matmul_cache(constraints)
     B_constrained = zeros(ComplexF64, sz_constrained)
     return (; A_constrained, B_constrained)
 end
+"""
+    compute_constrained_matrix!(out, constraints, A)
+
+Compute the constrained matrix ``Z^T A Z`` given `A`, and overwrite `out` with the result.
+Here the columns of `Z = constraints.ZC` represents the spectral coefficients of a basis
+that satifies the boundary conditions.
+"""
 function compute_constrained_matrix!(out, constraints, A)
     @unpack ZC = constraints
     out .= ZC' * A * ZC
@@ -1649,6 +1947,13 @@ function compute_constrained_matrix!(out, constraints, A::StructMatrix{<:Complex
     out .= (ZC' * A.re * ZC) .+ im .* (ZC' * A.im * ZC)
     return out
 end
+"""
+    compute_constrained_matrix(A, constraints)
+
+Compute the constrained matrix ``Z^T A Z`` given `A`.
+Here the columns of `Z = constraints.ZC` represents the spectral coefficients of a basis
+that satifies the boundary conditions.
+"""
 function compute_constrained_matrix(A::AbstractMatrix{<:Complex}, constraints,
         cache = constrained_matmul_cache(constraints))
 
@@ -1673,6 +1978,12 @@ function realmatcomplexmatmul(A, B, (v, temp)::NTuple{2,AbstractMatrix})
     v
 end
 
+"""
+    allocate_projectback_temp_matrices(sz)
+
+Allocate temporary matrices used to project the eigenfunctions for ``(Z^T A Z) w = λ (Z^T B Z) w``
+to those for ``A v = λ B v``.
+"""
 function allocate_projectback_temp_matrices(sz)
     vr = zeros(sz)
     vi = zeros(sz)
@@ -1686,6 +1997,30 @@ function constrained_eigensystem_timed(AB; timer = TimerOutput(), kw...)
     X = @timeit timer "eigen" constrained_eigensystem(Y; timer, kw...)
     X
 end
+"""
+    constrained_eigensystem((A, B);
+        operators,
+        constraints = RossbyWaveSpectrum.constraintmatrix(operators),
+        cache = RossbyWaveSpectrum.constrained_matmul_cache(constraints),
+        temp_projectback = RossbyWaveSpectrum.allocate_projectback_temp_matrices(size(constraints.ZC)),
+        kw...)
+
+Solve the eigenvalue problem ``Av = λBv`` subject to the boundary-condition constraint ``Cv=0``,
+and return `(λ, v, (A, B))`. The input arguments are the matrix pencil `(A, B)`.
+
+Internally, this computes a matrix `Z = constraints.ZC` that represents the spectral coefficients of a basis
+that satifies the boundary conditions (i.e. this satisfies ``CZ=0``). The eigenfunction ``v`` may therefore be
+expressed as ``v = Zw`` for an arbitrary ``w``. Substituting this, and projecting the eigenvalue problem on to
+the basis ``Z``, we obtain ``(Z^T A Z) w = λ (Z^T B Z) w``, which is solved numerically.
+Finally, the eigenfunctions are computed using ``v=Z w``.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `constraints`: projection matrices to enforce the boundary conditions, optional.
+* `cache`: temporary arrays used in evaluating the constrained matrix pencil `(Z^T A Z, Z^T B Z)`, optional.
+    See [`constrained_matmul_cache`](@ref)
+* `temp_projectback`: temporary arrays used in computing `v` from `w`, optional.
+"""
 function constrained_eigensystem((A, B);
     operators,
     constraints = constraintmatrix(operators),
@@ -1709,10 +2044,38 @@ function constrained_eigensystem((A, B);
     λ, v, (A, B)
 end
 
+"""
+    uniform_rotation_spectrum(m::Integer; operators, V_symmetric::Bool)
+
+Compute the inertial-mode spectrum for the specified azimuthal order `m`, assuming that the Sun is
+rotating like a solid body, and it is being tracked from a frame that is rotating at the same rate as the Sun.
+This solves the eigenvalue problem ``A v = λ B v`` and returns `(λ, v, (A,B))`,
+where `A` is computed internally by calling
+[`uniform_rotation_matrix`](@ref), and `B` is computed by calling [`mass_matrix`](@ref).
+
+!!! note
+    This function returns all the eigenvalues and eigenfunctions without applying any filtering.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+* `rotation_profile`: label to select the rotation profile used to compute the spectrum.
+    See [`solar_differential_rotation_profile_derivatives_grid`](@ref) for the list of possible options.
+"""
 function uniform_rotation_spectrum(m; operators, kw...)
     AB = allocate_operator_mass_matrices(operators, 2)
     uniform_rotation_spectrum!(AB, m; operators, kw...)
 end
+"""
+    uniform_rotation_spectrum!((A, B), m::Integer; operators, V_symmetric::Bool)
+
+Compute the inertial-mode spectrum for the specified azimuthal order `m`, assuming that the Sun is
+rotating like a solid body, and it is being tracked from a frame that is rotating at the same rate as the Sun.
+This overwrites the pre-allocated pencil matrices `(A, B)`.
+
+See [`uniform_rotation_spectrum`](@ref) for further details.
+"""
 function uniform_rotation_spectrum!((A, B), m; operators, timer = TimerOutput(), kw...)
     @timeit timer "matrix" begin
         uniform_rotation_matrix!(A, m; operators, kw...)
@@ -1728,12 +2091,46 @@ function getbw(rotation_profile, nℓ)
     nℓ
 end
 
+"""
+    differential_rotation_spectrum(m::Integer; operators,
+        V_symmetric::Bool, rotation_profile::Symbol)
+
+Compute the inertial-mode spectrum for the specified azimuthal order `m`, assuming that the Sun is
+rotating with a solar-like rotation profile (the exact model may be specified using `rotation_profile`), and it
+is being tracked in a frame rotating at a rate `Ω0 = operators.constants[:Ω0]`.
+
+This solves the eigenvalue problem ``A v = λ B v`` and returns `(λ, v, (A,B))`,
+where `A` is computed internally by calling
+[`uniform_rotation_matrix`](@ref), and `B` is computed by calling [`mass_matrix`](@ref).
+
+!!! note
+    This function returns all the eigenvalues and eigenfunctions without applying any filtering.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+* `rotation_profile`: label to select the rotation profile used to compute the spectrum.
+    See [`solar_differential_rotation_profile_derivatives_grid`](@ref) for the list of possible options.
+"""
 function differential_rotation_spectrum(m::Integer; operators, rotation_profile, kw...)
     (; nℓ) = operators.radial_params
     bw = getbw(rotation_profile, nℓ)
     AB = allocate_operator_mass_matrices(operators, bw)
     differential_rotation_spectrum!(AB, m; operators, rotation_profile, kw...)
 end
+
+"""
+    differential_rotation_spectrum!((A, B), m::Integer; operators,
+        V_symmetric::Bool, rotation_profile::Symbol)
+
+Compute the inertial-mode spectrum for the specified azimuthal order `m`, assuming that the Sun is
+rotating with a solar-like rotation profile (the exact model may be specified using `rotation_profile`), and it
+is being tracked in a frame rotating at a rate `Ω0 = operators.constants[:Ω0]`.
+This overwrites the pre-allocated pencil matrices `(A, B)`.
+
+See [`differential_rotation_spectrum`](@ref) for further details.
+"""
 function differential_rotation_spectrum!((A, B)::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
         m::Integer; rotation_profile, operators, timer = TimerOutput(), kw...)
     @timeit timer "matrix" begin
@@ -1927,6 +2324,13 @@ function nodes_filter!(filtercache, v, m, operators;
     return nodesfilter
 end
 
+"""
+    Filters
+
+Filters that may be passed to the `filterflags` keyword argument in `filter_eigenvalues`.
+The individual filters may be combined using `|`, e.g. to include the `EIGEN` and the `SPATIAL_EQUATOR` filters, use
+`EIGEN | SPATIAL_EQUATOR`.
+"""
 module Filters
     using BitFlags
     export DefaultFilter
@@ -1941,6 +2345,61 @@ module Filters
         SPATIAL_RADIAL # power not concentrated at the top/bottom surface layers
         NODES # number of radial nodes
     end
+    """
+        Filters.EIGEN
+
+    Filter for solutions `(λ, v)` that satisfy the eigenvalue problem Av=λBv
+    """
+    EIGEN
+
+    """
+        Filters.EIGVAL
+
+    Filter for solutions that satisfy constraints on the eigenvalue,
+    e.g. pick out damped solutions and ignore growing ones.
+    """
+    EIGVAL
+
+    """
+        Filters.EIGVAL
+
+    Filter for smooth eigenfunctions, by applying spectral cutoffs in the Chebyshev order `n` as well as
+    the spherical-harmonic degree `ℓ`
+    """
+    EIGVEC
+
+    """
+        Filters.BC
+
+    Filter for eigenfunctions that satify the boundary conditions ``Bv = 0``.
+    Typically, all solutions should satisfy this condition,
+    as this is imposed when solving the eigenvalue problem.
+    """
+    BC
+
+    """
+        Filters.SPATIAL_EQUATOR
+
+    Filter for eigenfunctions that latitudinally peak about the solar equator.
+    """
+    SPATIAL_EQUATOR
+
+    """
+        Filters.SPATIAL_RADIAL
+
+    Filter for eigenfunctions where the power is not concentrated very close to the top and the bottom
+    boundaries of the domain.
+    """
+    SPATIAL_RADIAL
+
+    """
+        Filters.NODES
+
+    Filter for eigenfunctions that have fewer than a specified number of radial nodes. A heuristic
+    criteria is applied to ignore zero-crossings due to numerical or resolution limitations.
+    """
+    NODES
+
     FilterFlag(F::FilterFlag) = F
     function Base.:(!)(F::FilterFlag)
         n = length(instances(FilterFlag))
@@ -1950,6 +2409,11 @@ module Filters
     Base.broadcastable(x::FilterFlag) = Ref(x)
 
     const SPATIAL = SPATIAL_EQUATOR | SPATIAL_RADIAL
+    """
+        RossbyWaveSpectrum.DefaultFilter
+
+    The default set of filters used to constrain the set of solutions.
+    """
     const DefaultFilter = EIGEN | EIGVAL | EIGVEC | BC | SPATIAL | NODES
 end
 using .Filters
@@ -1988,6 +2452,16 @@ function allocate_BCcache(n_bc)
     StructArray{ComplexF64}((zeros(n_bc), zeros(n_bc)))
 end
 
+"""
+    allocate_filter_caches(m; operators,
+        constraints = RossbyWaveSpectrum.constraintmatrix(operators))
+
+Allocate temporary matrices used in the filtering process, given the azimuthal order `m`.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `constraints`: boundary condition constraints on the spectral coefficients, optional
+"""
 function allocate_filter_caches(m; operators, constraints = constraintmatrix(operators))
     @unpack BC = constraints
     @unpack nr, nℓ, nparams = operators.radial_params
@@ -2055,6 +2529,31 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix, m::Integer;
     filter_eigenvalues(λ, v, M, m; operators, V_symmetric, kw...);
 end
 
+"""
+    filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
+        (A,B), m::Integer; operators,
+        V_symmetric,
+        constraints = RossbyWaveSpectrum.constraintmatrix(operators),
+        filtercache = RossbyWaveSpectrum.allocate_filter_caches(m; operators, constraints),
+        filterflags = RossbyWaveSpectrum.DefaultFilter,
+        scale_eigenvectors::Bool = false,
+        filterparams...)
+
+Filter the set of eigenvalue-eigenvector pairs `(λ, v)` for a specified azimuthal order `m`
+to remove the potentially spurious ones. This returns a filtered set `(λf, vf)`.
+The eigenvalue pencil `(A,B)` should be provided, and will be used in the filtering process.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+* `constraints`: boundary condition constraints on the spectral coefficients, optional
+* `filtercache`: pre-allocated workspace used in the filtering process, optional
+* `filterflags`: the flags that specify which filters are used, optional.
+* `scale_eigenvectors`: flag to indices whether to compute the unscaled stream functions
+    from the scaled ones that are used in the eigenvalue problem.
+* `filterparams`: additional filter parameters, passed on to [`filterfn`](@ref).
+"""
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     M, m::Integer;
     operators,
@@ -2112,6 +2611,33 @@ function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:Abstrac
     end
 end
 
+"""
+    filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
+        vs::AbstractMatrix{<:AbstractMatrix},
+        mr::AbstractVector{<:Integer}; matrixfn!, operators, V_symmetric,
+        constraints = RossbyWaveSpectrum.constraintmatrix(operators),
+        filtercache = RossbyWaveSpectrum.allocate_filter_caches(m; operators, constraints),
+        filterflags = RossbyWaveSpectrum.DefaultFilter,
+        filterparams...)
+
+Filter the sets of eigenvalue-eigenvector pairs `(λ, v)` for each azimuthal order `m` in the range `mr`,
+taken from the vectors `λs` and `vs`. The filtering operation for each `m` is independent of the others,
+and these are therefore carried out in parallel if multiple threads are available. This function returns a
+filtered set `(λsf, vsf)`, where `λsf[i]` and `vsf[i]` represents the filtered set of eigenvalues and
+eigenvectors corresponding to `m = mr[i]`.
+
+# Keyword arguments
+* `matrixfn!`: The function used to compute the matrix `A` in the eigenvalue pencil `(A,B)`. This
+  may be one of [`uniform_rotation_matrix!`](@ref) or [`differential_rotation_matrix!`](@ref) or a `RotMatrix`,
+  and will be called as `matrixfn!(A, m; kw...)` to populate the matrix `A`.
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+* `constraints`: Boundary condition constraints on the spectral coefficients, optional
+* `filtercache`: Pre-allocated workspace used in the filtering process, optional
+* `filterflags`: The flags that specify which filters are used, optional.
+* `filterparams`: additional filter parameters, passed on to [`filterfn`](@ref).
+"""
 function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector{<:Integer};
     matrixfn!,
@@ -2176,6 +2702,30 @@ function eigvec_spectrum_filter_map_nthreads!(c::Channel, nt, spectrumfn!, mr, o
     end
 end
 
+"""
+    filter_eigenvalues(spectrumfn!,
+        mr::AbstractVector; operators, V_symmetric,
+        constraints = RossbyWaveSpectrum.constraintmatrix(operators),
+        filtercache = RossbyWaveSpectrum.allocate_filter_caches(m; operators, constraints),
+        filterflags = RossbyWaveSpectrum.DefaultFilter,
+        filterparams...)
+
+Compute the spectrum of inertial waves for the specified range of azimuthal orders `mr`, and filter the solutions
+to remove potentially spurious solutions. This function returns `(λs, vs)`, where `λs[i]` and `vs[i]` represent the
+filtered set of eigenvalues and eigenvectors corresponding to `m = mr[i]`.
+
+The argument `spectrumfn!` must be one of [`uniform_rotation_spectrum!`](@ref) or
+[`differential_rotation_spectrum!`](@ref).
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+* `constraints`: Boundary condition constraints on the spectral coefficients, optional
+* `filtercache`: Pre-allocated workspace used in the filtering process, optional
+* `filterflags`: The flags that specify which filters are used, optional.
+* `filterparams`: additional filter parameters, passed on to [`filterfn`](@ref).
+"""
 function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
     operators, constraints = constraintmatrix(operators), kw...)
 
@@ -2247,6 +2797,12 @@ end
 rossbyeigenfilename(nr, nℓ, rottag, symtag, modeltag = "") =
     datadir("$(rottag)_nr$(nr)_nl$(nℓ)_$(symtag)$((isempty(modeltag) ? "" : "_") * modeltag).jld2")
 
+"""
+    rossbyeigenfilename(; operators, V_symmetric, rotation_profile, modeltag = "")
+
+Return the file name to which the results should be written.
+The output is a combination of the keyword arguments specifed.
+"""
 function rossbyeigenfilename(; operators, V_symmetric, rotation_profile, kw...)
     modeltag = get(kw, :modeltag, "")
     symtag = V_symmetric ? "sym" : "asym"
@@ -2254,6 +2810,13 @@ function rossbyeigenfilename(; operators, V_symmetric, rotation_profile, kw...)
     return rossbyeigenfilename(nr, nℓ, rotation_profile, symtag, modeltag)
 end
 
+"""
+    save_eigenvalues(spectrumfn!, mr; operators, V_symmetric, kw...)
+
+Compute the spectra for all azimuthal orders `m in mr` using the function `spectrumfn!`,
+and save the results to disk, with a filename given by [`rossbyeigenfilename`](@ref)
+Additional keyword arguments are passed on to `filter_eigenvalues` and `rossbyeigenfilename`.
+"""
 function save_eigenvalues(spectrumfn!, mr; operators, save=true, kw...)
     lam, vec = filter_eigenvalues(spectrumfn!, mr; operators, kw...)
     kw2 = mergekw(spectrumfn!, kw)
@@ -2431,6 +2994,22 @@ function eigenfunction_realspace!(fieldcaches, v, m;
     invshtransform2!(VWSinv, VWSinvsh, m; nℓ, Plcosθ, kw...)
 end
 
+"""
+    eigenfunction_realspace(v, m; operators, V_symmetric::Bool,
+        n_lowpass_cutoff = nothing,
+        Δl_lowpass_cutoff = nothing)
+
+Compute the real-space eigenfunctions from the spectral coefficients `v` for the azimuthal order `m`.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+* `n_lowpass_cutoff`: maximum chebyshev order `n` to retain in the inverse transform, optional.
+    If no value is provided, all the coefficients are used (default).
+* `Δl_lowpass_cutoff`: maximum harmonic order `ℓ` to retain in the inverse transform, optional.
+    If no value is provided, all the coefficients are used (default).
+"""
 function eigenfunction_realspace(v, m; operators, kw...)
     @unpack nr, nℓ = operators.radial_params
     nθ = length(colatitude_grid(m, nℓ))

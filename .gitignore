@@ -5,4 +5,4 @@ test/dev
 *.png
 .vscode
 *.ipynb
-
+docs/build

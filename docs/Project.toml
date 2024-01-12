@@ -1,0 +1,7 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+RossbyWaveSpectrum = "7fbe2b4f-a8e1-4092-9718-18aa0af13fd5"
+
+[compat]
+Documenter = "1"
+RossbyWaveSpectrum = "2"
