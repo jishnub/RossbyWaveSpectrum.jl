@@ -9,7 +9,6 @@ juliaup add 1.10.0
 julia +1.10.0 -e \
 'import Pkg;
 Pkg.activate("ApproxFunAssociatedLegendre"); Pkg.instantiate();
-Pkg.activate("SolarModel"); Pkg.instantiate();
 Pkg.activate("."); Pkg.instantiate();
 Pkg.activate("RossbyPlots"); Pkg.instantiate();'
 rm $TMPFILE
