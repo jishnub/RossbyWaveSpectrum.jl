@@ -1,5 +1,5 @@
 module ComputeRossbySpectrum
-@time using RossbyWaveSpectrum
+using RossbyWaveSpectrum
 using FFTW
 using LinearAlgebra
 using TimerOutputs
@@ -20,6 +20,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
             trackingrate = :cutoff,
             ΔΩ_smoothing_param = 5e-2,
             superadiabaticityparams = (;),
+            print_parameters = true,
             extrakw...
             )
 
@@ -33,13 +34,15 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
     scalings = (; Seqglobalscaling, trackingratescaling)
 
     hostname = Libc.gethostname()
-    @show hostname
-    @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac
-    @show smoothing_param ΔΩ_smoothing_param ΔΩ_scale ΔΩ_frac
-    @show superadiabaticityparams
-    @show V_symmetric diffrot rotation_profile viscosity
-    @show extrakw
-    @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads() FFTW.get_num_threads()
+    if print_parameters
+        @show hostname
+        @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac
+        @show smoothing_param ΔΩ_smoothing_param ΔΩ_scale ΔΩ_frac
+        @show superadiabaticityparams
+        @show V_symmetric diffrot rotation_profile viscosity
+        @show extrakw
+        @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads() FFTW.get_num_threads()
+    end
 
     timer = TimerOutput()
 
@@ -54,7 +57,9 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
             operators, smoothing_param, ΔΩ_scale, ΔΩ_frac, ΔΩ_smoothing_param)
     end
 
-    println(timer)
+    if get(extrakw, :print_timer, false)
+        println(timer)
+    end
 
     flush(stdout)
 
@@ -63,7 +68,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
         smoothing_param, ΔΩ_scale, ΔΩ_frac, ΔΩ_smoothing_param,
         superadiabaticityparams))
 
-    @time RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange;
+    RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange;
         operators, kw..., extrakw...)
 
     flush(stdout)
@@ -84,7 +89,7 @@ function main(V_symmetric = true;
 
     computespectrum(8, 6, mrange, V_symmetric, diffrot, rotation_profile,
             save = false, smoothing_param = 1e-1, print_timer = false)
-    computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile;
+    @time computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile;
             save, additional_kw...)
 end
 
