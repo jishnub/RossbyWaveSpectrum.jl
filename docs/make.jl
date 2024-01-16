@@ -9,8 +9,9 @@ makedocs(
     authors = "Jishnu Bhattacharya",
     warnonly = :missing_docs,
     pages = [
-        "Home" => "index.md",
-        "API" => "API.md",
+        "Theory" => "theory.md",
+        "Using the code" => "index.md",
+        "Library" => "API.md",
     ],
 )
 
