@@ -89,12 +89,18 @@ function FilteredEigen(lams, vs, mr, kw, operators)
     FilteredEigen(lams, vs, mr, kw, operators, constraints)
 end
 
+function rewrapstruct(vec::Vector{<:NTuple{2,AbstractMatrix{T}}}) where {T<:Real}
+    [StructArray{Complex{T}}(t) for t in vec]
+end
+# for backward compatibility
+rewrapstruct(vec::Vector{<:StructArray{<:Complex}}) = vec
+
 function FilteredEigen(fname::String)
     isfile(fname) || throw(ArgumentError("Couldn't find $fname"))
     lam, vec, mr, kw, operatorparams =
         load(fname, "lam", "vec", "mr", "kw", "operatorparams");
     operators = radial_operators(operatorparams...)
-    FilteredEigen(lam, vec, mr, kw, operators)
+    FilteredEigen(lam, rewrapstruct(vec), mr, kw, operators)
 end
 
 function Base.getindex(Feig::FilteredEigen, m::Integer)
@@ -2297,19 +2303,24 @@ function rossbyeigenfilename(; operators, kw...)
     @unpack nr, nℓ = operators.radial_params;
     return rossbyeigenfilename(nr, nℓ, rottag, symtag, modeltag)
 end
+
 function save_eigenvalues(f, mr; operators, save=true, kw...)
     lam, vec = filter_eigenvalues(f, mr; operators, kw...)
-    if save
-        fname = rossbyeigenfilename(; operators, kw...)
-        @unpack operatorparams = operators
-        kw_ = Dict(kw)
-        if haskey(kw, :filterflags)
-            kw_[:filterflags] = Int(kw[:filterflags])
-        end
-        @info "saving to $fname"
-        jldsave(fname; lam, vec, mr, kw = kw_, operatorparams)
-    end
+    save && save_to_file(lam, vec, mr; operators, kw...)
+    return nothing
 end
+
+function save_to_file(lam, vec, mr; operators, kw...)
+    fname = rossbyeigenfilename(; operators, kw...)
+    @unpack operatorparams = operators
+    kw_ = Dict{Symbol,Any}(kw)
+    kw_[:filterflags] = UInt16(get(kw, :filterflags, DefaultFilter))
+    println("saving to $fname")
+    jldsave(fname; lam, vec = unwrapstruct(vec), mr, kw = kw_, operatorparams)
+    return fname
+end
+
+unwrapstruct(vec::Vector{<:StructArray{<:Complex}}) = [(v.re, v.im) for v in vec]
 
 function differential_rotation_matrix(Feig::FilteredEigen, m; kw...)
     differential_rotation_matrix(m; Feig.operators, Feig.kw..., kw...)

@@ -783,6 +783,35 @@ end
     end
 end
 
+@testset "wrap and unwrap structarrays" begin
+    A = rand(3,4)
+    v = [StructArray{ComplexF64}((A,A))]
+    @test RossbyWaveSpectrum.rewrapstruct(v) == v
+    vunwrap = RossbyWaveSpectrum.unwrapstruct(v)
+    @test vunwrap == [(A,A)]
+    vrewrap = RossbyWaveSpectrum.rewrapstruct(vunwrap)
+    @test vrewrap == v
+end
+
+@testset "saving and loading" begin
+    lam, vec = [[1.0+1.0im]], [StructArray{ComplexF64}((rand(4,1), rand(4,1)))]
+    nr, nℓ = 8,6
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
+    kw = (V_symmetric=true,)
+    mr = 1:1
+    fname = RossbyWaveSpectrum.save_to_file(lam, vec, mr; operators, kw...)
+    Feig = FilteredEigen(fname)
+    @test Feig.operators.operatorparams == operators.operatorparams
+    @test Feig.operators.constants == operators.constants
+    @test Feig.operators.scalings == operators.scalings
+    @test Feig.operators.radial_params == operators.radial_params
+    @test Feig.operators.radialdomain == operators.radialdomain
+    @test Feig.kw[:V_symmetric] == kw[:V_symmetric]
+    @test Feig.lams == lam
+    @test Feig.vs == vec
+    rm(fname)
+end
+
 include("run_threadedtests.jl")
 
 @testset "compute_rossby_spectrum.jl" begin
