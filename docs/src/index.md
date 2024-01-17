@@ -5,6 +5,12 @@ A Julia code to compute the spectrum of inertial waves in the Sun.
 # Installation
 To install the code, run `./INSTALL.sh`. This requires `bash` and `curl` to run, and will download and install `julia` using the installer `juliaup`. It will also install the requisite project dependencies. The project uses Julia v1.10.0, which may be installed independently as well, in which case one only needs to instantiate the environments as listed in `INSTALL.sh`.
 
+A part of installation process requires `matplotlib` to be available. If one is using an anaconda distribution located in their user directory, they may need to export `PYTHON=<path to python>` before running `INSTALL.sh`. So, for example, one may run
+```
+PYTHON=$HOME/anaconda3/bin/python ./INSTALL.sh
+```
+the first time the code is being installed (subsequent reinstallations will reuse the path that has been set). However, the code may be run without matplotlib as well, as it is only required for plotting the results.
+
 Users running the code on a heterogeneous cluster (where the login and compute nodes have different CPU architectures) may want to set the environment variable `JULIA_CPU_TARGET` appropriately in their shell rc file. One may check the CPU architecture by running
 ```julia
 julia> Sys.CPU_NAME
@@ -16,14 +22,14 @@ As an example, a valid setting may be
 ```
 export JULIA_CPU_TARGET="generic;skylake-avx512,clone_all;icelake-server,clone_all"
 ```
-if e.g. the login node has `skylake-avx512` and the compute node has `icelake-server`. Setting this is particularly important if one node has Intel processors whereas the other has AMD ones.
+if e.g. the login node has `skylake-avx512` and the compute node has `icelake-server`. Setting this is particularly important if one node has Intel processors whereas the other has AMD ones. This should be set before running `INSTALL.sh`.
 
 # Starting Julia
 
 Typically the code is run multi-threaded, so one needs to specify the number of threads while launching Julia.
 As an example, if we want to use `5` Julia threads, this may be done as
 ```
-julia --project=. --startup-file=no -t 5
+julia +1.10.0 --project=. --startup-file=no -t 5
 ```
 The flag `--project` should point to the path to the code.
 The example above assumes that you are in the top-level code directory (`RossbyWaveSpectrum.jl`).
@@ -62,7 +68,7 @@ nr, nℓ = 40, 20 # number of radial and latitudinal spectral coefficients
 r_in_frac = 0.65 # inner boundary of the domain as a fraction of the solar radius
 r_out_frac = 0.985 # outer boundary of the domain as a fraction of the solar radius
 ν = 5e11 # kinematic viscosity coefficient in CGS units
-trackingrate = :hanson2020 # track at 453.1 nHz
+trackingrate = :hanson2020 # track at 453.1 nHz; may also be a number in nHz
 ```
 and compute the radial operators as
 ```julia
@@ -77,39 +83,73 @@ We need to specify whether we seek equatorially symmetric or antisymmetric solut
 and the model of differential rotation that is used. We define some parameters
 ```julia
 V_symmetric = true # indicates that V is symmetric about the equator, alternately set to `false` for antisymmetric
-diffrot = true # indicates that differential rotation is included in computing the spectrum
-rotation_profile = :latrad_squished # model of differential rotation to be used in the calculation, only needed if diffrot == true
+rotation_profile = :solar_latrad_squished # model of differential rotation to be used in the calculation
 ```
 and compute the spectrum function as
 ```julia
-spectrumfn! = RotMatrix(Val(:spectrum), V_symmetric, diffrot, rotation_profile; operators)
+spectrumfn! = RotMatrix(Val(:spectrum), V_symmetric, rotation_profile; operators)
 ```
 
 Finally, we compute and save the spectrum for a range of azimuthal orders using the pre-defined parameters.
 We define
 ```julia
-mrange = 1:15 # the range of azimuthal orders for which to compute the spectra
+mrange = 2:6 # the range of azimuthal orders for which to compute the spectra
 ```
 and compute the spctrum using
 ```julia
 save_eigenvalues(spectrumfn!, mrange; operators)
 ```
+This will save the results to a file named `"solar_latrad_squished_nr40_nl20_sym.jld2"` in the output directory given by
+`RossbyWaveSpectrum.DATADIR[]`.
 
 # Loading the results
 
-The results are stored in `jld2` files that are read in using the package `JLD2.jl`, but at present these may not be loaded
-independently without loading this package. We provide an interface to read these in:
+The results are stored in `jld2` files that are read in using the package `JLD2.jl`. We provide an interface to read these in:
 ```julia
+julia> Feig = FilteredEigen(datadir("solar_latrad_squished_nr40_nl20_sym.jld2"))
+Filtered eigen with m range = 2:6
 ```
+This will load the solutions for all `m` into a struct that may be passed directly to the plotting functions. To obtain the solutions for one `m`, we may index into `Feig` with that `m`:
+```julia
+julia> Feig[2]
+Filtered eigen with m = 2
+```
+The eigenvalues and eigenvectors for this `m` may be obtained as
+```julia
+julia> λs, vs = Feig[2];
+
+julia> λs
+4-element Vector{ComplexF64}:
+ 0.4981592422711335 + 0.014103483029526536im
+ 0.6967785422145395 + 0.00046298002829591573im
+  1.469490820471635 + 0.06912096500018029im
+ 1.6005757491199637 + 0.03673314713783im
+```
+In the sign convention chosen in the code, a positive imaginary part of the eigenfrequencies indicates that the solutions are damped, and a positive real part indicates retrograde solutions. These are corrected for when plotting the solutions, so that the real part of the frequencies appear in the bottom right quadrant.
 
 !!! warn
-	The file format and contents may not be identical across releases, and backward compatibility is not always guaranteed.
-	Please use the same version of the package that was used to create the file to read it back in.
+	The file format and types of contents may not be identical across releases, and backward compatibility is not always guaranteed. Please use the same version of the package that was used to create the file to read it back in.
 
 # Plotting the results
 
-The plotting functions are provided by the module `RossbyPlots`.
-For example, we may plot the spectrum as
+The plotting functions are provided by the module `RossbyPlots`. This resides in a separate environment, which must be activated first using
 ```julia
+julia> import Pkg
+
+julia> Pkg.pkg"activate RossbyPlots"
+```
+
+The plotting functions use `matplotlib`, which must be available on the system, and accessible to `PyPlot`. One may need to set
+```julia
+ENV["PYTHON"] = "... path of the python executable ..."
+import Pkg
+Pkg.build("PyCall")
+```
+if matplotlib is provided by a local anaconda distribution that differs from the system-provided python.
+
+We may plot the spectrum as
+```julia
+julia> using RossbyPlots
+
 
 ```

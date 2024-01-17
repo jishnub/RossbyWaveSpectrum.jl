@@ -18,6 +18,7 @@ differential_rotation_spectrum!
 filter_eigenvalues
 save_eigenvalues
 FilteredEigen
+datadir
 ```
 
 ## Post-processing Filters
@@ -61,3 +62,5 @@ RossbyWaveSpectrum.allocate_projectback_temp_matrices
 RossbyWaveSpectrum.rossbyeigenfilename
 RossbyWaveSpectrum.FilteredEigenSingleOrder
 ```
+
+## Plotting functions

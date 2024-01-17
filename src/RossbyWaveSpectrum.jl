@@ -206,6 +206,7 @@ updaterotatationprofile(d; kw...) = d
 
 mergekw(_, kw) = kw
 mergekw(f::RotMatrix, kw) = (; f.kw..., kw...)
+
 (d::RotMatrix)(args...; kw...) = d.f(args...;
     ΔΩprofile_deriv = d.ΔΩprofile_deriv,
     ωΩ_deriv = d.ωΩ_deriv,
@@ -232,6 +233,12 @@ function updaterotatationprofile(F::FilteredEigen; kw...)
     RotMatrix(Val(:matrix), V_symmetric, rotation_profile; operators, kw...)
 end
 
+"""
+    datadir(filename)
+
+Preprend the data directory to the filename. This is a convenience function to make loading
+files less cumbersome.
+"""
 datadir(f) = joinpath(DATADIR[], f)
 
 function sph_points(N)
@@ -442,7 +449,6 @@ function solar_structure_parameter_splines(; r_in = 0.7Rsun, r_out = Rsun, _stra
     @pack! splines = sρ, sT, sg, slogρ, sηρ, sηρ_by_r, ddrsηρ_by_r, ddrsηρ_by_r2, ddrsηρ, d2dr2sηρ, d3dr3sηρ, sηT
     (; splines, rad_terms)
 end
-
 
 iszerofun(v) = ncoefficients(v) == 0 || (ncoefficients(v) == 1 && coefficients(v)[] == 0.0)
 function replaceemptywitheps(f::Fun, eps = 1e-100)
@@ -2811,11 +2817,15 @@ function rossbyeigenfilename(; operators, V_symmetric, rotation_profile, kw...)
 end
 
 """
-    save_eigenvalues(spectrumfn!, mr; operators, V_symmetric, kw...)
+    save_eigenvalues(spectrumfn!, mr; operators, V_symmetric, rotation_profile, kw...)
+    save_eigenvalues(spectrumfn!::RotMatrix, mr; operators, kw...)
 
 Compute the spectra for all azimuthal orders `m in mr` using the function `spectrumfn!`,
 and save the results to disk, with a filename given by [`rossbyeigenfilename`](@ref)
 Additional keyword arguments are passed on to `filter_eigenvalues` and `rossbyeigenfilename`.
+
+If `spectrumfn! isa RotMatrix`, the keyword arguments `V_symmetric` and `rotation_profile`
+are automatically inferred from it.
 """
 function save_eigenvalues(spectrumfn!, mr; operators, save=true, kw...)
     lam, vec = filter_eigenvalues(spectrumfn!, mr; operators, kw...)
