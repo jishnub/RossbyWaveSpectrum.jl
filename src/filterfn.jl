@@ -1,8 +1,10 @@
-function filterfn(λ::Number, v::AbstractVector, m::Integer, M, filterparams;
+function filterfn(λ::Number, v::AbstractVector{<:Number}, m::Integer, M;
         operators,
+        V_symmetric::Bool,
         constraints = constraintmatrix(operators),
         filtercache = allocate_filter_caches(m; operators, constraints),
-        filterflags = DefaultFilter)
+        filterflags = DefaultFilter,
+        filterparams...)
 
     @unpack BC = constraints
     @unpack nℓ = operators.radial_params;
@@ -21,7 +23,6 @@ function filterfn(λ::Number, v::AbstractVector, m::Integer, M, filterparams;
     eigen_rtol = Float64(filterparams_all[:eigen_rtol])::Float64
     filterfieldpowercutoff = Float64(filterparams_all[:filterfieldpowercutoff])::Float64
     nnodesmax = filterparams_all[:nnodesmax]::Int
-    V_symmetric = filterparams[:V_symmetric]::Bool
     radial_topbotpower_cutoff = Float64(filterparams_all[:radial_topbotpower_cutoff])::Float64
 
     (; MVcache, BCVcache, VWSinv, VWSinvsh,
