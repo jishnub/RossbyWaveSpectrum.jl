@@ -16,7 +16,7 @@ function spatial_filter!(filtercache, v, m;
     kw...
     )
 
-    (; θ) = spharm_θ_grid_uniform(m, nℓ)
+    θ = colatitude_grid(m, operators)
     eqind = indexof_equator(θ)
 
     (; VWSinv, radproftempreal, fieldtempreal) = filtercache;

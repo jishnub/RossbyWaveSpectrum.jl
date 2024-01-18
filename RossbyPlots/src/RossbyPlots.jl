@@ -283,7 +283,7 @@ function nodes_cutoff_mask(vecs, mr, nodes_cutoff; operators, V_symmetric, kw...
     nr = operators.radial_params[:nr]
     nℓ = operators.radial_params[:nℓ]
     ns = map(zip(vecs, mr)) do (vm, m)
-        θ = RossbyWaveSpectrum.spharm_θ_grid_uniform(m, nℓ).θ
+        θ = RossbyWaveSpectrum.colatitude_grid(m, nℓ)
         fieldcaches = RossbyWaveSpectrum.allocate_field_caches(nr, nℓ, length(θ))
         realcache = similar(fieldcaches.VWSinv.V, real(eltype(fieldcaches.VWSinv.V)))
         map(eachcol(vm)) do v
@@ -445,7 +445,8 @@ function spectrum(lams::AbstractArray, mr;
         rossby_ridge_lines(mr; νnHzunit, ax, kw...)
     end
 
-    zoom = V_symmetric && get(kw, :zoom, !get(kw, :diffrot, false))
+    diffrot = kw[:rotation_profile] != :uniform
+    zoom = V_symmetric && get(kw, :zoom, !diffrot)
 
     if zoom
         zoom_inds = in(m_zoom).(mr)
@@ -937,7 +938,8 @@ function diffrot_rossby_ridge(Fsym,
         # select the mode that looks like l == m
         lam_m, _ = argmin(zip(lam_m, eachcol(vs_m))) do (lam, v)
             # Vr,Wr = RossbyPlots.compute_eigenfunction_spectra(v, m; operators, V_symmetric = true);
-            (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, V_symmetric = true);
+            VWSinv = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, V_symmetric = true);
+            θ = RossbyWaveSpectrum.colatitude_grid(m, operators)
             Vr_realspace = real(VWSinv.V);
             r_ind_peak = RossbyWaveSpectrum.peakindabs1(Vr_realspace)
             peak_latprofile = @view Vr_realspace[r_ind_peak, :]
@@ -1571,7 +1573,8 @@ function eigenfunction(Feig::FilteredEigen, m::Integer, ind::Integer; kw...)
 end
 
 function eigenfunction(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
-    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
+    VWSinv = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
+    θ = RossbyWaveSpectrum.colatitude_grid(m, operators)
     eigenfunction(VWSinv, θ, m; operators, kw...)
 end
 
@@ -1628,17 +1631,19 @@ function eigenfunctions_ridge(Feig::FilteredEigen, ms, ridge=:ridge2; kw...)
 end
 
 function eigenfunctions_allstreamfn(Feig::FilteredEigen, m::Integer, vind::Integer; kw...)
-    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(Feig, m, vind; kw...)
+    VWSinv = RossbyWaveSpectrum.eigenfunction_realspace(Feig, m, vind; kw...)
     if get(kw, :scale_eigenvectors, false)
         RossbyWaveSpectrum.scale_eigenvectors!(VWSinv; Feig.operators)
     end
+    θ = RossbyWaveSpectrum.colatitude_grid(m, operators)
     eigenfunctions_allstreamfn(VWSinv, θ, m; Feig.operators, Feig.kw..., kw...)
 end
 function eigenfunctions_allstreamfn(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
-    (; θ, VWSinv) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
+    VWSinv = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
     if get(kw, :scale_eigenvectors, false)
         RossbyWaveSpectrum.scale_eigenvectors!(VWSinv; operators)
     end
+    θ = RossbyWaveSpectrum.colatitude_grid(m, operators)
     eigenfunctions_allstreamfn(VWSinv, θ, m; operators, kw...)
 end
 function eigenfunctions_allstreamfn(VWSinv::NamedTuple, θ, m; operators, kw...)
@@ -1709,7 +1714,8 @@ function multiple_eigenfunctions_surface_m(λs::AbstractVector, vecs::AbstractMa
     vm = vecs[:, range(rossbyindex, step=-1, length=nmodes)]
 
     for (ind, (v, (ls, c, marker))) in enumerate(zip(eachcol(vm), lscm))
-        (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, V_symmetric)
+        VWSinv = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, V_symmetric)
+        θ = RossbyWaveSpectrum.colatitude_grid(m, operators)
         @unpack V = VWSinv
         Vr = realview(V)
         Vr_surf = Vr[rsurfind, :]
@@ -1757,7 +1763,8 @@ function multiple_eigenfunctions_radial_m(λs::AbstractVector, vecs::AbstractMat
     vm = vecs[:, range(rossbyindex, step=-1, length=nmodes)]
 
     for (ind, (v, (ls, c, marker))) in enumerate(zip(eachcol(vm), lscm))
-        (; VWSinv, θ) = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, V_symmetric)
+        VWSinv = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, V_symmetric)
+        θ = RossbyWaveSpectrum.colatitude_grid(m, operators)
         @unpack V = VWSinv
         Vr = realview(V)
         eqind = argmin(abs.(θ .- pi/2))
