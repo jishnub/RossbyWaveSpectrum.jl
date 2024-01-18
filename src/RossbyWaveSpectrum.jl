@@ -2055,23 +2055,23 @@ end
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     M, m::Integer;
     operators,
+    V_symmetric::Bool,
     constraints = constraintmatrix(operators),
     filtercache = allocate_filter_caches(m; operators, constraints),
     filterflags = DefaultFilter,
+    scale_eigenvectors = false,
     filterparams...)
 
     @unpack nparams = operators.radial_params;
-    additional_params = (; operators, constraints, filtercache);
+    additional_params = (; operators, V_symmetric, constraints, filtercache)
     Ms = M isa NTuple{2,AbstractMatrix} ? map(computesparse, M) : M
 
-    inds_bool = filterfn.(λ, eachcol(v), m, Ref(Ms), Ref(filterparams); additional_params..., filterflags)
+    inds_bool = filterfn.(λ, eachcol(v), m, Ref(Ms); additional_params..., filterflags, filterparams...)
     filtinds = axes(λ, 1)[inds_bool]
     λ, v = λ[filtinds], v[:, filtinds]
 
     # re-apply scalings
-    if get(filterparams, :scale_eigenvectors, false)
-        scale_eigenvectors!(v; operators)
-    end
+    scale_eigenvectors && scale_eigenvectors!(v; operators)
 
     λ, v
 end
