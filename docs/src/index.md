@@ -80,7 +80,8 @@ See [`radial_operators`](@ref) for details.
 
 The second step is to obtain a function that will be used to compute the spectrum.
 We need to specify whether we seek equatorially symmetric or antisymmetric solutions,
-and the model of differential rotation that is used. We define some parameters
+and the model of differential rotation that is used
+(see [`RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_grid`](@ref) for details). We define some parameters
 ```julia
 V_symmetric = true # indicates that V is symmetric about the equator, alternately set to `false` for antisymmetric
 rotation_profile = :solar_latrad_squished # model of differential rotation to be used in the calculation
@@ -100,7 +101,7 @@ and compute the spctrum using
 save_eigenvalues(spectrumfn!, mrange; operators)
 ```
 This will save the results to a file named `"solar_latrad_squished_nr40_nl20_sym.jld2"` in the output directory given by
-`RossbyWaveSpectrum.DATADIR[]`.
+`RossbyWaveSpectrum.DATADIR[]`. We may also specify filtering parameters as keyword arguments to `save_eigenvalues`, which will be passed on to [`filter_eigenvalues`](@ref). The filtering may be performed later as well as a post-processing step.
 
 # Loading the results
 
@@ -145,11 +146,31 @@ ENV["PYTHON"] = "... path of the python executable ..."
 import Pkg
 Pkg.build("PyCall")
 ```
-if matplotlib is provided by a local anaconda distribution that differs from the system-provided python.
+if matplotlib is provided by a local anaconda distribution that differs from the system-provided python. A relatively recent version of matplotlib may be required for some of the more plotting functions that use subfigures.
+The plots shown here were generated using matplotlib version 3.4.3.
 
 We may plot the spectrum as
 ```julia
 julia> using RossbyPlots
 
-
+julia> spectrum(Feig_filt)
 ```
+
+This will produce the following plot:
+
+![spectrum](./assets/spectrum.png)
+
+We find several ridges of eigenvalues.
+!!! note
+	By default, the plot zooms into a region near the rossby ridge frequency ``-2(\Omega_0/2\pi)/(m+1)``, so one may
+	need to zoom out to look at eigenvalues that are not visible in this plot
+
+We may plot one eigenvector -- e.g. the ``12``th eigenvector corresponding to ``m=5`` -- as
+```julia
+julia> eigenfunction(Feig, 5, 12)
+```
+This produces the following plot:
+
+![eigvec](./assets/eigenvector.png)
+
+By default, this plots the real part of `V`, but the field and component to be plotted may be specified through parameters to `eigenfunction`. Alternately, all the components of all the fields may be plotted using `eigenfunctions_allstreamfn`.

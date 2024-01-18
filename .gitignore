@@ -1,8 +1,8 @@
 dev
 test/dev
-*.eps
+RossbyPlots/*.eps
+RossbyPlots/*.png
 *.pdf
-*.png
 .vscode
 *.ipynb
 docs/build

@@ -2558,7 +2558,9 @@ The eigenvalue pencil `(A,B)` should be provided, and will be used in the filter
 * `filterflags`: the flags that specify which filters are used, optional.
 * `scale_eigenvectors`: flag to indices whether to compute the unscaled stream functions
     from the scaled ones that are used in the eigenvalue problem.
-* `filterparams`: additional filter parameters, passed on to [`filterfn`](@ref).
+* `filterparams`: additional filter parameters, passed on to [`filterfn`](@ref). See
+    [`RossbyWaveSpectrum.DefaultFilterParams`](@ref) for the full list of parameters
+    that may be specified.
 """
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     M, m::Integer;
