@@ -1864,7 +1864,7 @@ function count_radial_nodes(v::AbstractVector{<:Complex}, m::Integer; operators,
         angularindex_fn = angularindex_equator,
         nr = operators.radial_params[:nr],
         nℓ = operators.radial_params[:nℓ],
-        θ = spharm_θ_grid_uniform(m, nℓ).θ,
+        θ = colatitude_grid(m, nℓ),
         field = :V,
         fieldcaches = allocate_field_caches(nr, nℓ, length(θ)),
         realcache = similar(fieldcaches.VWSinv.V, real(eltype(fieldcaches.VWSinv.V))),
@@ -1904,7 +1904,7 @@ function nodes_filter!(filtercache, v, m, operators;
     @unpack nvariables, rptsrev = operators
     fields = filterfields(VWSinv, v, nparams, nvariables; filterfieldpowercutoff)
 
-    (; θ) = spharm_θ_grid_uniform(m, nℓ)
+    θ = colatitude_grid(m, nℓ)
     lowercutoffind = indexof_colatitude(θ, deg2rad(60))
     eqind = indexof_equator(θ)
 
@@ -1972,7 +1972,7 @@ end
 
 function allocate_field_caches(Feig::FilteredEigen, m)
     @unpack nr, nℓ = Feig.radial_params
-    nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
+    nθ = length(colatitude_grid(m, nℓ))
     allocate_field_caches(nr, nℓ, nθ)
 end
 
@@ -1995,7 +1995,7 @@ function allocate_filter_caches(m; operators, constraints = constraintmatrix(ope
     n_bc = size(BC, 1)
     BCVcache = allocate_BCcache(n_bc)
 
-    nθ = length(spharm_θ_grid_uniform(m, nℓ).θ)
+    nθ = length(colatitude_grid(m, nℓ))
 
     fieldcaches = allocate_field_caches(nr, nℓ, nθ)
 
@@ -2359,12 +2359,15 @@ function eigenfunction_rad_sh!(VWSinvsh, F, v; operators, n_lowpass_cutoff::Unio
     return VWSinvsh
 end
 
-function spharm_θ_grid_uniform(m, nℓ, ℓmax_mul = 4)
+function colatitude_grid(m::Integer, operators::OperatorWrap, ℓmax_mul = 4)
+    colatitude_grid(m, operators.radial_params.nℓ, ℓmax_mul)
+end
+function colatitude_grid(m::Integer, nℓ::Integer, ℓmax_mul = 4)
     ℓs = range(m, length = 2nℓ+1)
     ℓmax = maximum(ℓs)
 
     θ, _ = sph_points(ℓmax_mul * ℓmax)
-    return (; ℓs, θ)
+    return θ
 end
 
 function invshtransform2!(VWSinv, VWS, m;
@@ -2378,7 +2381,7 @@ function invshtransform2!(VWSinv, VWS, m;
     W_lm = VWS.W
     S_lm = VWS.S
 
-    (; ℓs, θ) = spharm_θ_grid_uniform(m, nℓ)
+    θ = colatitude_grid(m, nℓ)
 
     V = VWSinv.V
     V .= 0
@@ -2411,7 +2414,7 @@ function invshtransform2!(VWSinv, VWS, m;
         end
     end
 
-    (; VWSinv, θ)
+    return VWSinv
 end
 
 function eigenfunction_realspace!(fieldcaches, v, m;
@@ -2427,13 +2430,10 @@ end
 
 function eigenfunction_realspace(v, m; operators, kw...)
     @unpack nr, nℓ = operators.radial_params
-    (; θ) = spharm_θ_grid_uniform(m, nℓ)
-    nθ = length(θ)
+    nθ = length(colatitude_grid(m, nℓ))
 
     fieldcaches = allocate_field_caches(nr, nℓ, nθ)
     eigenfunction_realspace!(fieldcaches, v, m; operators, kw...)
-    @unpack VWSinv = fieldcaches
-    return (; VWSinv, θ)
 end
 
 function eigenfunction_realspace(Feig::FilteredEigen, m, ind; kw...)
