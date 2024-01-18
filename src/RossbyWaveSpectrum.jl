@@ -165,7 +165,8 @@ function updaterotatationprofile(d::RotMatrix; operators, timer = TimerOutput(),
             solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
         end
     else
-        error("unknown rotation profile $(d.kw.rotation_profile), must be one of :constant, :radial_* or solar_*")
+        error("unknown rotation profile $(repr(d.kw.rotation_profile)),"*
+            " must be one of :uniform, :constant, :radial_* or solar_*")
     end
     return RotMatrix(d.kw, ΔΩprofile_deriv, ωΩ_deriv, d.f)
 end

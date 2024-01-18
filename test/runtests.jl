@@ -151,7 +151,6 @@ end
     for rotation_profile in (:uniform, :constant, :solar_constant, :solar_latrad, :radial_constant)
         matrixfn! = RossbyWaveSpectrum.RotMatrix(Val(:matrix),
                         V_symmetric, rotation_profile; operators)
-        R = RossbyWaveSpectrum.updaterotatationprofile(matrixfn!; operators)
         @test R.kw == (; V_symmetric, rotation_profile)
         if rotation_profile == :uniform
             @test R.f == uniform_rotation_matrix!
@@ -164,7 +163,6 @@ end
         end
         spectrumfn! = RossbyWaveSpectrum.RotMatrix(Val(:spectrum),
                         V_symmetric, rotation_profile; operators)
-        R = RossbyWaveSpectrum.updaterotatationprofile(spectrumfn!; operators)
         @test R.kw == (; V_symmetric, rotation_profile)
         if rotation_profile == :uniform
             @test R.f == uniform_rotation_spectrum!
@@ -172,6 +170,8 @@ end
             @test R.f == differential_rotation_spectrum!
         end
     end
+    @test_throws "unknown rotation profile :unknown" RossbyWaveSpectrum.RotMatrix(Val(:matrix),
+                        V_symmetric, :unknown; operators)
 end
 
 @testset "read solar model" begin
