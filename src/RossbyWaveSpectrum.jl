@@ -151,8 +151,9 @@ function updaterotatationprofile(d::RotMatrix; operators, timer = TimerOutput(),
         ωΩ_deriv = @timeit timer "vorticity" begin nothing end
     elseif startswith(String(d.kw.rotation_profile), "radial")
         ΔΩprofile_deriv = @timeit timer "velocity" begin
-            radial_differential_rotation_profile_derivatives_Fun(; operators,
-                rotation_profile = rotationtag(d.kw.rotation_profile), kw...)
+            rotation_profile = rotationtag(d.kw.rotation_profile)
+            radial_differential_rotation_profile_derivatives_Fun(;
+                operators, rotation_profile, kw...)
         end
         ωΩ_deriv = @timeit timer "vorticity" begin nothing end
     elseif startswith(String(d.kw.rotation_profile), "solar")
@@ -2036,9 +2037,8 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix, m::Integer;
         matrixfn!,
         kw...)
 
-    matrixfn2! = updaterotatationprofile(
-            RotMatrix(V_symmetric, rotation_profile, nothing, nothing, matrixfn!);
-            operators)
+    matrixfn2! = matrixfn! isa RotMatrix ? matrixfn! :
+            RotMatrix(Val(:matrix), V_symmetric, rotation_profile; operators)
 
     @unpack nℓ = operators.radial_params
     M = if Filters.EIGEN in Filters.FilterFlag(get(kw, :filterflags, DefaultFilter))
