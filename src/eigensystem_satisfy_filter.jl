@@ -1,4 +1,3 @@
-
 function eigensystem_satisfy_filter(Feig::FilteredEigen, m::Integer, ind::Integer, args...; kwargs...)
     λ, v = Feig[m][ind]
     eigensystem_satisfy_filter(λ, v, args...; kwargs...)

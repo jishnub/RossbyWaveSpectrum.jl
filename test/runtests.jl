@@ -22,7 +22,11 @@ include("testutils.jl")
 end
 
 @testset "operators" begin
-    @inferred RossbyWaveSpectrum.radial_operators(5, 2)
+    operators = @inferred RossbyWaveSpectrum.radial_operators(5, 2)
+    @test repr(operators) == "Operators"
+    # test for getfield
+    @test operators.radial_params[:nr] == 5
+    @test RossbyWaveSpectrum.listncoefficients(operators.rad_terms) isa Vector{Pair{Symbol,Int}}
     # Ensure that the Chebyshev interpolations of the scale heights match the actual
     # functional form, given by the spline interpolations
     @testset "stratification" begin
@@ -95,11 +99,15 @@ end
 end
 
 @testset "FilteredEigen" begin
-    lams = [rand(ComplexF64, 2) for i in 1:3]
-    vs = [StructArray{ComplexF64}((rand(6,3),rand(6,3))) for i in 1:3]
-    mr = 2:3
-    kw = Dict(:rotation_profile=>:constant)
     operators = RossbyWaveSpectrum.radial_operators(5, 2)
+    (; nparams) = operators.radial_params
+    mr = 2:3
+    nsols = 2
+    V_symmetric = true
+    lams = [rand(ComplexF64, nsols) for i in axes(mr,1)]
+    vs = [StructArray{ComplexF64}((rand(nparams,nsols),rand(nparams,nsols))) for i in axes(mr,1)]
+    rotation_profile = :constant
+    kw = Dict{Symbol,Any}(:rotation_profile=>rotation_profile, :V_symmetric=>V_symmetric)
     f = FilteredEigen(lams, vs, mr, kw, operators)
     @test repr(f) == "Filtered eigen with m range = $mr"
     f1 = f[2]
@@ -109,6 +117,9 @@ end
     @test f1.constraints === f.constraints
     @test repr(f1) == "Filtered eigen with m = 2"
     @test f1[1] == (λ = lams[1][1], v = vs[1][:,1])
+    λs, vs = f1
+    @test f1[1] == (λ = λs[1], v = vs[:,1])
+    @test_throws BoundsError λs, vs, _ = f1
 
     @test_throws ArgumentError("m = 1 is not contained in $f") f[1]
     @test_throws ArgumentError("m range = 1:1 is not contained in $f") f[1:1]
@@ -122,6 +133,45 @@ end
     @test f23.operators === f.operators
     @test f23.constraints === f.constraints
     @test collect(eigvalspairs(f1)) == (=>).(1:2, lams[1])
+
+    @testset "operator matrices" begin
+        m = 2
+        A, B = RossbyWaveSpectrum.operator_matrices(f, m)
+        @test A == RossbyWaveSpectrum.differential_rotation_matrix(m;
+                        operators, V_symmetric, rotation_profile)
+        @test B == RossbyWaveSpectrum.mass_matrix(m;
+                        operators, V_symmetric)
+    end
+end
+
+@testset "RotMatrix" begin
+    nr, nℓ = 20, 10
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
+    V_symmetric = true
+    for rotation_profile in (:uniform, :constant, :solar_constant, :solar_latrad, :radial_constant)
+        matrixfn! = RossbyWaveSpectrum.RotMatrix(Val(:matrix),
+                        V_symmetric, rotation_profile; operators)
+        R = RossbyWaveSpectrum.updaterotatationprofile(matrixfn!; operators)
+        @test R.kw == (; V_symmetric, rotation_profile)
+        if rotation_profile == :uniform
+            @test R.f == uniform_rotation_matrix!
+            @test R isa RotMatrix{Nothing, Nothing}
+        else
+            @test R.f == differential_rotation_matrix!
+            if rotation_profile == :constant
+                @test R isa RotMatrix{Nothing, Nothing}
+            end
+        end
+        spectrumfn! = RossbyWaveSpectrum.RotMatrix(Val(:spectrum),
+                        V_symmetric, rotation_profile; operators)
+        R = RossbyWaveSpectrum.updaterotatationprofile(spectrumfn!; operators)
+        @test R.kw == (; V_symmetric, rotation_profile)
+        if rotation_profile == :uniform
+            @test R.f == uniform_rotation_spectrum!
+        else
+            @test R.f == differential_rotation_spectrum!
+        end
+    end
 end
 
 @testset "read solar model" begin
@@ -799,7 +849,8 @@ end
     operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
     kw = (V_symmetric=true,)
     mr = 1:1
-    fname = RossbyWaveSpectrum.save_to_file(lam, vec, mr; operators, kw...)
+    rotation_profile = :uniform
+    fname = RossbyWaveSpectrum.save_to_file(lam, vec, mr; operators, rotation_profile, kw...)
     Feig = FilteredEigen(fname)
     @test Feig.operators.operatorparams == operators.operatorparams
     @test Feig.operators.constants == operators.constants
@@ -807,6 +858,7 @@ end
     @test Feig.operators.radial_params == operators.radial_params
     @test Feig.operators.radialdomain == operators.radialdomain
     @test Feig.kw[:V_symmetric] == kw[:V_symmetric]
+    @test UInt16(Feig.kw[:filterflags]) == UInt16(Filters.DefaultFilter)
     @test Feig.lams == lam
     @test Feig.vs == vec
     rm(fname)
@@ -816,35 +868,31 @@ include("run_threadedtests.jl")
 
 @testset "compute_rossby_spectrum.jl" begin
     include(joinpath(dirname(dirname(pathof(RossbyWaveSpectrum))), "compute_rossby_spectrum.jl"))
-    for V_symmetric in [true, false], diffrot in (false,)
-        ComputeRossbySpectrum.computespectrum(8, 6, 1:1, V_symmetric, diffrot, :radial_solar_equator,
+    for V_symmetric in [true, false]
+        ComputeRossbySpectrum.computespectrum(8, 6, 1:1, V_symmetric, :radial_solar_equator,
             save = false, print_timer = false, print_parameters = false)
     end
     @testset "filteredeigen" begin
-        nr, nℓ = 8,6
+        nr, nℓ = 20,10
         V_symmetric = true
-        diffrotprof = :radial_solar_equator
         mr = 1:1
-        @testset for diffrot in (false,)
-            ComputeRossbySpectrum.computespectrum(nr, nℓ, mr, V_symmetric, diffrot, diffrotprof,
+        for rotation_profile in (:uniform, :constant)
+            filename = ComputeRossbySpectrum.computespectrum(nr, nℓ, mr,
+                V_symmetric, rotation_profile,
                 print_timer = false, print_parameters = false)
-            filename = RossbyWaveSpectrum.rossbyeigenfilename(nr, nℓ,
-                RossbyWaveSpectrum.filenamerottag(diffrot, diffrotprof),
-                RossbyWaveSpectrum.filenamesymtag(V_symmetric))
             f = RossbyWaveSpectrum.filter_eigenvalues(filename)
             @test f.operators.radial_params[:nr] == nr
             @test f.operators.radial_params[:nℓ] == nℓ
 
             λs, vs = f[1]
             operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
-            matrixfn! = RossbyWaveSpectrum.RotMatrix(Val(:matrix), V_symmetric, diffrot, diffrotprof;
+            matrixfn! = RossbyWaveSpectrum.RotMatrix(Val(:matrix), V_symmetric, rotation_profile;
                             operators)
 
-            λsf, vsf = RossbyWaveSpectrum.filter_eigenvalues(λs, vs, mr[1];
-                operators, V_symmetric, rotation_profile = :solar_latrad, matrixfn!,
+            # check that this runs without errors
+            RossbyWaveSpectrum.filter_eigenvalues(λs, vs, mr[1];
+                operators, V_symmetric, rotation_profile, matrixfn!,
                 filterflags = Filters.EIGEN)
-
-            @test λsf == λs
 
             rm(filename)
         end

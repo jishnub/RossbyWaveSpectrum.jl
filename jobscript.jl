@@ -1,6 +1,5 @@
 include(joinpath(@__DIR__, "compute_rossby_spectrum.jl"))
 using RossbyWaveSpectrum
-using RossbyWaveSpectrum.Filters
 V_symmetric = true
 r_in_frac, r_out_frac = 0.65, 0.985
 nr, nℓ = 40, 20
@@ -10,10 +9,10 @@ trackingrate = :hanson2020 # :carrington, :hanson2020, :cutoff or :surface
 ΔΩ_scale = 1
 Δl_cutoff = 20
 n_cutoff = 15
-diffrot=true
 # ΔΩ_frac = 467/453.1 - 1
 rotation_profile = :solar_latrad_squished
 # rotation_profile = :solar_constant
+diffrot = rotation_profile != :uniform
 # superadiabaticityparams = (; δrad = -1e-6)
 ΔΩ_smoothing_param = 0.01
 smoothing_param=1e-4
@@ -22,6 +21,6 @@ modeltag *= diffrot && !isone(ΔΩ_scale) ? "_rotscale$(round(ΔΩ_scale, digits
 filterflags = Filters.EIGEN | Filters.EIGVEC | Filters.BC | Filters.SPATIAL_EQUATOR
 
 ComputeRossbySpectrum.main(V_symmetric;
-nr, nℓ, mrange, diffrot, rotation_profile, r_in_frac,
+nr, nℓ, mrange, rotation_profile, r_in_frac,
 r_out_frac, trackingrate, ΔΩ_scale, Δl_cutoff, n_cutoff,
 modeltag, viscosity, filterflags, ΔΩ_smoothing_param, smoothing_param)

@@ -137,24 +137,26 @@ function Base.getindex(f::FilteredEigenSingleOrder, ind::Integer)
 end
 
 struct RotMatrix{TV,TW,F}
-    V_symmetric :: Bool
-    rotation_profile :: Symbol
+    kw :: @NamedTuple{V_symmetric::Bool, rotation_profile::Symbol}
     ΔΩprofile_deriv :: TV
     ωΩ_deriv :: TW
     f :: F
 end
+function RotMatrix(V_symmetric::Bool, rotation_profile::Symbol, ΔΩprofile_deriv, ωΩ_deriv, matrixfn!)
+    RotMatrix((; V_symmetric, rotation_profile), ΔΩprofile_deriv, ωΩ_deriv, matrixfn!)
+end
 function updaterotatationprofile(d::RotMatrix; operators, timer = TimerOutput(), kw...)
-    if String(d.rotation_profile) == "constant"
+    if d.kw.rotation_profile == :uniform || d.kw.rotation_profile == :constant
         ΔΩprofile_deriv = @timeit timer "velocity" begin nothing end
         ωΩ_deriv = @timeit timer "vorticity" begin nothing end
-    elseif startswith(String(d.rotation_profile), "radial")
+    elseif startswith(String(d.kw.rotation_profile), "radial")
         ΔΩprofile_deriv = @timeit timer "velocity" begin
             radial_differential_rotation_profile_derivatives_Fun(; operators,
-            rotation_profile = rotationtag(d.rotation_profile), kw...)
+                rotation_profile = rotationtag(d.kw.rotation_profile), kw...)
         end
         ωΩ_deriv = @timeit timer "vorticity" begin nothing end
-    elseif startswith(String(d.rotation_profile), "solar")
-        rotation_profile = rotationtag(d.rotation_profile)
+    elseif startswith(String(d.kw.rotation_profile), "solar")
+        rotation_profile = rotationtag(d.kw.rotation_profile)
         ΔΩprofile_deriv = @timeit timer "velocity" begin
             solar_differential_rotation_profile_derivatives_Fun(;
                 operators, rotation_profile, kw...)
@@ -163,37 +165,38 @@ function updaterotatationprofile(d::RotMatrix; operators, timer = TimerOutput(),
             solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
         end
     else
-        error("unknown rotation profile, must be one of :constant, :radial_* or solar_*")
+        error("unknown rotation profile $(d.kw.rotation_profile), must be one of :constant, :radial_* or solar_*")
     end
-    return RotMatrix(d.V_symmetric, d.rotation_profile, ΔΩprofile_deriv, ωΩ_deriv, d.f)
+    return RotMatrix(d.kw, ΔΩprofile_deriv, ωΩ_deriv, d.f)
 end
 updaterotatationprofile(d; kw...) = d
 
+mergekw(_, kw) = kw
+mergekw(f::RotMatrix, kw) = (; f.kw..., kw...)
 (d::RotMatrix)(args...; kw...) = d.f(args...;
-    rotation_profile = d.rotation_profile,
     ΔΩprofile_deriv = d.ΔΩprofile_deriv,
-    V_symmetric = d.V_symmetric,
     ωΩ_deriv = d.ωΩ_deriv,
+    d.kw...,
     kw...)
 
-function RotMatrix(::Val{T}, V_symmetric, diffrot, rotation_profile; operators, kw...) where {T}
+function RotMatrix(::Val{T}, V_symmetric, rotation_profile; operators, kw...) where {T}
     T ∈ (:spectrum, :matrix) || error("unknown code ", T)
-    if !diffrot
-        RotMatrix(V_symmetric, :uniform, nothing, nothing,
-            T == :matrix ? uniform_rotation_matrix! : uniform_rotation_spectrum!)
-    else
-        d = RotMatrix(V_symmetric, rotation_profile, nothing, nothing,
-            T == :matrix ? differential_rotation_matrix! : differential_rotation_spectrum!)
-        updaterotatationprofile(d; operators, kw...)
-    end
+    diffrot = rotation_profile != :uniform
+    d = RotMatrix(V_symmetric, rotation_profile, nothing, nothing,
+            if !diffrot
+                T == :matrix ? uniform_rotation_matrix! : uniform_rotation_spectrum!
+            else
+                T == :matrix ? differential_rotation_matrix! : differential_rotation_spectrum!
+            end
+    )
+
+    updaterotatationprofile(d; operators, kw...)
 end
 
 function updaterotatationprofile(F::FilteredEigen; kw...)
     @unpack operators = F
     @unpack V_symmetric, rotation_profile = F.kw
-    matrixfn! = F.kw[:diffrot] ? differential_rotation_matrix! : uniform_rotation_matrix!
-    R = RotMatrix(V_symmetric, rotation_profile, nothing, nothing, matrixfn!)
-    updaterotatationprofile(R; operators, kw...)
+    RotMatrix(Val(:matrix), V_symmetric, rotation_profile; operators, kw...)
 end
 
 datadir(f) = joinpath(DATADIR[], f)
@@ -204,50 +207,19 @@ function sph_points(N)
     return π / N * (0.5:(N-0.5)), 2π / M * (0:(M-1))
 end
 
-reversedview(v::AbstractVector) = view(v, reverse(eachindex(v)))
-
-# Legedre expansion constants
-α⁻ℓm(ℓ, m) = (ℓ < abs(m) ? 0.0 : oftype(0.0, √((ℓ - m) * (ℓ + m) / ((2ℓ - 1) * (2ℓ + 1)))))
-
-β⁻ℓm(ℓ, m) = (ℓ < abs(m) ? 0.0 : oftype(0.0, √((2ℓ + 1) / (2ℓ - 1) * (ℓ^2 - m^2))))
-γ⁺ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ+1, m)
-γ⁻ℓm(ℓ, m) = ℓ * α⁻ℓm(ℓ, m) - β⁻ℓm(ℓ, m)
-
-function costheta_operator_matrix(nℓ, m)
-    space = NormalizedPlm(m)
-    C = cosθ_Operator(space)
-    C[1:nℓ, 1:nℓ]
-end
-
-function sintheta_dtheta_operator_matrix(nℓ, m)
-    space = NormalizedPlm(m)
-    S = sinθdθ_Operator(space)
-    S[1:nℓ, 1:nℓ]
-end
-
-function blockinds((m, nr), ℓ, ℓ′ = ℓ)
-    @assert ℓ >= m "ℓ must be >= m"
-    @assert ℓ′ >= m "ℓ must be >= m"
-    rowtopind = (ℓ - m) * nr + 1
-    rowinds = range(rowtopind, length = nr)
-    colleftind = (ℓ′ - m) * nr + 1
-    colinds = range(colleftind, length = nr)
-    CartesianIndices((rowinds, colinds))
-end
-
-matrix_block(M::AbstractBlockMatrix, rowind, colind, nblocks = 3) = M[Block(rowind, colind)]
+matrix_block(M::AbstractBlockMatrix, rowind, colind, nblocks = 3) = @view M[Block(rowind, colind)]
 function matrix_block(M::StructMatrix{<:Complex}, rowind, colind, nblocks = 3)
     Mr = matrix_block(M.re, rowind, colind, nblocks)
     Mi = matrix_block(M.im, rowind, colind, nblocks)
     StructArray{eltype(M)}((Mr, Mi))
 end
-function matrix_block(M::AbstractMatrix, rowind, colind, nblocks = 3)
-    nparams = div(size(M, 1), nblocks)
-    inds1 = (rowind - 1) * nparams .+ (1:nparams)
-    inds2 = (colind - 1) * nparams .+ (1:nparams)
-    inds = CartesianIndices((inds1, inds2))
-    @view M[inds]
-end
+# function matrix_block(M::AbstractMatrix, rowind, colind, nblocks = 3)
+#     nparams = div(size(M, 1), nblocks)
+#     inds1 = (rowind - 1) * nparams .+ (1:nparams)
+#     inds2 = (colind - 1) * nparams .+ (1:nparams)
+#     inds = CartesianIndices((inds1, inds2))
+#     @view M[inds]
+# end
 
 include("uniqueinterval.jl")
 
@@ -258,16 +230,6 @@ const BandedMatrixType = typeof(BandedMatrix(0=>Float64[]))
 
 grid_to_fun(v::AbstractVector, space) = Fun(space, transform(space, v))
 grid_to_fun(v::AbstractMatrix, space) = Fun(ProductFun(transform(space, v), space))
-
-function operatormatrix(f::Fun, nr, spaceconversion::Pair)
-    operatormatrix(Multiplication(f), nr, spaceconversion)
-end
-
-function operatormatrix(A, nr, spaceconversion::Pair)::Matrix{Float64}
-    domain_space, range_space = first(spaceconversion), last(spaceconversion)
-    C = A:domain_space → range_space
-    C[1:nr, 1:nr]
-end
 
 function V_boundary_op(operators)
     @unpack r = operators.rad_terms;
@@ -419,17 +381,6 @@ function solar_structure_parameter_splines(; r_in = 0.7Rsun, r_out = Rsun, _stra
     (; splines, rad_terms)
 end
 
-function spline_to_Fun(s::Spline1D, radialspace::Space)
-    k = s.k
-    D = Derivative(k)
-    rsp = rangespace(D)
-    frsp = Fun(s, radialspace)
-    g = D * frsp
-    frsp_int = Integral(k) * g
-    cf0 = coefficients(frsp_int)
-    cf = coefficients(frsp)
-    Fun(radialspace, [cf[1:k]; cf0[k+1:end]])
-end
 
 iszerofun(v) = ncoefficients(v) == 0 || (ncoefficients(v) == 1 && coefficients(v)[] == 0.0)
 function replaceemptywitheps(f::Fun, eps = 1e-100)
@@ -715,12 +666,12 @@ function interp1d(xin, z, xout = xin; s = 0.0)
     spline(xout)
 end
 
-function interp2d(xin, yin, z, xout = xin, yout = yin; s = 0.0)
-    px = sortperm(xin)
-    py = sortperm(yin)
-    spline = Spline2D(xin[px], yin[py], z[px, py]; s = sum(abs2, z) * s)
-    spline.(xout, yout')
-end
+# function interp2d(xin, yin, z, xout = xin, yout = yin; s = 0.0)
+#     px = sortperm(xin)
+#     py = sortperm(yin)
+#     spline = Spline2D(xin[px], yin[py], z[px, py]; s = sum(abs2, z) * s)
+#     spline.(xout, yout')
+# end
 
 function solar_rotation_profile_angles(Ω_raw, maxcolatitude = pi)
     nθ = size(Ω_raw, 2)
@@ -2089,15 +2040,14 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix, m::Integer;
             operators)
 
     @unpack nℓ = operators.radial_params
-    bw = getbw(rotation_profile, nℓ)
-    if Filters.EIGEN in Filters.FilterFlag(get(kw, :filterflags, DefaultFilter))
-        M = allocate_operator_mass_matrices(operators, bw)
-        A, B = M
-        matrixfn2!(A, m; operators, kw...)
-        mass_matrix!(B, m; operators, V_symmetric, kw...)
-    else
-        M = nothing
-    end
+    M = if Filters.EIGEN in Filters.FilterFlag(get(kw, :filterflags, DefaultFilter))
+            bw = matrixfn! isa RotMatrix ? getbw(matrixfn!.kw.rotation_profile, nℓ) : nℓ
+            M = allocate_operator_mass_matrices(operators, bw)
+            A, B = M
+            matrixfn2!(A, m; operators, kw...)
+            mass_matrix!(B, m; operators, V_symmetric, kw...)
+            M
+        end
     filter_eigenvalues(λ, v, M, m; operators, V_symmetric, kw...);
 end
 
@@ -2133,6 +2083,7 @@ function filter_map(λm::AbstractVector, vm::AbstractMatrix, AB, m::Int, matrixf
     end
     filter_eigenvalues(λm, vm, AB, m; kw...)
 end
+
 function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:AbstractVector},
         vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector{<:Integer},
         matrixfn! = nothing; kw...)
@@ -2164,7 +2115,7 @@ function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
 
     @unpack nr, nℓ, nparams = operators.radial_params
     nthreads = Threads.nthreads();
-    bw = matrixfn! isa RotMatrix ? getbw(matrixfn!.rotation_profile, nℓ) : nℓ
+    bw = matrixfn! isa RotMatrix ? getbw(matrixfn!.kw.rotation_profile, nℓ) : nℓ
     ABs = if Filters.EIGEN in Filters.FilterFlag(get(kw, :filterflags, DefaultFilter))
         [allocate_operator_mass_matrices(operators, bw) for _ in 1:nthreads]
     else
@@ -2189,7 +2140,8 @@ function eigvec_spectrum_filter_map!(Ctid, spectrumfn!, m, operators, constraint
     end;
     @debug "computed eigenvalues for m = $m on tid = $(Threads.threadid()) with $(BLAS.get_num_threads()) BLAS threads"
     F = @timeit timerlocal "m=$m tid=$(Threads.threadid()) filter" begin
-        filter_eigenvalues(X..., m; operators, constraints, kw...)
+        kw2 = mergekw(spectrumfn!, kw)
+        filter_eigenvalues(X..., m; operators, constraints, kw2...)
     end;
     @debug "filtered eigenvalues for m = $m on tid = $(Threads.threadid()) with $(BLAS.get_num_threads()) BLAS threads"
     merge!(timer, timerlocal, tree_point = ["spectrum_filter"])
@@ -2228,7 +2180,7 @@ function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
     @timeit timer "alloc" begin
         nthreads = Threads.nthreads()
         (; nℓ) = operators.radial_params;
-        bw = spectrumfn! isa RotMatrix ? getbw(spectrumfn!.rotation_profile, nℓ) : nℓ
+        bw = spectrumfn! isa RotMatrix ? getbw(spectrumfn!.kw.rotation_profile, nℓ) : nℓ
         @timeit timer "M" ABs =
             [allocate_operator_mass_matrices(operators, bw) for _ in 1:nthreads];
         @timeit timer "caches" caches =
@@ -2288,26 +2240,20 @@ function filter_eigenvalues(filename::String; kw...)
     filter_eigenvalues(Feig; kw...)
 end
 
-filenamerottag(isdiffrot, rotation_profile) = isdiffrot ? "dr_$rotation_profile" : "ur"
-filenamesymtag(Vsym) = Vsym ? "sym" : "asym"
 rossbyeigenfilename(nr, nℓ, rottag, symtag, modeltag = "") =
     datadir("$(rottag)_nr$(nr)_nl$(nℓ)_$(symtag)$((isempty(modeltag) ? "" : "_") * modeltag).jld2")
 
-function rossbyeigenfilename(; operators, kw...)
-    isdiffrot = get(kw, :diffrot, false)
-    rotation_profile = get(kw, :rotation_profile, "")
-    Vsym = kw[:V_symmetric]
+function rossbyeigenfilename(; operators, V_symmetric, rotation_profile, kw...)
     modeltag = get(kw, :modeltag, "")
-    rottag = filenamerottag(isdiffrot, rotation_profile)
-    symtag = filenamesymtag(Vsym)
+    symtag = V_symmetric ? "sym" : "asym"
     @unpack nr, nℓ = operators.radial_params;
-    return rossbyeigenfilename(nr, nℓ, rottag, symtag, modeltag)
+    return rossbyeigenfilename(nr, nℓ, rotation_profile, symtag, modeltag)
 end
 
-function save_eigenvalues(f, mr; operators, save=true, kw...)
-    lam, vec = filter_eigenvalues(f, mr; operators, kw...)
-    save && save_to_file(lam, vec, mr; operators, kw...)
-    return nothing
+function save_eigenvalues(spectrumfn!, mr; operators, save=true, kw...)
+    lam, vec = filter_eigenvalues(spectrumfn!, mr; operators, kw...)
+    kw2 = mergekw(spectrumfn!, kw)
+    save && save_to_file(lam, vec, mr; operators, kw2...)
 end
 
 function save_to_file(lam, vec, mr; operators, kw...)
@@ -2330,7 +2276,8 @@ function mass_matrix(Feig::FilteredEigen, m; kw...)
     mass_matrix(m; Feig.operators, Feig.kw..., kw...)
 end
 
-function operator_matrices(m; operators, diffrot::Bool, kw...)
+function operator_matrices(m; operators, kw...)
+    diffrot = kw[:rotation_profile] != :uniform
     A = if diffrot
         differential_rotation_matrix(m; operators, kw...)
     else
