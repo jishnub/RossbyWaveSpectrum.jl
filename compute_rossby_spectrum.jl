@@ -7,7 +7,7 @@ using TimerOutputs
 # using ThreadPinning
 # pinthreads(:cores)
 
-function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile;
+function computespectrum(nr, nℓ, mrange, V_symmetric, rotation_profile;
             smoothing_param = 1e-4,
             r_in_frac = 0.65, r_out_frac = 0.985,
             trackingratescaling = 1.0,
@@ -39,7 +39,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
         @show nr nℓ mrange Δl_cutoff n_cutoff r_in_frac r_out_frac
         @show smoothing_param ΔΩ_smoothing_param ΔΩ_scale ΔΩ_frac
         @show superadiabaticityparams
-        @show V_symmetric diffrot rotation_profile viscosity
+        @show V_symmetric rotation_profile viscosity
         @show extrakw
         @show Threads.nthreads() LinearAlgebra.BLAS.get_num_threads() FFTW.get_num_threads()
     end
@@ -53,7 +53,7 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
     end
 
     spectrumfn! = @timeit timer "spectrumfn" begin
-        RossbyWaveSpectrum.RotMatrix(Val(:spectrum), V_symmetric, diffrot, rotation_profile;
+        RossbyWaveSpectrum.RotMatrix(Val(:spectrum), V_symmetric, rotation_profile;
             operators, smoothing_param, ΔΩ_scale, ΔΩ_frac, ΔΩ_smoothing_param)
     end
 
@@ -64,22 +64,21 @@ function computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profil
     flush(stdout)
 
     kw = Base.pairs((; Δl_cutoff, n_cutoff,
-        diffrot, rotation_profile, V_symmetric,
+        rotation_profile, V_symmetric,
         smoothing_param, ΔΩ_scale, ΔΩ_frac, ΔΩ_smoothing_param,
         superadiabaticityparams))
 
-    RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange;
+    filename = RossbyWaveSpectrum.save_eigenvalues(spectrumfn!, mrange;
         operators, kw..., extrakw...)
 
     flush(stdout)
-    return nothing
+    return filename
 end
 
 function main(V_symmetric = true;
     nr = 40,
     nℓ = 20,
     mrange = 1:1,
-    diffrot = true,
     rotation_profile = :solar_latrad,
     save = true,
     additional_kw...
@@ -87,9 +86,10 @@ function main(V_symmetric = true;
 
     @show Libc.gethostname(), V_symmetric
 
-    computespectrum(8, 6, mrange, V_symmetric, diffrot, rotation_profile,
-            save = false, smoothing_param = 1e-1, print_timer = false)
-    @time computespectrum(nr, nℓ, mrange, V_symmetric, diffrot, rotation_profile;
+    computespectrum(8, 6, mrange, V_symmetric, rotation_profile,
+            save = false, smoothing_param = 1e-1, print_timer = false,
+            print_parameters = false)
+    @time computespectrum(nr, nℓ, mrange, V_symmetric, rotation_profile;
             save, additional_kw...)
 end
 

@@ -15,4 +15,4 @@ export SCRATCH="" # set this to the desired top-level output directory (output s
 export MKL_DYNAMIC=false
 export MKL_NUM_THREADS=1
 
-$juliapath +1.10.0 --project=$project --startup-file=no -t 2 $project/jobscript.jl
+time $juliapath +1.10.0 --project=$project --startup-file=no -t 2 $project/jobscript.jl
