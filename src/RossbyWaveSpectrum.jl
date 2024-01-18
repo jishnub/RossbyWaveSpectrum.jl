@@ -1971,7 +1971,7 @@ function allocate_field_caches(nr, nℓ, nθ)
 end
 
 function allocate_field_caches(Feig::FilteredEigen, m)
-    @unpack nr, nℓ = Feig.radial_params
+    @unpack nr, nℓ = Feig.operators.radial_params
     nθ = length(colatitude_grid(m, nℓ))
     allocate_field_caches(nr, nℓ, nθ)
 end

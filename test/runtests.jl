@@ -100,13 +100,15 @@ end
 end
 
 @testset "FilteredEigen" begin
-    operators = RossbyWaveSpectrum.radial_operators(5, 2)
+    nr, nℓ = 5, 2
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
     (; nparams) = operators.radial_params
+    ncoeffs = nparams * operators.nvariables
     mr = 2:3
     nsols = 2
     V_symmetric = true
     lams = [rand(ComplexF64, nsols) for i in axes(mr,1)]
-    vs = [StructArray{ComplexF64}((rand(nparams,nsols),rand(nparams,nsols))) for i in axes(mr,1)]
+    vs = [StructArray{ComplexF64}((rand(ncoeffs,nsols),rand(ncoeffs,nsols))) for i in axes(mr,1)]
     rotation_profile = :constant
     kw = Dict{Symbol,Any}(:rotation_profile=>rotation_profile, :V_symmetric=>V_symmetric)
     f = FilteredEigen(lams, vs, mr, kw, operators)
@@ -142,6 +144,13 @@ end
                         operators, V_symmetric, rotation_profile)
         @test B == RossbyWaveSpectrum.mass_matrix(m;
                         operators, V_symmetric)
+    end
+
+    @testset "allocate_field_caches" begin
+        m = 2
+        C = RossbyWaveSpectrum.allocate_field_caches(f, m)
+        nθ = length(RossbyWaveSpectrum.colatitude_grid(m, operators))
+        @test size(C.VWSinv.V) == (nr, nθ)
     end
 end
 
