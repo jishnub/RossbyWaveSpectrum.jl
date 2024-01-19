@@ -42,10 +42,10 @@ function eigensystem_satisfy_frac(λ::Number, v::StructVector{<:Complex},
     norm(Av)/normmax
 end
 
-function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
+function eigensystem_satisfy_filter(ω_over_Ω0::Number, v::StructVector{<:Complex},
         AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
         MVcache = allocate_MVcache(size(AB[1], 1));
         rtol = DefaultFilterParams[:eigen_rtol])
 
-    eigensystem_satisfy_frac(λ, v, AB, MVcache) <= rtol
+    eigensystem_satisfy_frac(ω_over_Ω0, v, AB, MVcache) <= rtol
 end
