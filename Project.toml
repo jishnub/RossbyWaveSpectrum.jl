@@ -1,7 +1,7 @@
 name = "RossbyWaveSpectrum"
 uuid = "7fbe2b4f-a8e1-4092-9718-18aa0af13fd5"
 authors = ["Jishnu Bhattacharya <jishnu.bhattacharya@nyu.edu>"]
-version = "0.1.0"
+version = "2.1.0"
 
 [deps]
 ApproxFun = "28f2ccd6-bb30-5033-b560-165f7b14dc2f"
