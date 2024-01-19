@@ -922,6 +922,18 @@ end
     end
 end
 
+@testset "filtering functions" begin
+    @testset "eigen" begin
+        A = rand(ComplexF64, 10, 10)
+        B = rand(10, 10)
+        λ, v = eigen(A, B)
+        SA = StructArray{ComplexF64}((real(A), imag(A)))
+        v1 = v[:,1]
+        Sv1 = StructArray{ComplexF64}((real(v1), imag(v1)))
+        @test RossbyWaveSpectrum.eigensystem_satisfy_filter(λ[1], Sv1, (SA, B))
+    end
+end
+
 @testset "wrap and unwrap structarrays" begin
     A = rand(3,4)
     v = [StructArray{ComplexF64}((A,A))]

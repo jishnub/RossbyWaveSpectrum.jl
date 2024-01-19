@@ -19,10 +19,9 @@ function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
     eigensystem_satisfy_filter(λ, v, map(computesparse, AB), args...; kw...)
 end
 
-const TStructSparseComplexMat{T} = @NamedTuple{re::SparseMatrixCSC{T, Int64}, im::SparseMatrixCSC{T, Int64}}
 function eigensystem_satisfy_frac(λ::Number, v::StructVector{<:Complex},
-        AB::Tuple{StructArray{Complex{T},2,TStructSparseComplexMat{T}}, SparseMatrixCSC{T, Int64}},
-        MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1))) where {T<:Real}
+        AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
+        MVcache = allocate_MVcache(size(AB[1], 1)))
 
     A, B = AB;
     Av, λBv = MVcache;
@@ -43,10 +42,10 @@ function eigensystem_satisfy_frac(λ::Number, v::StructVector{<:Complex},
     norm(Av)/normmax
 end
 
-function eigensystem_satisfy_filter(λ::Number, v::StructVector{<:Complex},
-        AB::Tuple{StructArray{Complex{T},2,TStructSparseComplexMat{T}}, SparseMatrixCSC{T, Int64}},
-        MVcache::NTuple{2, StructArray{<:Complex,1}} = allocate_MVcache(size(AB[1], 1));
-        rtol = DefaultFilterParams[:eigen_rtol]) where {T<:Real}
+function eigensystem_satisfy_filter(ω_over_Ω0::Number, v::StructVector{<:Complex},
+        AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
+        MVcache = allocate_MVcache(size(AB[1], 1));
+        rtol = DefaultFilterParams[:eigen_rtol])
 
-    eigensystem_satisfy_frac(λ, v, AB, MVcache) <= rtol
+    eigensystem_satisfy_frac(ω_over_Ω0, v, AB, MVcache) <= rtol
 end
