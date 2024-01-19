@@ -76,7 +76,7 @@ end
 
 Struct to hold the filtered eigenvalues and eigenfunctions for a range of `m`.
 Given a `FilteredEigen` `F`, the eigenfunctions for a specific `m`
-may be obtained using `F[m]`.
+may be obtained using `F[m]`, which returns a [`FilteredEigenSingleOrder`](@ref).
 """
 struct FilteredEigen
     lams :: Vector{Vector{ComplexF64}}
@@ -102,10 +102,15 @@ end
 # for backward compatibility
 rewrapstruct(vec::Vector{<:StructArray{<:Complex}}) = vec
 
-function FilteredEigen(fname::String)
-    isfile(fname) || throw(ArgumentError("Couldn't find $fname"))
+"""
+    FilteredEigen(filename::AbstractString)
+
+Load the filtered eigenvalues and eigenvectors from `filename`.
+"""
+function FilteredEigen(filename::AbstractString)
+    isfile(filename) || throw(ArgumentError("Couldn't find $filename"))
     lam, vec, mr, kw, operatorparams =
-        load(fname, "lam", "vec", "mr", "kw", "operatorparams");
+        load(filename, "lam", "vec", "mr", "kw", "operatorparams");
     operators = radial_operators(operatorparams...)
     if haskey(kw, :filterflags)
         kw[:filterflags] = Filters.FilterFlag(kw[:filterflags])
@@ -155,18 +160,6 @@ function Base.getindex(f::FilteredEigenSingleOrder, ind::Integer)
     (; λ = f.lams[ind], v = f.vs[:, ind])
 end
 
-"""
-    RotMatrix
-
-Struct containing the spectral decomposition of the rotation profile and the vorticity profile
-associated with differential rotation in the Sun, along with informatin about the parity of the
-solutions that are sought and the function that is to be used to generate the matrices.
-
-A `RotMatrix` `R` may be called with arguments as `R(args...; kwargs....)` to generate the matrix
-representations of the operators that are to be diagonalized. These matrices would correspond to the
-rotation profile that `R` corresponds to (which usually is the solar rotation profile, but may be chosen otherwise
-, e.g. for testing purposes).
-"""
 struct RotMatrix{TV,TW,F}
     kw :: @NamedTuple{V_symmetric::Bool, rotation_profile::Symbol}
     ΔΩprofile_deriv :: TV
@@ -213,6 +206,21 @@ mergekw(f::RotMatrix, kw) = (; f.kw..., kw...)
     d.kw...,
     kw...)
 
+"""
+    RotMatrix(::Val{:matrix}, V_symmetric::Bool, rotation_profile::Symbol; operators, kw...)
+    RotMatrix(::Val{:spectrum}, V_symmetric::Bool, rotation_profile::Symbol; operators, kw...)
+
+Struct containing the spectral decomposition of the rotation profile and the vorticity profile
+associated with differential rotation in the Sun, along with information about the parity of the
+solutions that are sought and the function that is to be used to generate the matrices.
+
+A `RotMatrix` `R` may be called with arguments as `R(args...; kwargs....)`. 
+If `R` was created using `Val(:matrix)`, this will return the matrix
+representation of the operator `A` that features in the eigenvalue problem ``Av=(ω/Ω_0)Bv``.
+These matrices are computed using the rotation profile that `R` is constructed with.
+On the other hand, if `R` was created using `Val(:spectrum)` as the first argument,
+this will return the filtered spectrum and eigenvectors.
+"""
 function RotMatrix(::Val{T}, V_symmetric, rotation_profile; operators, kw...) where {T}
     T ∈ (:spectrum, :matrix) || error("unknown code ", T)
     diffrot = rotation_profile != :uniform
@@ -2541,9 +2549,11 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix, m::Integer;
 end
 
 """
-    filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
-        (A,B), m::Integer; operators,
-        V_symmetric,
+    filter_eigenvalues(λ::AbstractVector{<:Number},
+        v::AbstractMatrix{<:Number},
+        (A,B), m::Integer;
+        operators,
+        V_symmetric::Bool,
         constraints = RossbyWaveSpectrum.constraintmatrix(operators),
         filtercache = RossbyWaveSpectrum.allocate_filter_caches(m; operators, constraints),
         filterflags = RossbyWaveSpectrum.DefaultFilter,
@@ -2625,9 +2635,12 @@ function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:Abstrac
 end
 
 """
-    filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
-        vs::AbstractMatrix{<:AbstractMatrix},
-        mr::AbstractVector{<:Integer}; matrixfn!, operators, V_symmetric,
+    filter_eigenvalues(λs::AbstractVector{<:AbstractVector{<:Number}},
+        vs::AbstractVector{<:AbstractMatrix{<:Number}},
+        mr::AbstractVector{<:Integer};
+        matrixfn!,
+        operators,
+        V_symmetric::Bool,
         constraints = RossbyWaveSpectrum.constraintmatrix(operators),
         filtercache = RossbyWaveSpectrum.allocate_filter_caches(m; operators, constraints),
         filterflags = RossbyWaveSpectrum.DefaultFilter,
@@ -2641,7 +2654,7 @@ eigenvectors corresponding to `m = mr[i]`.
 
 # Keyword arguments
 * `matrixfn!`: The function used to compute the matrix `A` in the eigenvalue pencil `(A,B)`. This
-  may be one of [`uniform_rotation_matrix!`](@ref) or [`differential_rotation_matrix!`](@ref) or a `RotMatrix`,
+  may be one of [`uniform_rotation_matrix!`](@ref) or [`differential_rotation_matrix!`](@ref) or a [`RotMatrix`](@ref),
   and will be called as `matrixfn!(A, m; kw...)` to populate the matrix `A`.
 * `operators`: obtained as the output of [`radial_operators`](@ref)
 * `V_symmetric`: set to `true` or `false` depending on
@@ -2717,7 +2730,9 @@ end
 
 """
     filter_eigenvalues(spectrumfn!,
-        mr::AbstractVector; operators, V_symmetric,
+        mr::AbstractVector;
+        operators,
+        V_symmetric,
         constraints = RossbyWaveSpectrum.constraintmatrix(operators),
         filtercache = RossbyWaveSpectrum.allocate_filter_caches(m; operators, constraints),
         filterflags = RossbyWaveSpectrum.DefaultFilter,
@@ -2816,8 +2831,7 @@ rossbyeigenfilename(nr, nℓ, rottag, symtag, modeltag = "") =
 Return the file name to which the results should be written.
 The output is a combination of the keyword arguments specifed.
 """
-function rossbyeigenfilename(; operators, V_symmetric, rotation_profile, kw...)
-    modeltag = get(kw, :modeltag, "")
+function rossbyeigenfilename(; operators, V_symmetric, rotation_profile, modeltag = "", kw...)
     symtag = V_symmetric ? "sym" : "asym"
     @unpack nr, nℓ = operators.radial_params;
     return rossbyeigenfilename(nr, nℓ, rotation_profile, symtag, modeltag)
@@ -2871,6 +2885,12 @@ function operator_matrices(m; operators, kw...)
     map(computesparse, (A, B))
 end
 
+"""
+    operator_matrices(Feig::FilteredEigen, m; kw...)
+
+Return the pencil `(A, B)` for the azimuthal order `m`, using the
+parameters used to compute the eigenvalues in `Feig`.
+"""
 function operator_matrices(Feig::FilteredEigen, m; kw...)
     operator_matrices(m; Feig.operators, Feig.kw..., kw...)
 end
@@ -2942,6 +2962,12 @@ function eigenfunction_rad_sh!(VWSinvsh, F, v; operators, n_lowpass_cutoff::Unio
     return VWSinvsh
 end
 
+"""
+    colatitude_grid(m::Integer, operators)
+
+Return the colatitude (``\theta``) grid that is used to compute eigenfunctions in real space for the
+specific azimuthal order `m`.
+"""
 function colatitude_grid(m::Integer, operators::OperatorWrap, ℓmax_mul = 4)
     colatitude_grid(m, operators.radial_params.nℓ, ℓmax_mul)
 end
@@ -3035,6 +3061,12 @@ function eigenfunction_realspace(v, m; operators, kw...)
     eigenfunction_realspace!(fieldcaches, v, m; operators, kw...)
 end
 
+"""
+    eigenfunction_realspace(Feig::FilteredEigen, m, ind; kw...)
+
+Return the real-space eigenfunction from the `ind`-th eigenvector for the azimuthal order `m`,
+taken from the full list of solutions `Feig`.
+"""
 function eigenfunction_realspace(Feig::FilteredEigen, m, ind; kw...)
     eigenfunction_realspace(Feig[m][ind].v, m; Feig.operators, Feig.kw..., kw...)
 end

@@ -59,8 +59,10 @@ RossbyWaveSpectrum.allocate_mass_matrix
 RossbyWaveSpectrum.allocate_operator_mass_matrices
 RossbyWaveSpectrum.allocate_filter_caches
 RossbyWaveSpectrum.allocate_projectback_temp_matrices
+RossbyWaveSpectrum.operator_matrices
 RossbyWaveSpectrum.rossbyeigenfilename
 RossbyWaveSpectrum.FilteredEigenSingleOrder
+RossbyWaveSpectrum.colatitude_grid
 ```
 
 ## Plotting functions
