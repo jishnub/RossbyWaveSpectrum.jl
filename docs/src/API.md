@@ -64,6 +64,8 @@ RossbyWaveSpectrum.operator_matrices
 RossbyWaveSpectrum.rossbyeigenfilename
 RossbyWaveSpectrum.FilteredEigenSingleOrder
 RossbyWaveSpectrum.colatitude_grid
+RossbyWaveSpectrum.allocate_MVcache
+RossbyWaveSpectrum.allocate_BCcache
 ```
 
 ## Plotting functions

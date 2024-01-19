@@ -374,10 +374,15 @@ const SuperAdiabaticityParamsDefault = pairs((; δcz = 3e-6, δtop = 3e-5, δrad
                                         r_sub = 0.8 * Rsun, r_tran = 0.725 * Rsun))
 
 """
-    superadiabaticity(r::Real; r_out = Rsun,
-        δcz = 3e-6, δtop = 3e-5, δrad = -1e-3,
-        dtrans = 0.05Rsun, dtop = 0.05Rsun,
-        r_sub = 0.8Rsun, r_tran = 0.725Rsun)
+    superadiabaticity(r::Real;
+        r_out = Rsun,
+        δcz = 3e-6,
+        δtop = 3e-5,
+        δrad = -1e-3,
+        dtrans = 0.05Rsun,
+        dtop = 0.05Rsun,
+        r_sub = 0.8Rsun,
+        r_tran = 0.725Rsun)
 
 Compute the superadiabaticity profile ``δ`` parameterized by the keyword arguments,
 following [Rempel (2005), ApJ 622:1320 –1332](https://ui.adsabs.harvard.edu/abs/2005ApJ...622.1320R/abstract), section 2.3.
@@ -483,7 +488,10 @@ Base.propertynames(y::OperatorWrap) = Base.propertynames(getfield(y, :x))
 
 const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e3, Weqglobalscaling = 1e-4, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
 """
-    radial_operators(nr, nℓ; r_in_frac = 0.6, r_out_frac = 0.985, ν = 5e11,
+    radial_operators(nr, nℓ;
+        r_in_frac = 0.6,
+        r_out_frac = 0.985,
+        ν = 5e11,
         trackingrate = :hanson2020,
         scalings = DefaultScalings,
         superadiabaticityparams = (;))
@@ -1054,8 +1062,11 @@ end
 
 # This function lets us choose between various different profiles
 """
-    solar_differential_rotation_profile_derivatives_grid(; operators, rotation_profile,
-        ΔΩ_frac = 0.01, kw...)
+    solar_differential_rotation_profile_derivatives_grid(;
+        operators,
+        rotation_profile,
+        ΔΩ_frac = 0.01,
+        kw...)
 
 Return the smoothed spatial profile of rotation, corresponding to the model specified by `rotation_profile`.
 This function reads in rotation model files, and interpolates the profile on to Chebyshev nodes in both
@@ -1069,11 +1080,11 @@ may be specified for testing the code.
 # Keyword arguments
 * `operators`: obtained as the output of `radial_operators`
 * `rotation_profile`: the flag that chooses the model of the rotation profile. Possible options are:
-  * `latrad`: Smoothed solar rotation profile, limited to the radial domain
-  * `latrad_squished`: Same as `latrad`, except the solar surface is projected to the outer boundary of the radial domain.
-  * `radial_equator`: smoothed radial profile of the solar equatorial rotation rate, but limited to the radial domain.
+  * `:latrad`: Smoothed solar rotation profile, limited to the radial domain
+  * `:latrad_squished`: Same as `latrad`, except the solar surface is projected to the outer boundary of the radial domain.
+  * `:radial_equator`: smoothed radial profile of the solar equatorial rotation rate, but limited to the radial domain.
     This corresponds to the radial profile of the `latrad` model at the equator.
-  * `radial_equator_squished`: same profile as `radial_equator`, except that the solar surface is projected onto
+  * `:radial_equator_squished`: same profile as `radial_equator`, except that the solar surface is projected onto
     the outer boundary of the radial domain. This corresponds to the radial profile of the `latrad_squished` model
     at the equator.
   * `:constant`: background medium rotates like a solid body, at a rate `Ω` that differs from the tracking rate `Ω0`
@@ -1125,8 +1136,11 @@ function solar_differential_rotation_profile_derivatives_grid(;
 end
 
 """
-    solar_differential_rotation_profile_derivatives_Fun(; operators, rotation_profile,
-        ΔΩ_smoothing_param = 5e-2, kw...)
+    solar_differential_rotation_profile_derivatives_Fun(;
+        operators,
+        rotation_profile,
+        ΔΩ_smoothing_param = 5e-2,
+        kw...)
 
 Compute the Chebyshev-Ultraspherical decomposition of the rotation profile specified by `rotation_profile`,
 which typically is a smoothed version of the solar rotation profile. The keyword arguments `kw`
@@ -1201,7 +1215,9 @@ end
 ℓrange(m, nℓ, symmetric) = range(m + !symmetric, length = nℓ, step = 2)
 
 """
-    mass_matrix(m::Integer; operators, V_symmetric::Bool)
+    mass_matrix(m::Integer;
+        operators,
+        V_symmetric::Bool)
 
 Compute the mass matrix ``B`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`.
 
@@ -1216,7 +1232,9 @@ function mass_matrix(m; operators, kw...)
     return B
 end
 """
-    mass_matrix!(B, m::Integer; operators, V_symmetric::Bool)
+    mass_matrix!(B, m::Integer;
+        operators,
+        V_symmetric::Bool)
 
 Compute the mass matrix ``B`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`.
 This operates in-place on the pre-allocated matrix `B`, and overwrites it with the result.
@@ -1267,7 +1285,9 @@ function mass_matrix!(B, m; operators, V_symmetric, kw...)
 end
 
 """
-    uniform_rotation_matrix(m::Integer; operators, V_symmetric::Bool)
+    uniform_rotation_matrix(m::Integer;
+        operators,
+        V_symmetric::Bool)
 
 Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
 assuming that the Sun is rotating like a solid body.
@@ -1285,7 +1305,9 @@ function uniform_rotation_matrix(m; operators, kw...)
 end
 
 """
-    uniform_rotation_matrix!(A, m::Integer; operators, V_symmetric::Bool)
+    uniform_rotation_matrix!(A, m::Integer;
+        operators,
+        V_symmetric::Bool)
 
 Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
 assuming that the Sun is rotating like a solid body.
@@ -1434,7 +1456,9 @@ end
 
 """
     constant_differential_rotation_terms!(A, m::Integer;
-        operators, V_symmetric::Bool, ΔΩ_frac = 0.01)
+        operators,
+        V_symmetric::Bool,
+        ΔΩ_frac = 0.01)
 
 Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
 assuming that the Sun is rotating like a solid body, albeit at a rotation speed ``Ω`` that exceeds
@@ -1731,7 +1755,12 @@ end
 
 """
     solar_differential_rotation_terms!(A, m::Integer;
-        operators, V_symmetric::Bool, rotation_profile::Symbol, kw...)
+        operators,
+        V_symmetric::Bool,
+        rotation_profile::Symbol,
+        ΔΩ_frac = 0.01, # only used to test the constant case
+        ΔΩ_scale = 1, # scale the diff rot profile
+        kw...)
 
 Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
 assuming that the Sun is rotating with a solar-like rotation profile. The keyword argument `rotation_profile` specifies
@@ -1747,15 +1776,17 @@ This function overwrites the input matrix `A` that is obtained as the output to
     whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
 * `rotation_profile`: label to select the rotation profile used to compute the spectrum.
     See [`solar_differential_rotation_profile_derivatives_grid`](@ref) for the list of possible options.
-* `ΔΩ_frac`: Ratio by which the background rotation rate ``Ω`` exceeds the reference rate ``Ω_0``, optional.
+* `ΔΩ_frac`: ratio by which the background rotation rate ``Ω`` exceeds the reference rate ``Ω_0``, optional.
     The relation between the two is given by `Ω = Ω_0 * (1 + ΔΩ_frac)`.
     This is only used if `rotation_profile == :constant`, and is chosen to be `0.01` by default.
+* `ΔΩ_scale`: factor by which the differential rotation profile may be scaled. This may be used to
+    tune the differential rotation to trace the results back to the solid-body rotation case.
 """
 function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
         operators, V_symmetric,
         rotation_profile = nothing,
         ΔΩ_frac = 0.01, # only used to test the constant case
-        ΔΩ_scale = 1.0, # scale the diff rot profile, for testing
+        ΔΩ_scale = 1.0, # scale the diff rot profile
         ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(;
                             operators, rotation_profile, ΔΩ_frac, ΔΩ_scale),
         ωΩ_deriv = solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv),
@@ -2483,11 +2514,23 @@ function allocate_field_caches(Feig::FilteredEigen, m)
     allocate_field_caches(nr, nℓ, nθ)
 end
 
+"""
+    allocate_MVcache(nrows)
+
+Allocate temporary matrices that are used to compute matrix products in-place. These
+are used in filtering the solutions (See [`Filters.EIGEN`](@ref)).
+"""
 function allocate_MVcache(nrows)
     StructArray{ComplexF64}((zeros(nrows), zeros(nrows))),
         StructArray{ComplexF64}((zeros(nrows), zeros(nrows)))
 end
 
+"""
+    allocate_BCcache(nrows)
+
+Allocate temporary matrices that are used to compute matrix products in-place. These
+are used in filtering the solutions (See [`Filters.BC`](@ref)).
+"""
 function allocate_BCcache(n_bc)
     StructArray{ComplexF64}((zeros(n_bc), zeros(n_bc)))
 end

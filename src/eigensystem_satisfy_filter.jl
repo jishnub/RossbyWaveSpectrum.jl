@@ -43,11 +43,14 @@ function eigensystem_satisfy_frac(λ::Number, v::StructVector{<:Complex},
 end
 
 """
-    eigensystem_satisfy_filter(λ, v, (A,B), MVcache = allocate_MVcache(size(A, 1));
+    eigensystem_satisfy_filter(ω_over_Ω0::Number,
+        v::StructVector{<:Complex},
+        (A,B)::NTuple{2,AbstractMatrix{<:Number}},
+        MVcache = RossbyWaveSpectrum.allocate_MVcache(size(A, 1));
         rtol = RossbyWaveSpectrum.DefaultFilterParams[:eigen_rtol])
 
-Return whether the eigenvalue ``λ`` and mode ``v`` satisfy
-``A\\mathbf{v}=λ B\\mathbf{v}`` to within the relative tolerance `rtol`.
+Return whether the eigenvalue `ω_over_Ω0` and eigenvector `v` satisfy
+``A\\mathbf{v}=(\\omega/\\Omega_0) B\\mathbf{v}`` to within the relative tolerance `rtol`.
 """
 function eigensystem_satisfy_filter(ω_over_Ω0::Number, v::StructVector{<:Complex},
         AB::Tuple{StructMatrix{<:Complex}, AbstractMatrix{<:Real}},
