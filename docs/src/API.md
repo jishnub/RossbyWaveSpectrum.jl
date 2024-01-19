@@ -18,6 +18,7 @@ differential_rotation_spectrum!
 filter_eigenvalues
 save_eigenvalues
 FilteredEigen
+FilteredEigen(filename::String)
 datadir
 ```
 

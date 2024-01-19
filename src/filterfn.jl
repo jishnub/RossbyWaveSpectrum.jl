@@ -1,5 +1,8 @@
 """
-    filterfn(λ::Number, v::AbstractVector{<:Number}, m::Integer, (A,B);
+    filterfn(λ::Number,
+        v::AbstractVector{<:Number},
+        m::Integer,
+        (A,B);
         operators,
         V_symmetric,
         constraints = RossbyWaveSpectrum.constraintmatrix(operators),
@@ -17,7 +20,11 @@ satisfy the chosen filters. The matrices `(A,B)` represent the pencil.
 * `constraints`: boundary condition constraints on the spectral coefficients, optional.
 * `filtercache`: pre-allocated workspace used in the filtering process, optional.
 * `filterflags`: the flags that specify which filters are used, optional.
-* `filterparams`: parameters that override the default ones in [`DefaultFilterParams`](@ref).
+    See [`Filters`](@ref) for a list of possible flags.
+* `filterparams`: additional filter parameters to override the default ones
+    from [`RossbyWaveSpectrum.DefaultFilterParams`](@ref).
+    The parameters specified in `filterparams` will override the default values,
+    and the ones left unspecified will be set to the default values.
 """
 function filterfn(λ::Number, v::AbstractVector{<:Number}, m::Integer, M;
         operators,

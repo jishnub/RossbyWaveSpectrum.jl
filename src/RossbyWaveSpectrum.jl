@@ -745,7 +745,8 @@ end
 """
     allocate_operator_matrix(operators)
 
-Allocate the operator matrix ``A`` that features in the eigenvalue problem ``Av=λBv``.
+Allocate the operator matrix ``A`` that features in the eigenvalue problem
+``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}``.
 The argument `operators` is obtained as the output of [`radial_operators`](@ref).
 
 !!! note
@@ -763,7 +764,8 @@ end
 """
     allocate_mass_matrix(operators)
 
-Allocate the mass matrix ``B`` that features in the eigenvalue problem ``Av=λBv``.
+Allocate the mass matrix ``B`` that features in the eigenvalue problem
+``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}``.
 The argument `operators` is obtained as the output of [`radial_operators`](@ref).
 
 !!! note
@@ -1893,7 +1895,8 @@ end
     differential_rotation_matrix(m::Integer;
         operators, rotation_profile::Symbol, V_symmetric::Bool, kw...)
 
-Return the operator matrix ``A`` that features in the eigenvalue problem ``Av=λBv`` for a specified azimuthal
+Return the operator matrix ``A`` that features in the eigenvalue problem
+``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}`` for a specified azimuthal
 order `m`, assuming a differentially rotating model of the Sun.
 The profile of rotation may be specified using the
 keyword argument `rotation_profile`.
@@ -1918,7 +1921,8 @@ end
     differential_rotation_matrix!(A, m::Integer;
         operators, rotation_profile::Symbol, V_symmetric::Bool, kw...)
 
-Compute the operator matrix ``A`` that features in the eigenvalue problem ``Av=λBv`` for a specified azimuthal
+Compute the operator matrix ``A`` that features in the eigenvalue problem
+``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}`` for a specified azimuthal
 order `m` assuming a differentially rotating model of the Sun, and
 store the result in `A` (which will be overwritten).
 
@@ -2341,9 +2345,20 @@ end
 """
     Filters
 
-Filters that may be passed to the `filterflags` keyword argument in `filter_eigenvalues`.
+Flags that may be passed to the `filterflags` keyword argument in `filter_eigenvalues` to
+specify which conditions to filter solutions by.
+
+Possible options are:
+* [`Filters.NONE`](@ref)
+* [`Filters.EIGEN`](@ref)
+* [`Filters.EIGVAL`](@ref)
+* [`Filters.BC`](@ref)
+* [`Filters.SPATIAL_EQUATOR`](@ref)
+* [`Filters.SPATIAL_RADIAL`](@ref)
+* [`Filters.NODES`](@ref)
+
 The individual filters may be combined using `|`, e.g. to include the `Filters.EIGEN` and the
-`Filters.SPATIAL_EQUATOR` filters, use `Filters.EIGEN | Filters.SPATIAL_EQUATOR`.
+`Filters.SPATIAL_EQUATOR` flags, use `Filters.EIGEN | Filters.SPATIAL_EQUATOR`.
 """
 module Filters
     using BitFlags
@@ -2355,14 +2370,20 @@ module Filters
         EIGVEC # spectrum power cutoff in n and l
         BC # boundary conditions
         SPATIAL_EQUATOR # peak near the equator
-        SPATIAL_HIGHLAT # peak near the equator
+        SPATIAL_HIGHLAT # peak near the pole
         SPATIAL_RADIAL # power not concentrated at the top/bottom surface layers
         NODES # number of radial nodes
     end
     """
+        Filters.NONE
+
+    Do not apply any filter. This retains all the solutions.
+    """
+    NONE
+    """
         Filters.EIGEN
 
-    Filter for solutions `(λ, v)` that satisfy the eigenvalue problem Av=λBv
+    Filter for solutions `(ω, v)` that satisfy the eigenvalue problem ``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}``
     """
     EIGEN
 
@@ -2385,7 +2406,7 @@ module Filters
     """
         Filters.BC
 
-    Filter for eigenfunctions that satify the boundary conditions ``Bv = 0``.
+    Filter for eigenfunctions that satify the boundary conditions ``Cv = 0``.
     Typically, all solutions should satisfy this condition,
     as this is imposed when solving the eigenvalue problem.
     """
@@ -2426,7 +2447,7 @@ module Filters
     """
         Filters.DefaultFilter
 
-    The default set of filters used to constrain the set of solutions.
+    The default set of filter flags that are used to constrain the set of solutions.
     This is defined as
     ```jldoctest
     julia> Filters.DefaultFilter
@@ -2556,13 +2577,14 @@ end
         V_symmetric::Bool,
         constraints = RossbyWaveSpectrum.constraintmatrix(operators),
         filtercache = RossbyWaveSpectrum.allocate_filter_caches(m; operators, constraints),
-        filterflags = RossbyWaveSpectrum.DefaultFilter,
         scale_eigenvectors::Bool = false,
+        filterflags = RossbyWaveSpectrum.DefaultFilter,
         filterparams...)
 
 Filter the set of eigenvalue-eigenvector pairs `(λ, v)` for a specified azimuthal order `m`
 to remove the potentially spurious ones. This returns a filtered set `(λf, vf)`.
-The eigenvalue pencil `(A,B)` should be provided, and will be used in the filtering process.
+The eigenvalue pencil `(A,B)` should be provided if `Filters.EIGEN in filterflags`,
+and will be used in the filtering process. Otherwise, the parameters `(A,B)` are ignored.
 
 # Keyword arguments
 * `operators`: obtained as the output of [`radial_operators`](@ref)
@@ -2570,12 +2592,14 @@ The eigenvalue pencil `(A,B)` should be provided, and will be used in the filter
     whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
 * `constraints`: boundary condition constraints on the spectral coefficients, optional
 * `filtercache`: pre-allocated workspace used in the filtering process, optional
-* `filterflags`: the flags that specify which filters are used, optional.
 * `scale_eigenvectors`: flag to indices whether to compute the unscaled stream functions
     from the scaled ones that are used in the eigenvalue problem.
+* `filterflags`: the flags that specify which filters are used, optional.
+    See [`Filters`](@ref) for a list of possible flags.
 * `filterparams`: additional filter parameters, passed on to [`filterfn`](@ref). See
     [`RossbyWaveSpectrum.DefaultFilterParams`](@ref) for the full list of parameters
-    that may be specified.
+    that may be specified, and their default values. 
+    The parameters specified in `filterparams` override the default values.
 """
 function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix,
     M, m::Integer;
@@ -2662,7 +2686,10 @@ eigenvectors corresponding to `m = mr[i]`.
 * `constraints`: Boundary condition constraints on the spectral coefficients, optional
 * `filtercache`: Pre-allocated workspace used in the filtering process, optional
 * `filterflags`: The flags that specify which filters are used, optional.
-* `filterparams`: additional filter parameters, passed on to [`filterfn`](@ref).
+    See [`Filters`](@ref) for a list of possible flags.
+* `filterparams`: additional filter parameters, passed on to [`filterfn`](@ref). See
+    [`RossbyWaveSpectrum.DefaultFilterParams`](@ref) for the full list of parameters
+    that may be specified.
 """
 function filter_eigenvalues(λs::AbstractVector{<:AbstractVector},
     vs::AbstractVector{<:AbstractMatrix}, mr::AbstractVector{<:Integer};
@@ -2752,7 +2779,11 @@ The argument `spectrumfn!` must be one of [`uniform_rotation_spectrum!`](@ref) o
 * `constraints`: Boundary condition constraints on the spectral coefficients, optional
 * `filtercache`: Pre-allocated workspace used in the filtering process, optional
 * `filterflags`: The flags that specify which filters are used, optional.
-* `filterparams`: additional filter parameters, passed on to [`filterfn`](@ref).
+    See [`Filters`](@ref) for a list of possible flags.
+* `filterparams`: additional filter parameters, passed on to [`filterfn`](@ref). See
+    [`RossbyWaveSpectrum.DefaultFilterParams`](@ref) for the full list of parameters
+    that may be specified, and their default values. 
+    The parameters specified in `filterparams` override the default values.
 """
 function filter_eigenvalues(spectrumfn!, mr::AbstractVector;
     operators, constraints = constraintmatrix(operators), kw...)
