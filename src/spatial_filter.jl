@@ -126,6 +126,21 @@ function spatial_filter!(filtercache, v, m;
     return eqfilter & radfilter
 end
 
+"""
+    spatial_filter(v::AbstractVector{<:Number}, m::Integer;
+        operators,
+        filtercache = RossbyWaveSpectrum.allocate_filter_caches(m; operators),
+        θ_cutoff = RossbyWaveSpectrum.DefaultFilterParams[:θ_cutoff],
+        equator_power_cutoff_frac = RossbyWaveSpectrum.DefaultFilterParams[:equator_power_cutoff_frac],
+        pole_cutoff_angle = RossbyWaveSpectrum.DefaultFilterParams[:pole_cutoff_angle],
+        pole_power_cutoff_frac = RossbyWaveSpectrum.DefaultFilterParams[:pole_power_cutoff_frac],
+        filterfieldpowercutoff = RossbyWaveSpectrum.DefaultFilterParams[:filterfieldpowercutoff],
+        radial_topbotpower_cutoff = RossbyWaveSpectrum.DefaultFilterParams[:radial_topbotpower_cutoff],
+        kw...)
+
+Return if the eigenvector `v` for the azimuthal order `m` is spatially localized according
+to the specified parameters.
+"""
 function spatial_filter(v, m;
     operators,
     filtercache = allocate_filter_caches(m; operators),
@@ -135,6 +150,14 @@ function spatial_filter(v, m;
     spatial_filter!(filtercache, v, m; operators, kw...)
 end
 
+"""
+    spatial_filter(Feig::FilteredEigen, m::Integer, ind::Integer; kw...)
+
+Return if the `ind`-th eigenvector of `Feig[m]` is spatially localized according to
+the specified parameters.
+By default, the filter parameters are taken to be identical to those used to compute the solutions in `Feig`,
+but each of these parameters may be overridden.
+"""
 function spatial_filter(Feig::FilteredEigen, m, ind; kw...)
     spatial_filter(Feig[m][ind].v, m; Feig.operators,
         filtercache = allocate_filter_caches(m; Feig.operators, Feig.constraints),

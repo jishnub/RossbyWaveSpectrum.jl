@@ -53,7 +53,7 @@ const DefaultFilterParams = Dict(
     :pole_cutoff_angle => deg2rad(25),
     :pole_power_cutoff_frac => 0.05,
     :radial_topbotpower_cutoff => 0.7,
-    # radial nodes filter # Filters.NODES
+    # radial nodes filter: Filters.NODES
     :nnodesmax => 5,
     :nodessmallpowercutoff => 0.05,
     # exclude a field from a filter if relative power is below a cutoff
