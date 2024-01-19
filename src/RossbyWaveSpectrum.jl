@@ -2334,8 +2334,8 @@ end
     Filters
 
 Filters that may be passed to the `filterflags` keyword argument in `filter_eigenvalues`.
-The individual filters may be combined using `|`, e.g. to include the `EIGEN` and the `SPATIAL_EQUATOR` filters, use
-`EIGEN | SPATIAL_EQUATOR`.
+The individual filters may be combined using `|`, e.g. to include the `Filters.EIGEN` and the
+`Filters.SPATIAL_EQUATOR` filters, use `Filters.EIGEN | Filters.SPATIAL_EQUATOR`.
 """
 module Filters
     using BitFlags
@@ -2416,9 +2416,14 @@ module Filters
 
     const SPATIAL = SPATIAL_EQUATOR | SPATIAL_RADIAL
     """
-        RossbyWaveSpectrum.DefaultFilter
+        Filters.DefaultFilter
 
     The default set of filters used to constrain the set of solutions.
+    This is defined as
+    ```jldoctest
+    julia> Filters.DefaultFilter
+    (NODES | SPATIAL_RADIAL | SPATIAL_EQUATOR | BC | EIGVEC | EIGVAL | EIGEN)::RossbyWaveSpectrum.Filters.FilterFlag = 0x00df
+    ```
     """
     const DefaultFilter = EIGEN | EIGVAL | EIGVEC | BC | SPATIAL | NODES
 end
