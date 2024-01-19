@@ -815,7 +815,7 @@ version = "2.1.0"
 deps = ["ApproxFun", "ApproxFunAssociatedLegendre", "ApproxFunBase", "BandedMatrices", "BitFlags", "BlockArrays", "BlockBandedMatrices", "DelimitedFiles", "Dierckx", "DomainSets", "FFTW", "FillArrays", "Folds", "IntervalSets", "JLD2", "LegendrePolynomials", "LinearAlgebra", "MKL", "OffsetArrays", "Reexport", "SparseArrays", "StructArrays", "TimerOutputs", "Trapz", "UnPack", "ZChop"]
 path = ".."
 uuid = "7fbe2b4f-a8e1-4092-9718-18aa0af13fd5"
-version = "0.1.0"
+version = "2.1.0"
 
 [[deps.SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"
