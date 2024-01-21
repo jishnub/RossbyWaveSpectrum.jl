@@ -165,7 +165,7 @@ We find several ridges of eigenvalues.
 	By default, the plot zooms into a region near the rossby ridge frequency ``-2(\Omega_0/2\pi)/(m+1)``, so one may
 	need to zoom out to look at eigenvalues that are not visible in this plot
 
-We may plot one eigenvector -- e.g. the ``12``th eigenvector corresponding to ``m=5`` -- as
+We may plot one eigenvector — e.g. the ``12``th eigenvector corresponding to ``m=5`` — as
 ```julia
 julia> eigenfunction(Feig, 5, 12)
 ```

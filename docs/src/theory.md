@@ -56,7 +56,7 @@ B_{VV} & 0 & 0\\
 \boldsymbol{S}
 \end{array}\right)
 ```
-where each matrix element represents an operator -- potentially a differential one. We may express this in a condensed form as
+where each matrix element represents an operator — potentially a differential one. We may express this in a condensed form as
 ```math
 A \mathbf{v} = \frac{\omega}{\Omega_0} B \mathbf{v},
 ```
