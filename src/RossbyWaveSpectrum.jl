@@ -1219,7 +1219,8 @@ end
         operators,
         V_symmetric::Bool)
 
-Compute the mass matrix ``B`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`.
+Compute the mass matrix ``B`` that features in the eigenvalue problem
+``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}`` for a specific `m`.
 
 # Keyword arguments
 * `operators`: obtained as the output of [`radial_operators`](@ref)
@@ -1236,7 +1237,8 @@ end
         operators,
         V_symmetric::Bool)
 
-Compute the mass matrix ``B`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`.
+Compute the mass matrix ``B`` that features in the eigenvalue problem
+``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}`` for a specific `m`.
 This operates in-place on the pre-allocated matrix `B`, and overwrites it with the result.
 The matrix `B` may be allocated using [`allocate_mass_matrix`](@ref).
 
@@ -1285,11 +1287,10 @@ function mass_matrix!(B, m; operators, V_symmetric, kw...)
 end
 
 """
-    uniform_rotation_matrix(m::Integer;
-        operators,
-        V_symmetric::Bool)
+    uniform_rotation_matrix(m::Integer; operators, V_symmetric::Bool)
 
-Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
+Compute the operator matrix ``A`` that features in the eigenvalue problem
+``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}`` for a specific `m`,
 assuming that the Sun is rotating like a solid body.
 The matrix would therefore not contain any terms corresponding to differential rotation.
 
@@ -1305,11 +1306,10 @@ function uniform_rotation_matrix(m; operators, kw...)
 end
 
 """
-    uniform_rotation_matrix!(A, m::Integer;
-        operators,
-        V_symmetric::Bool)
+    uniform_rotation_matrix!(A, m::Integer; operators, V_symmetric::Bool)
 
-Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
+Compute the operator matrix ``A`` that features in the eigenvalue problem
+``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}`` for a specific `m`,
 assuming that the Sun is rotating like a solid body.
 This operates in-place on the pre-allocated matrix `A`, and overwrites it with the output.
 The matrix `A` may be allocated using [`allocate_operator_matrix`](@ref).
@@ -1460,7 +1460,8 @@ end
         V_symmetric::Bool,
         ΔΩ_frac = 0.01)
 
-Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
+Compute the operator matrix ``A`` that features in the eigenvalue problem
+``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}`` for a specific `m`,
 assuming that the Sun is rotating like a solid body, albeit at a rotation speed ``Ω`` that exceeds
 the tracking rate ``Ω_0`` by the specified ratio `ΔΩ_frac` (i.e. `Ω = Ω0 * (1 + ΔΩ_frac)`).
 This function serves as a validation test for the differentially rotating model.
@@ -1682,7 +1683,8 @@ end
 """
     solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deriv)
 
-Return the spectral approximation to the vorticity profile ``\\boldsymbol{ω} = ∇ × (Ω \\hat{z})``,
+Return the spectral approximation to the vorticity associated with differential rotation 
+``\\left(\\boldsymbol{ω}_\\Omega = ∇ × (Ω \\hat{z})\\right)``,
 given the rotation profile ``Ω`` and its derivatives.
 
 # Keyword arguments
@@ -1762,9 +1764,11 @@ end
         ΔΩ_scale = 1, # scale the diff rot profile
         kw...)
 
-Compute the operator matrix ``A`` that features in the eigenvalue problem ``A v = λ B v`` for a specific `m`,
-assuming that the Sun is rotating with a solar-like rotation profile. The keyword argument `rotation_profile` specifies
-the specific model that is chosen. Optionally, additional keyword arguments `kw` may be passed to alter the specifics
+Compute the operator matrix ``A`` that features in the eigenvalue problem
+``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}`` for a specific `m`,
+assuming that the Sun is rotating with a solar-like rotation profile.
+The keyword argument `rotation_profile` specifies the specific model that is chosen.
+Optionally, additional keyword arguments `kw` may be passed to alter the specifics
 of the model. These are detailed below.
 
 This function overwrites the input matrix `A` that is obtained as the output to
@@ -1938,6 +1942,9 @@ keyword argument `rotation_profile`.
     whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
 * `rotation_profile`: label to select the rotation profile used to compute the spectrum.
     See [`solar_differential_rotation_profile_derivatives_grid`](@ref) for the list of possible options.
+
+Additional keyword arguments will be passed on to the specific functions populating
+the matrix elements, such as [`solar_differential_rotation_terms!`](@ref).
 """
 function differential_rotation_matrix(m; operators, rotation_profile, kw...)
     @unpack nℓ = operators.radial_params;
@@ -1968,9 +1975,9 @@ end
 """
     constrained_matmul_cache(constraints)
 
-Allocate temporary matrices that are overwritten with ``Z^T A Z`` and ``Z^T B Z`` given the eigenvalue pencil
-``(A, B)``, where the columns of `Z = constraints.ZC` represent the spectral coefficients of a basis
-that satifies the boundary conditions.
+Allocate temporary matrices that are overwritten with ``Z^T A Z`` and ``Z^T B Z``,
+given the eigenvalue pencil ``(A, B)``, where the columns of `Z = constraints.ZC` represent
+the spectral coefficients of a basis that satifies the boundary conditions.
 """
 function constrained_matmul_cache(constraints)
     @unpack ZC = constraints
@@ -2030,8 +2037,9 @@ end
 """
     allocate_projectback_temp_matrices(sz)
 
-Allocate temporary matrices used to project the eigenfunctions for ``(Z^T A Z) w = λ (Z^T B Z) w``
-to those for ``A v = λ B v``.
+Allocate temporary matrices used to project the eigenfunctions for
+``(Z^T A Z)\\mathbf{w} = (\\omega/\\Omega_0)(Z^T B Z)\\mathbf{w}``
+to those for ``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}``.
 """
 function allocate_projectback_temp_matrices(sz)
     vr = zeros(sz)
@@ -2054,14 +2062,17 @@ end
         temp_projectback = RossbyWaveSpectrum.allocate_projectback_temp_matrices(size(constraints.ZC)),
         kw...)
 
-Solve the eigenvalue problem ``Av = λBv`` subject to the boundary-condition constraint ``Cv=0``,
+Solve the eigenvalue problem ``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}``
+subject to the boundary-condition constraint ``C\\mathbf{v}=0``,
 and return `(λ, v, (A, B))`. The input arguments are the matrix pencil `(A, B)`.
 
 Internally, this computes a matrix `Z = constraints.ZC` that represents the spectral coefficients of a basis
-that satifies the boundary conditions (i.e. this satisfies ``CZ=0``). The eigenfunction ``v`` may therefore be
-expressed as ``v = Zw`` for an arbitrary ``w``. Substituting this, and projecting the eigenvalue problem on to
-the basis ``Z``, we obtain ``(Z^T A Z) w = λ (Z^T B Z) w``, which is solved numerically.
-Finally, the eigenfunctions are computed using ``v=Z w``.
+that satifies the boundary conditions (i.e. this satisfies ``CZ=0``). The eigenfunction ``\\mathbf{v}`` may therefore be
+expressed as ``\\mathbf{v} = Z\\mathbf{w}`` for an arbitrary ``\\mathbf{w}``.
+Substituting this, and projecting the eigenvalue problem on to
+the basis ``Z``, we obtain ``(Z^T A Z)\\mathbf{w} = (\\omega/\\Omega_0)(Z^T B Z)\\mathbf{w}``,
+which is solved numerically.
+Finally, the eigenfunctions are transformed to the Chebyshev basis using ``\\mathbf{v} = Z\\mathbf{w}``.
 
 # Keyword arguments
 * `operators`: obtained as the output of [`radial_operators`](@ref)
@@ -2098,9 +2109,10 @@ end
 
 Compute the inertial-mode spectrum for the specified azimuthal order `m`, assuming that the Sun is
 rotating like a solid body, and it is being tracked from a frame that is rotating at the same rate as the Sun.
-This solves the eigenvalue problem ``A v = λ B v`` and returns `(λ, v, (A,B))`,
-where `A` is computed internally by calling
-[`uniform_rotation_matrix`](@ref), and `B` is computed by calling [`mass_matrix`](@ref).
+This solves the eigenvalue problem ``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}`` and returns `(ω_over_Ω0, v, (A,B))`,
+where `ω_over_Ω0` is a vector of eigenvalues, and `v` is a matrix whose columns are the eigenvectors.
+`A` is computed internally by calling [`uniform_rotation_matrix!`](@ref),
+and `B` is computed by calling [`mass_matrix!`](@ref).
 
 !!! note
     This function returns all the eigenvalues and eigenfunctions without applying any filtering.
@@ -2148,9 +2160,11 @@ Compute the inertial-mode spectrum for the specified azimuthal order `m`, assumi
 rotating with a solar-like rotation profile (the exact model may be specified using `rotation_profile`), and it
 is being tracked in a frame rotating at a rate `Ω0 = operators.constants[:Ω0]`.
 
-This solves the eigenvalue problem ``A v = λ B v`` and returns `(λ, v, (A,B))`,
-where `A` is computed internally by calling
-[`uniform_rotation_matrix`](@ref), and `B` is computed by calling [`mass_matrix`](@ref).
+This solves the eigenvalue problem ``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}``
+and returns `(ω_over_Ω0, v, (A,B))`, where `ω_over_Ω0` is a vector of eigenvalues,
+and `v` is a matrix whose columns are the eigenvectors.
+`A` is computed internally by calling [`differential_rotation_matrix!`](@ref), 
+and `B` is computed by calling [`mass_matrix!`](@ref).
 
 !!! note
     This function returns all the eigenvalues and eigenfunctions without applying any filtering.
@@ -2613,7 +2627,7 @@ function filter_eigenvalues(λ::AbstractVector, v::AbstractMatrix, m::Integer;
 end
 
 """
-    filter_eigenvalues(λ::AbstractVector{<:Number},
+    filter_eigenvalues(ω_over_Ω0::AbstractVector{<:Number},
         v::AbstractMatrix{<:Number},
         (A,B), m::Integer;
         operators,
@@ -2624,8 +2638,8 @@ end
         filterflags = RossbyWaveSpectrum.DefaultFilter,
         filterparams...)
 
-Filter the set of eigenvalue-eigenvector pairs `(λ, v)` for a specified azimuthal order `m`
-to remove the potentially spurious ones. This returns a filtered set `(λf, vf)`.
+Filter the set of eigenvalue-eigenvector pairs `(ω_over_Ω0, v)` for a specified azimuthal order `m`
+to remove the potentially spurious ones. This returns a filtered set `(ω_over_Ω0f, vf)`.
 The eigenvalue pencil `(A,B)` should be provided if `Filters.EIGEN in filterflags`,
 and will be used in the filtering process. Otherwise, the parameters `(A,B)` are ignored.
 
@@ -2702,7 +2716,7 @@ function filter_map_nthreads!(c::Channel, nt::Int, λs::AbstractVector{<:Abstrac
 end
 
 """
-    filter_eigenvalues(λs::AbstractVector{<:AbstractVector{<:Number}},
+    filter_eigenvalues(ω_over_Ω0s::AbstractVector{<:AbstractVector{<:Number}},
         vs::AbstractVector{<:AbstractMatrix{<:Number}},
         mr::AbstractVector{<:Integer};
         matrixfn!,
@@ -2713,10 +2727,10 @@ end
         filterflags = RossbyWaveSpectrum.DefaultFilter,
         filterparams...)
 
-Filter the sets of eigenvalue-eigenvector pairs `(λ, v)` for each azimuthal order `m` in the range `mr`,
-taken from the vectors `λs` and `vs`. The filtering operation for each `m` is independent of the others,
+Filter the sets of eigenvalue-eigenvector pairs `(ω_over_Ω0, v)` for each azimuthal order `m` in the range `mr`,
+taken from the vectors `ω_over_Ω0s` and `vs`. The filtering operation for each `m` is independent of the others,
 and these are therefore carried out in parallel if multiple threads are available. This function returns a
-filtered set `(λsf, vsf)`, where `λsf[i]` and `vsf[i]` represents the filtered set of eigenvalues and
+filtered set `(ω_over_Ω0sf, vsf)`, where `ω_over_Ω0sf[i]` and `vsf[i]` represents the filtered set of eigenvalues and
 eigenvectors corresponding to `m = mr[i]`.
 
 # Keyword arguments
@@ -2808,8 +2822,9 @@ end
         filterflags = RossbyWaveSpectrum.DefaultFilter,
         filterparams...)
 
-Compute the spectrum of inertial waves for the specified range of azimuthal orders `mr`, and filter the solutions
-to remove potentially spurious solutions. This function returns `(λs, vs)`, where `λs[i]` and `vs[i]` represent the
+Compute the spectrum of inertial waves for the specified range of azimuthal orders `mr`,
+and filter the solutions to remove potentially spurious solutions.
+This function returns `(ω_over_Ω0s, vs)`, where `ω_over_Ω0s[i]` and `vs[i]` represent the
 filtered set of eigenvalues and eigenvectors corresponding to `m = mr[i]`.
 
 The argument `spectrumfn!` must be one of [`uniform_rotation_spectrum!`](@ref) or
@@ -3039,7 +3054,7 @@ end
 """
     colatitude_grid(m::Integer, operators)
 
-Return the colatitude (``\theta``) grid that is used to compute eigenfunctions in real space for the
+Return the colatitude ``\\left(\\theta\\right)`` grid that is used to compute eigenfunctions in real space for the
 specific azimuthal order `m`.
 """
 function colatitude_grid(m::Integer, operators::OperatorWrap, ℓmax_mul = 4)
