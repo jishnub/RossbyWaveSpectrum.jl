@@ -133,7 +133,7 @@ The `operators` and the parameters that were used to generate the solutions are 
 julia> Feig.kw
 Dict{Symbol, Any} with 3 entries:
   :V_symmetric      => true
-  :filterflags      => 0x00df
+  :filterflags      => NODES|SPATIAL_RADIAL|SPATIAL_EQUATOR|BC|EIGVEC|EIGVAL|EIGEN
   :rotation_profile => :solar_latrad_squished
 ```
 
