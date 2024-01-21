@@ -100,6 +100,9 @@ function FilteredEigen(fname::String)
     lam, vec, mr, kw, operatorparams =
         load(fname, "lam", "vec", "mr", "kw", "operatorparams");
     operators = radial_operators(operatorparams...)
+    if haskey(kw, :filterflags)
+        kw[:filterflags] = Filters.FilterFlag(kw[:filterflags])
+    end
     FilteredEigen(lam, rewrapstruct(vec), mr, kw, operators)
 end
 
