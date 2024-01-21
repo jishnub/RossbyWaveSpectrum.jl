@@ -101,7 +101,7 @@ and compute the spctrum using
 save_eigenvalues(spectrumfn!, mrange; operators)
 ```
 This will save the results to a file named `"solar_latrad_squished_nr40_nl20_sym.jld2"` in the output directory given by
-`RossbyWaveSpectrum.DATADIR[]`. We may also specify filtering parameters as keyword arguments to `save_eigenvalues`, which will be passed on to [`filter_eigenvalues`](@ref). The filtering may be performed later as well as a post-processing step.
+`RossbyWaveSpectrum.DATADIR[]`. We may also specify filtering parameters as keyword arguments to `save_eigenvalues`, which will be passed on to [`filter_eigenvalues`](@ref). The filtering may be performed later as well, as a post-processing step.
 
 # Loading the results
 
@@ -128,8 +128,26 @@ julia> λs
 ```
 In the sign convention chosen in the code, a positive imaginary part of the eigenfrequencies indicates that the solutions are damped, and a positive real part indicates retrograde solutions. These are corrected for when plotting the solutions, so that the real part of the frequencies appear in the bottom right quadrant.
 
+The `operators` and the parameters that were used to generate the solutions are saved in the `FilteredEigen` struct. The former is directly stored as `Feig.operators`, whereas the latter are stored in the field `kw`.
+```julia
+julia> Feig.kw
+Dict{Symbol, Any} with 3 entries:
+  :V_symmetric      => true
+  :filterflags      => 0x00df
+  :rotation_profile => :solar_latrad_squished
+```
+
 !!! warn
 	The file format and types of contents may not be identical across releases, and backward compatibility is not always guaranteed. Please use the same version of the package that was used to create the file to read it back in.
+
+## Filtering the solutions further
+
+Occasionally, it might be necessary to filter the solution set further to reduce the number of modes retained in the spectrum. This may be done through the function `filter_eigenvalues`. As an example,
+```julia
+julia> Feig_filt = filter_eigenvalues(Feig, filterflags = Filters.SPATIAL, n_cutoff = 5);
+```
+
+For a full list of flags that may be passed to `filterflags`, check [`Filters`](@ref). For the filter parameters that may be passed as keyword arguments, check the keys of [`RossbyWaveSpectrum.DefaultFilterParams`](@ref). This also lists the default values that are used when computing the solutions.
 
 # Plotting the results
 
@@ -140,14 +158,7 @@ julia> import Pkg
 julia> Pkg.pkg"activate RossbyPlots"
 ```
 
-The plotting functions use `matplotlib`, which must be available on the system, and accessible to `PyPlot`. One may need to set
-```julia
-ENV["PYTHON"] = "... path of the python executable ..."
-import Pkg
-Pkg.build("PyCall")
-```
-if matplotlib is provided by a local anaconda distribution that differs from the system-provided python. A relatively recent version of matplotlib may be required for some of the more plotting functions that use subfigures.
-The plots shown here were generated using matplotlib version 3.4.3.
+The plotting functions use `matplotlib`, which must be available on the system, and accessible to `PyPlot`. The plots shown here were generated using matplotlib version 3.4.3. See the [installation](#Installation) section on instructions to set this up if necessary.
 
 We may plot the spectrum as
 ```julia
