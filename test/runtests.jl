@@ -932,6 +932,17 @@ end
         Sv1 = StructArray{ComplexF64}((real(v1), imag(v1)))
         @test RossbyWaveSpectrum.eigensystem_satisfy_filter(λ[1], Sv1, (SA, B))
     end
+    @testset "eigvec_spectrum_filter" begin
+        nr, nℓ = 10, 4
+        operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
+        v = zeros(ComplexF64,3*nr*nℓ)
+        v[1] = 1+im
+        m = 1
+        @test RossbyWaveSpectrum.eigvec_spectrum_filter(v, m; operators, n_cutoff = 2)
+        v .= 0
+        v[3] = 1+im
+        @test !RossbyWaveSpectrum.eigvec_spectrum_filter(v, m; operators, n_cutoff = 1)
+    end
 end
 
 @testset "wrap and unwrap structarrays" begin

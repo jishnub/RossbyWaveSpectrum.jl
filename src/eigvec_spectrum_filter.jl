@@ -28,20 +28,20 @@ function eigvec_spectrum_filter!(F, v, m;
 
         flag || break
 
-        real_lown_pow_ratio = sum(abs2∘real, X[(n_cutoff÷2+1):n_cutoff, 1:Δl_inds])/sum(abs2∘real, X[1:n_cutoff÷2, 1:Δl_inds])
-        real_lown_flag = real_lown_pow_ratio <= low_n_power_lowercutoff
+        real_low_n_pow_ratio = sum(abs2∘real, X[(n_cutoff÷2+1):n_cutoff, 1:Δl_inds])/sum(abs2∘real, X[1:n_cutoff÷2, 1:Δl_inds])
+        real_low_n_flag = real_low_n_pow_ratio <= low_n_power_lowercutoff
 
-        @debug "$f real_lown_flag $real_lown_flag"
+        @debug "$f real_low_n_flag $real_low_n_flag"
 
-        flag &= real_lown_flag
+        flag &= real_low_n_flag
         flag || break
 
-        imag_lown_pow_ratio = sum(abs2∘imag, X[(n_cutoff÷2+1):n_cutoff, 1:Δl_inds])/sum(abs2∘imag, X[1:n_cutoff÷2, 1:Δl_inds])
-        imag_lown_flag = imag_lown_pow_ratio <= low_n_power_lowercutoff
+        imag_low_n_pow_ratio = sum(abs2∘imag, X[(n_cutoff÷2+1):n_cutoff, 1:Δl_inds])/sum(abs2∘imag, X[1:n_cutoff÷2, 1:Δl_inds])
+        imag_low_n_flag = imag_low_n_pow_ratio <= low_n_power_lowercutoff
 
-        @debug "$f imag_lown_flag $imag_lown_flag"
+        @debug "$f imag_low_n_flag $imag_low_n_flag"
 
-        flag &= imag_lown_flag
+        flag &= imag_low_n_flag
         flag || break
     end
 
