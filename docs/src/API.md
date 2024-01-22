@@ -69,11 +69,3 @@ RossbyWaveSpectrum.colatitude_grid
 RossbyWaveSpectrum.allocate_MVcache
 RossbyWaveSpectrum.allocate_BCcache
 ```
-
-## Plotting functions
-
-```@docs
-RossbyPlots.spectrum
-RossbyPlots.eigenfunction
-RossbyPlots.eigenfunctions_allstreamfn
-```
