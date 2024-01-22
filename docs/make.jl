@@ -1,11 +1,12 @@
 using Documenter
 using RossbyWaveSpectrum
+using RossbyPlots
 
 DocMeta.setdocmeta!(RossbyWaveSpectrum, :DocTestSetup, :(using RossbyWaveSpectrum); recursive=true)
 
 makedocs(
     sitename = "RossbyWaveSpectrum",
-    modules = [RossbyWaveSpectrum],
+    modules = [RossbyWaveSpectrum, RossbyPlots],
     authors = "Jishnu Bhattacharya",
     warnonly = :missing_docs,
     pages = [

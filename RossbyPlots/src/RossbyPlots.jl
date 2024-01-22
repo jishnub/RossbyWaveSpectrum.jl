@@ -349,9 +349,64 @@ function spectrum_axeslabel(; ax, subtract_sectoral)
     ax.set_xlabel("Azimuthal order m", fontsize = 12)
     ax.set_ylabel(L"\Re[\nu]" * (subtract_sectoral ? L"\,+\,\frac{2(Ω_0\,/2\pi)}{m+1}" : "") * " [nHz]", fontsize = 12)
 end
+"""
+    spectrum(lams::AbstractVector, mr;
+        operators,
+        V_symmetric,
+        rotation_profile,
+        f = figure(),
+        ax = subplot(),
+        subtract_sectoral::Bool = false,
+        rossbyridges::Bool = !subtract_sectoral,
+        scale_freq = true,
+        vecs = nothing,
+        nodes_cutoff = nothing,
+        Δl_filter = nothing,
+        ylim = nothing,
+        zoom = V_symmetric && rotation_profile == :uniform,
+        m_zoom = mr[max(begin, end - 6):end],
+        encircle_m = nothing,
+        rectpatchcoords = nothing,
+        save = false,
+        kw...)
 
-function spectrum(lams::AbstractArray, mr;
+Plot the spectrum specified by the vector `lams` corresponding to the
+azimuthal orders `mr`, where `lams[i]` contains the eigenvalues corresponding
+to `mr[i]`.
+
+Clicking on a mode in the plot will print out the frequency of the mode.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref)
+* `V_symmetric`: the parity that was used to compute the spectrum.
+* `rotation_profile`: the rotation profile that was used to compute the spectrum.
+* `f`: the figure in which the plot is generated. By default, a new figure is created.
+* `ax`: the axis in which the plot is generated. By default, a new axis is added.
+* `subtract_sectoral`: whether to subtract the sectoral differential relation frequencies from
+    the eigenvalues, and plot the frequency differences instead
+* `rossbyridges`: whether to highlight the sectoral dispersion relation
+* `scale_freq`: whether to scale the plotted eigenvalues by the tracking rate ``Ω_0``.
+    If `scale_freq == false`, the raw negated eigenvalues ``-ℜ[ω]/Ω_0`` are plotted, whereas 
+    with `scale_freq == true`, the frequencies ``-ℜ[ω]/2π`` are plotted.
+* `vecs`: eigenvectors corresponding to the eigenvalues `lams`,
+    which may be passed if further filtering is desired.
+* `nodes_cutoff`: if set to an integer, only modes with fewer radial nodes are plotted.
+    By default, this is set to `nothing`, in which case no filtering is applied.
+* `Δl_filter`: if set to an integer, only modes with substantial power at `m + Δl_filter`
+    are plotted for each `m in mr`.
+* `ylim`: The limits to be applied to the `y`-axis of the plot, in data coordinates
+* `zoom`: whether to plot an inset zooming in to certain modes near the sectoral dispersion relation.
+* `m_zoom`: the m-range to zoom into, only used if `zoom == true`.
+* `encircle_m`: if set to a number, certain modes for that `m` are encircled.
+    By default, this is set to `nothing`, in which case no mode is encircled.
+* `rectpatchcoords`: coordinates around which a rectangular patch is added.
+    Only used if `!isnothing(encircle_m)`.
+* `save`: if `true`, save the plot to a file. This is set to `false` by default.
+"""
+function spectrum(lams::AbstractVector, mr;
     operators,
+    V_symmetric,
+    rotation_profile,
     f = figure(),
     ax = subplot(),
     m_zoom = mr[max(begin, end - 6):end],
@@ -365,6 +420,7 @@ function spectrum(lams::AbstractArray, mr;
     ylim = nothing,
     encircle_m = nothing,
     rectpatchcoords = nothing,
+    save = false,
     kw...)
 
     spectrum_axeslabel(; ax, subtract_sectoral)
@@ -372,8 +428,6 @@ function spectrum(lams::AbstractArray, mr;
     ax.xaxis.set_major_locator(ticker.MaxNLocator(5, integer = true))
 
     @unpack Ω0 = operators.constants
-
-    V_symmetric = kw[:V_symmetric]
 
     νnHzunit = scale_freq ? freqnHzunit(Ω0)  #= around 453 =# : 1.0
     ylim2 = isnothing(ylim) ? (-400, 300) : ylim
@@ -440,7 +494,7 @@ function spectrum(lams::AbstractArray, mr;
         rossby_ridge_lines(mr; νnHzunit, ax, kw...)
     end
 
-    diffrot = kw[:rotation_profile] != :uniform
+    diffrot = rotation_profile != :uniform
     zoom = V_symmetric && get(kw, :zoom, !diffrot)
 
     if zoom
@@ -540,8 +594,7 @@ function spectrum(lams::AbstractArray, mr;
 
     cid = f.canvas.mpl_connect("pick_event", onpick)
 
-    if get(kw, :save, false)
-        V_symmetric = kw[:V_symmetric]
+    if save
         V_symmetric_str = V_symmetric ? "sym" : "asym"
         filenametag = get(kw, :filenametag, V_symmetric_str)
         rotation = get(kw, :rotation_profile, "uniform")
@@ -909,8 +962,25 @@ for f in [:spectrum, :damping_highfreqridge, :damping_rossbyridge,
         :high_frequency_ridge_data, :rossby_ridge_data,
         :rossbyridge_mode_indices, :rossbyridge_mode_frequencies,
         :HFR_mode_frequencies, :HFR_mode_indices]
-    @eval function $f(Feig::FilteredEigen; kw...)
-        $f(Feig.lams, Feig.mr; Feig.operators, vecs = Feig.vs, Feig.kw..., kw...)
+    if f == :spectrum
+        @eval begin
+            """
+                $($f)(Feig::FilteredEigen; kw...)
+
+            Convenience method to call `$($f)` with the solutions in `Feig`,
+            using the parameters that were used to compute the solutions.
+            Additional keyword arguments may be passed to override the default ones.
+            """
+            function $f(Feig::FilteredEigen; kw...)
+                $f(Feig.lams, Feig.mr; Feig.operators, vecs = Feig.vs, Feig.kw..., kw...)
+            end
+        end
+    else
+        @eval begin
+            function $f(Feig::FilteredEigen; kw...)
+                $f(Feig.lams, Feig.mr; Feig.operators, vecs = Feig.vs, Feig.kw..., kw...)
+            end
+        end
     end
 end
 
@@ -1410,10 +1480,18 @@ function differential_rotation_spectrum(fconstsym::FilteredEigen,
 end
 
 function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
-        operators, field = :V, f = figure(), component = real,
+        operators,
+        field = :V,
+        f = figure(),
+        component = real,
+        polar::Bool = false,
+        crossections::Bool = !polar,
         angular_profile = :surface,
         radial_profile = :equator,
-        λ = nothing,
+        cmap = "Greys",
+        ω_over_Ω0 = nothing,
+        scale_freq = true,
+        save = false,
         kw...)
 
     V = getproperty(VWSinv, field)::Matrix{ComplexF64}
@@ -1437,11 +1515,6 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
     end
     V_peak_depthprofile = @view Vr[:, ind_max]
     r_out_ind = argmin(abs.(rpts .- r_out))
-
-    cmap = get(kw, :cmap, "Greys")
-
-    polar = get(kw, :polar, false)
-    crossections = get(kw, :crossections, !polar)
 
     if !polar && crossections
         spec = f.add_gridspec(3, 3)
@@ -1536,7 +1609,7 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
             axprofile.set_title("$fieldname streamfunction m = $m")
         elseif get(kw, :title_eigval, false)
             @unpack Ω0 = operators.constants
-            νnHzunit = get(kw, :scale_freq, true) ? freqnHzunit(Ω0)  #= around 453 =# : 1.0
+            νnHzunit = scale_freq ? freqnHzunit(Ω0)  #= around 453 =# : 1.0
             title = ""
             if get(kw, :titlem, false)
                 title *= "m = $m"
@@ -1545,7 +1618,7 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
                 if !isempty(title)
                     title *= ", "
                 end
-                title *= L"\Re[\nu]" * " = " * string(round(-real(λ)*νnHzunit, sigdigits=3)) * " nHz"
+                title *= L"\Re[\nu]" * " = " * string(round(-real(ω_over_Ω0)*νnHzunit, sigdigits=3)) * " nHz"
             end
             axprofile.set_title(title)
         end
@@ -1554,19 +1627,60 @@ function eigenfunction(VWSinv::NamedTuple, θ::AbstractVector, m;
     if !get(kw, :constrained_layout, false)
         f.tight_layout()
     end
-    if get(kw, :save, false)
+    if save
         filename = "eigenfunction.$(ext[])"
         savefiginfo(f, filename)
     end
     f, axlist
 end
 
+"""
+    eigenfunction(Feig::FilteredEigen, m::Integer, ind::Integer; kw...)
+
+Plot the eigenfunctions corresponding to the spectral coefficients `v = Feig[m][ind][2]`.
+Additional keyword arguments are passed on to the inner `eigenfunction(v, m; kw...)` call.
+"""
 function eigenfunction(Feig::FilteredEigen, m::Integer, ind::Integer; kw...)
     @unpack operators = Feig
     λ, v = Feig[m][ind]
     eigenfunction(v, m; operators, λ, Feig.kw..., kw...)
 end
 
+"""
+    eigenfunction(v::AbstractVector{<:Number}, m::Integer;
+        operators,
+        V_symmetric,
+        field::Symbol = :V,
+        f = figure(),
+        component = real,
+        polar::Bool = false,
+        crossections::Bool = !polar,
+        angular_profile::Symbol = :surface,
+        radial_profile::Symbol = :equator,
+        cmap = "Greys",
+        save = false,
+        kw...)
+
+Plot one component of the real-space eigenfunction, given its spectral coefficients
+`v` and its azimuthal order `m`.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref).
+* `V_symmetric`: the parity that was used to compute the eigenfunction.
+* `field`: which of `V`, `W` or `S` to plot.
+* `f`: the figure in which the plot is generated. By default, a new figure is created.
+* `component`: set to `real` to plot the real part of the field, or to `imag` to plot the
+    imaginary part.
+* `polar`: set to true to plot a polar projection of the eigenfunction.
+* `crossections`: whether to plot the radial and angular cross-sections, only used if `polar == false`.
+* `angular_profile`: if `crossections == true`, sets the radius at which the angular cross-section is
+    obtained which is to be plotted. Possible options are `:surface` or `:max`.
+* `radial_profile`: if `crossections == true`, sets the colatitude at which the radial cross-section is
+    obtained which is to be plotted. Possible options are `:equator` or `:max`.
+* `cmap`: the colormap used to plot the 2D profile of the eigenfunction. Any matplotlib-compatible
+    colormap may be provided.
+* `save`: if `true`, save the plot to a file. This is set to `false` by default.
+"""
 function eigenfunction(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
     VWSinv = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
     θ = RossbyWaveSpectrum.colatitude_grid(m, operators)
@@ -1625,6 +1739,13 @@ function eigenfunctions_ridge(Feig::FilteredEigen, ms, ridge=:ridge2; kw...)
     eigenfunctions(Feig, ms, inds; filenametag = "_$ridge", kw...)
 end
 
+"""
+    eigenfunctions_allstreamfn(Feig::FilteredEigen, m::Integer, vind::Integer; kw...)
+
+Plot both the real and imaginary components of all the fields `V`, `W` and `S` in one figure,
+where `v = Feig[m][ind][2]` contains their spectral coefficients.
+Additional keyword arguments are passed on to [`eigenfunction`](@ref).
+"""
 function eigenfunctions_allstreamfn(Feig::FilteredEigen, m::Integer, vind::Integer; kw...)
     VWSinv = RossbyWaveSpectrum.eigenfunction_realspace(Feig, m, vind; kw...)
     if get(kw, :scale_eigenvectors, false)
@@ -1633,6 +1754,13 @@ function eigenfunctions_allstreamfn(Feig::FilteredEigen, m::Integer, vind::Integ
     θ = RossbyWaveSpectrum.colatitude_grid(m, Feig.operators)
     eigenfunctions_allstreamfn(VWSinv, θ, m; Feig.operators, Feig.kw..., kw...)
 end
+"""
+    eigenfunctions_allstreamfn(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
+
+Plot both the real and imaginary components of all the fields `V`, `W` and `S` in one figure,
+where `v` contains their spectral coefficients.
+Additional keyword arguments are passed on to [`eigenfunction`](@ref).
+"""
 function eigenfunctions_allstreamfn(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
     VWSinv = RossbyWaveSpectrum.eigenfunction_realspace(v, m; operators, kw...)
     if get(kw, :scale_eigenvectors, false)

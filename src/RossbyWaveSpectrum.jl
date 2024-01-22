@@ -2154,7 +2154,7 @@ end
 
 """
     differential_rotation_spectrum(m::Integer; operators,
-        V_symmetric::Bool, rotation_profile::Symbol)
+        V_symmetric::Bool, rotation_profile::Symbol, kw...)
 
 Compute the inertial-mode spectrum for the specified azimuthal order `m`, assuming that the Sun is
 rotating with a solar-like rotation profile (the exact model may be specified using `rotation_profile`), and it
@@ -2175,6 +2175,8 @@ and `B` is computed by calling [`mass_matrix!`](@ref).
     whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
 * `rotation_profile`: label to select the rotation profile used to compute the spectrum.
     See [`solar_differential_rotation_profile_derivatives_grid`](@ref) for the list of possible options.
+
+Additional keyword arguments are forwarded to [`differential_rotation_spectrum!`](@ref).
 """
 function differential_rotation_spectrum(m::Integer; operators, rotation_profile, kw...)
     (; nℓ) = operators.radial_params
@@ -2185,7 +2187,7 @@ end
 
 """
     differential_rotation_spectrum!((A, B), m::Integer; operators,
-        V_symmetric::Bool, rotation_profile::Symbol)
+        V_symmetric::Bool, rotation_profile::Symbol, kw...)
 
 Compute the inertial-mode spectrum for the specified azimuthal order `m`, assuming that the Sun is
 rotating with a solar-like rotation profile (the exact model may be specified using `rotation_profile`), and it
