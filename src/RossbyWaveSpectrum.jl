@@ -291,11 +291,15 @@ end
     constraintmatrix(operators)
 
 Return a collection containing the spectral representation of the boundary condition
-operator `BC`, and a basis `ZC` whose columns lie in its null-space.
+operator `BC`, and a basis `ZC` whose columns lie in its null-space. The `operators`
+may be obtained using [`radial_operators`](@ref).
 
-The constraint satisfied by the eigenfunctions may be expressed as ``Cv=0``. Given a matrix ``Z``
-that satisfies ``CZ=0``, we may express the eigenfunction as ``v=Zw`` for an arbitrary ``w``.
+The constraint satisfied by the eigenfunctions may be expressed as ``C\\mathbf{v}=0``.
+Given a matrix ``Z`` that satisfies ``CZ=0``, we may express the eigenfunction as
+``\\mathbf{v}=Z\\mathbf{w}`` for an arbitrary ``\\mathbf{w}``.
 This function uses the variable names `BC` for ``C`` and `ZC` for ``Z``.
+
+The matrices may be destructured as `(; BC, ZC) = RossbyWaveSpectrum.constraintmatrix(operators)`.
 """
 function constraintmatrix(operators, ::Val{extramatrices} = Val(false)) where {extramatrices}
     @unpack radial_params = operators;
@@ -2207,14 +2211,38 @@ end
 
 rossby_ridge(m; ΔΩ_frac = 0) = 2 / (m + 1) * (1 + ΔΩ_frac) - m * ΔΩ_frac
 
-function eigenvalue_filter(λ, m;
+"""
+    eigenvalue_filter(ω_over_Ω0, m;
+        eig_imag_unstable_cutoff = RossbyWaveSpectrum.DefaultFilterParams[:eig_imag_unstable_cutoff],
+        eig_imag_to_real_ratio_cutoff = RossbyWaveSpectrum.DefaultFilterParams[:eig_imag_to_real_ratio_cutoff],
+        eig_imag_stable_cutoff = RossbyWaveSpectrum.DefaultFilterParams[:eig_imag_stable_cutoff])
+
+Return if the eigenvalue `ω_over_Ω0` represents a damped eigenfunction.
+
+# Keyword arguments
+* `eig_imag_unstable_cutoff`: lower cutoff below which modes are considered growing. This is slightly less than
+    zero to account for numerical errors.
+* `eig_imag_to_real_ratio_cutoff`: cutoff ratio of linewidth to central frequency to filter out strongly damped modes.
+* `eig_imag_stable_cutoff`: absolute cutoff on linewidth to filter out strongly damped modes.
+"""
+function eigenvalue_filter(ω_over_Ω0, m;
     eig_imag_unstable_cutoff = DefaultFilterParams[:eig_imag_unstable_cutoff],
     eig_imag_to_real_ratio_cutoff = DefaultFilterParams[:eig_imag_to_real_ratio_cutoff],
     eig_imag_stable_cutoff = DefaultFilterParams[:eig_imag_stable_cutoff])
 
     freq_sectoral = 2 / (m + 1)
-    eig_imag_unstable_cutoff <= imag(λ) < min(freq_sectoral * eig_imag_to_real_ratio_cutoff, eig_imag_stable_cutoff)
+    eig_imag_unstable_cutoff <= imag(ω_over_Ω0) < min(freq_sectoral * eig_imag_to_real_ratio_cutoff, 
+                                                        eig_imag_stable_cutoff)
 end
+"""
+    boundary_condition_filter(v::StructVector{<:Complex},
+        BC::AbstractMatrix{<:Real},
+        BCVcache::StructVector{<:Complex} = RossbyWaveSpectrum.allocate_BCcache(size(BC,1)),
+        atol = 1e-5)
+
+Return if the eigenfunction with spectral coefficients `v` satisfies the boundary conditions within the
+absoute tolerance `atol`. The boundary-condition matrix `BC` may be obtained from [`constraintmatrix`](@ref).
+"""
 function boundary_condition_filter(v::StructVector{<:Complex}, BC::AbstractMatrix{<:Real},
         BCVcache::StructVector{<:Complex} = allocate_BCcache(size(BC,1)), atol = 1e-5)
     mul!(BCVcache.re, BC, v.re)

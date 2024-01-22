@@ -33,6 +33,8 @@ Modules = [RossbyWaveSpectrum.Filters]
 RossbyWaveSpectrum.eigensystem_satisfy_filter
 RossbyWaveSpectrum.eigvec_spectrum_filter
 RossbyWaveSpectrum.spatial_filter
+RossbyWaveSpectrum.eigenvalue_filter
+RossbyWaveSpectrum.boundary_condition_filter
 ```
 
 ## Validation
