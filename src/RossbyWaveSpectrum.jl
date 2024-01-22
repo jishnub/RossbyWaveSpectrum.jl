@@ -2481,7 +2481,7 @@ module Filters
     """
         Filters.BC
 
-    Filter for eigenfunctions that satify the boundary conditions ``Cv = 0``.
+    Filter for eigenfunctions that satify the boundary conditions ``C\\mathbf{v} = 0``.
     Typically, all solutions should satisfy this condition,
     as this is imposed when solving the eigenvalue problem.
     """
