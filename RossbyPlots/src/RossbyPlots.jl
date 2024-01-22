@@ -1635,7 +1635,7 @@ function eigenfunctions_allstreamfn(Feig::FilteredEigen, m::Integer, vind::Integ
     if get(kw, :scale_eigenvectors, false)
         RossbyWaveSpectrum.scale_eigenvectors!(VWSinv; Feig.operators)
     end
-    θ = RossbyWaveSpectrum.colatitude_grid(m, operators)
+    θ = RossbyWaveSpectrum.colatitude_grid(m, Feig.operators)
     eigenfunctions_allstreamfn(VWSinv, θ, m; Feig.operators, Feig.kw..., kw...)
 end
 function eigenfunctions_allstreamfn(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
