@@ -1148,7 +1148,7 @@ end
 
 Compute the Chebyshev-Ultraspherical decomposition of the rotation profile specified by `rotation_profile`,
 which typically is a smoothed version of the solar rotation profile. The keyword arguments `kw`
-are passed on to `solar_differential_rotation_profile_derivatives_grid`.
+are passed on to [`solar_differential_rotation_profile_derivatives_grid`](@ref).
 
 Returns a collection `(; ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ)`, where the first term is the spectral approximation to the
 profile of differential rotation, and the subsequent terms are radial and `z`-derivatives.
@@ -1160,7 +1160,7 @@ profile of differential rotation, and the subsequent terms are radial and `z`-de
 * `ΔΩ_smoothing_param`: the extent of smoothing applied to the rotation profile before performing the spectral
     transform. Typically, this should be small to match the original profile closely, with the tradeoff
     being in the number of spectral coefficients that are necessary to represent the model.
-* `kw`: Optional keyword arguments that are passed on to `solar_differential_rotation_profile_derivatives_grid`
+* `kw`: Optional keyword arguments that are passed on to [`solar_differential_rotation_profile_derivatives_grid`](@ref).
 """
 function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     @unpack rpts, radialspaces = operators;
