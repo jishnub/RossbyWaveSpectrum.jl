@@ -2437,6 +2437,7 @@ The individual filters may be combined using `|`, e.g. to include the `Filters.E
 """
 module Filters
     using BitFlags
+    import ..RossbyWaveSpectrum
     export DefaultFilter
     @bitflag FilterFlag::UInt16 begin
         NONE=0
@@ -2458,7 +2459,8 @@ module Filters
     """
         Filters.EIGEN
 
-    Filter for solutions `(ω, v)` that satisfy the eigenvalue problem ``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}``
+    Filter for solutions `(ω, v)` that satisfy the eigenvalue problem ``A\\mathbf{v}=(\\omega/\\Omega_0)B\\mathbf{v}``.
+    See [`RossbyWaveSpectrum.DefaultFilterParams`](@ref) for the parameters associated with this filter.
     """
     EIGEN
 
@@ -2467,6 +2469,7 @@ module Filters
 
     Filter for solutions that satisfy constraints on the eigenvalue,
     e.g. pick out damped solutions and ignore growing ones.
+    See [`RossbyWaveSpectrum.DefaultFilterParams`](@ref) for the parameters associated with this filter.
     """
     EIGVAL
 
@@ -2474,7 +2477,8 @@ module Filters
         Filters.EIGVAL
 
     Filter for smooth eigenfunctions, by applying spectral cutoffs in the Chebyshev order `n` as well as
-    the spherical-harmonic degree `ℓ`
+    the spherical-harmonic degree `ℓ`.
+    See [`RossbyWaveSpectrum.DefaultFilterParams`](@ref) for the parameters associated with this filter.
     """
     EIGVEC
 
@@ -2484,6 +2488,7 @@ module Filters
     Filter for eigenfunctions that satify the boundary conditions ``C\\mathbf{v} = 0``.
     Typically, all solutions should satisfy this condition,
     as this is imposed when solving the eigenvalue problem.
+    See [`RossbyWaveSpectrum.DefaultFilterParams`](@ref) for the parameters associated with this filter.
     """
     BC
 
@@ -2491,6 +2496,7 @@ module Filters
         Filters.SPATIAL_EQUATOR
 
     Filter for eigenfunctions that latitudinally peak about the solar equator.
+        See [`RossbyWaveSpectrum.DefaultFilterParams`](@ref) for the parameters associated with this filter.
     """
     SPATIAL_EQUATOR
 
@@ -2499,6 +2505,7 @@ module Filters
 
     Filter for eigenfunctions where the power is not concentrated very close to the top and the bottom
     boundaries of the domain.
+    See [`RossbyWaveSpectrum.DefaultFilterParams`](@ref) for the parameters associated with this filter.
     """
     SPATIAL_RADIAL
 
@@ -2507,6 +2514,7 @@ module Filters
 
     Filter for eigenfunctions that have fewer than a specified number of radial nodes. A heuristic
     criteria is applied to ignore zero-crossings due to numerical or resolution limitations.
+    See [`RossbyWaveSpectrum.DefaultFilterParams`](@ref) for the parameters associated with this filter.
     """
     NODES
 
