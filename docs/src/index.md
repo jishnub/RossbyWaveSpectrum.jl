@@ -157,6 +157,14 @@ julia> import Pkg
 
 julia> Pkg.pkg"activate RossbyPlots"
 ```
+Alternately, one may press the `]` key from the julia REPL to enter the interactive `Pkg` mode, and execute
+```julia
+(RossbyWaveSpectrum) pkg> activate RossbyPlots
+  Activating project at [...]
+
+(RossbyPlots) pkg>
+```
+and finally press the backspace key to get back to the REPL prompt.
 
 The plotting functions use `matplotlib`, which must be available on the system, and accessible to `PyPlot`. The plots shown here were generated using matplotlib version 3.4.3. See the [installation](#Installation) section on instructions to set this up if necessary.
 
