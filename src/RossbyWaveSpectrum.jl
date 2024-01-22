@@ -216,7 +216,8 @@ solutions that are sought and the function that is to be used to generate the ma
 
 A `RotMatrix` `R` may be called with arguments as `R(args...; kwargs....)`. 
 If `R` was created using `Val(:matrix)`, this will return the matrix
-representation of the operator `A` that features in the eigenvalue problem ``Av=(ω/Ω_0)Bv``.
+representation of the operator `A` that features in the eigenvalue problem
+``A\\mathbf{v}=(ω/Ω_0)B\\mathbf{v}``.
 These matrices are computed using the rotation profile that `R` is constructed with.
 On the other hand, if `R` was created using `Val(:spectrum)` as the first argument,
 this will return the filtered spectrum and eigenvectors.
