@@ -549,7 +549,7 @@ function spectrum(lams::AbstractArray, mr;
         V_symmetric = kw[:V_symmetric]
         V_symmetric_str = V_symmetric ? "sym" : "asym"
         filenametag = get(kw, :filenametag, V_symmetric_str)
-        rotation = get(kw, :rotation, "uniform")
+        rotation = get(kw, :rotation_profile, "uniform")
         filename = "$(rotation)_rotation_spectrum_$(filenametag).$(ext[])"
         savefiginfo(f, filename)
     end
