@@ -1,3 +1,31 @@
+"""
+    filterfn(λ::Number,
+        v::AbstractVector{<:Number},
+        m::Integer,
+        (A,B);
+        operators,
+        V_symmetric,
+        constraints = RossbyWaveSpectrum.constraintmatrix(operators),
+        filtercache = RossbyWaveSpectrum.allocate_filter_caches(m; operators, constraints),
+        filterflags = RossbyWaveSpectrum.DefaultFilter,
+        filterparams...)
+
+Return whether one eigenvalue and eigenvector pair `(λ, v)` for the azimuthal order `m`
+satisfy the chosen filters. The matrices `(A,B)` represent the pencil.
+
+# Keyword arguments
+* `operators`: obtained as the output of [`radial_operators`](@ref).
+* `V_symmetric`: set to `true` or `false` depending on
+    whether the stream function `V` is latitudinally symmetric or antisymmtric about the equator.
+* `constraints`: boundary condition constraints on the spectral coefficients, optional.
+* `filtercache`: pre-allocated workspace used in the filtering process, optional.
+* `filterflags`: the flags that specify which filters are used, optional.
+    See [`Filters`](@ref) for a list of possible flags.
+* `filterparams`: additional filter parameters to override the default ones
+    from [`RossbyWaveSpectrum.DefaultFilterParams`](@ref).
+    The parameters specified in `filterparams` will override the default values,
+    and the ones left unspecified will be set to the default values.
+"""
 function filterfn(λ::Number, v::AbstractVector{<:Number}, m::Integer, M;
         operators,
         V_symmetric::Bool,

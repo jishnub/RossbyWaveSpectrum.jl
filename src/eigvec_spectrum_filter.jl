@@ -48,12 +48,31 @@ function eigvec_spectrum_filter!(F, v, m;
     return flag
 end
 
-function eigvec_spectrum_filter(v, m; operators, kw...)
+"""
+    eigvec_spectrum_filter(v::AbstractVector{<:Number}, m::Integer;
+        operators,
+        n_cutoff = RossbyWaveSpectrum.DefaultFilterParams[:n_cutoff],
+        Δl_cutoff = RossbyWaveSpectrum.DefaultFilterParams[:Δl_cutoff],
+        eigvec_spectrum_power_cutoff = RossbyWaveSpectrum.DefaultFilterParams[:eigvec_spectrum_power_cutoff],
+        filterfieldpowercutoff = RossbyWaveSpectrum.DefaultFilterParams[:filterfieldpowercutoff],
+        low_n_power_lowercutoff = RossbyWaveSpectrum.DefaultFilterParams[:eigvec_spectrum_low_n_power_fraction_cutoff],
+        kw...)
+
+Return if the eigenvector `v` is smooth enough, according to the specified criteria.
+"""
+function eigvec_spectrum_filter(v::AbstractVector{<:Number}, m::Integer; operators, kw...)
     @unpack nr, nℓ = operators.radial_params
     F = allocate_field_vectors(nr, nℓ)
     eigvec_spectrum_filter!(F, v, m; operators, kw...)
 end
 
+"""
+    eigvec_spectrum_filter(Feig::FilteredEigen, m::Integer, ind::Integer; kw...)
+
+Return if the eigenvector `ind`-th eigenvector of `Feig[m]` is smooth enough, according to the specified criteria.
+By default, the filter parameters are taken to be identical to those used to compute the solutions in `Feig`,
+but each of these parameters may be overridden.
+"""
 function eigvec_spectrum_filter(Feig::FilteredEigen, m, ind; kw...)
     @unpack nr, nℓ = Feig.operators.radial_params
     F = allocate_field_vectors(nr, nℓ)
