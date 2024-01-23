@@ -11,12 +11,14 @@ on:
     paths-ignore:
       - 'LICENSE'
       - 'README.md'
+      - 'CITATION.bib'
       - '.github/workflows/TagBot.yml'
     tags: '*'
   pull_request:
     paths-ignore:
       - 'LICENSE'
       - 'README.md'
+      - 'CITATION.bib'
       - '.github/workflows/TagBot.yml'
 jobs:
   test:

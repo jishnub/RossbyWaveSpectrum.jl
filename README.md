@@ -1,9 +1,10 @@
 [![CI](https://github.com/jishnub/RossbyWaveSpectrum.jl/actions/workflows/ci.yml/badge.svg)](https://github.com/jishnub/RossbyWaveSpectrum.jl/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/jishnub/RossbyWaveSpectrum.jl/graph/badge.svg?token=ohT5BvJaf8)](https://codecov.io/gh/jishnub/RossbyWaveSpectrum.jl)
 [![](https://img.shields.io/badge/docs-dev-blue.svg)](https://jishnub.github.io/RossbyWaveSpectrum.jl/dev)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10091582.svg)](https://doi.org/10.5281/zenodo.10091582)
 
 # RossbyWaveSpectrum.jl
-Julia code to compute the spectrum of solar intertial waves
+A Julia code to compute the spectrum of solar inertial waves, including realistic solar-like differential rotation.
 
 # Documentation
 [Click here](https://jishnub.github.io/RossbyWaveSpectrum.jl/dev) for the documentation.
@@ -27,3 +28,6 @@ if e.g. the login node has `skylake-avx512` and the compute node has `icelake-se
 # Quick start
 Check `compute_rossby_spectrum.jl` for the steps to run the code. This is typically run on an HPC cluster, although it may be run equally well on a laptop or a standalone computer. Sample jobscript files for a Slurm cluster (`jobscript.slurm`) and a PBS cluster (`jobscript.qsub`) are provided.
 
+# Citing this project
+If you find this code useful in your research, we request you to cite this code, and the associated papers.
+Please see the entries in `CITATION.bib` for details.
