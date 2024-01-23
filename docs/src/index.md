@@ -193,3 +193,5 @@ This produces the following plot:
 ![eigvec](./assets/eigenvector.png)
 
 By default, this plots the real part of `V`, but the field and component to be plotted may be specified through parameters to `eigenfunction`. Alternately, all the components of all the fields may be plotted using `eigenfunctions_allstreamfn`.
+
+Help on the plotting functions is available in the REPL, which may be accessed through the `?` key. So e.g. `?spectrum` will display a detailed list of parameters that may be passed to `spectrum`.
