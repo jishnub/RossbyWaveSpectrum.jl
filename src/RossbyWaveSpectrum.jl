@@ -1005,34 +1005,34 @@ function radial_differential_rotation_profile_derivatives_grid(;
         ΔΩ_r = fill(ΔΩ_frac * Ω0, nr)
         ddrΔΩ_r = zero(ΔΩ_r)
         d2dr2ΔΩ_r = zero(ΔΩ_r)
-    elseif rotation_profile == :radial_core
-        pre = (Ω0*ΔΩ_frac)*5
-        σr = 0.08Rsun
-        r0 = 0.6Rsun
-        ΔΩ_r = @. pre * (1 - tanh((rpts - r0)/σr))
-        ddrΔΩ_r = @. pre * (-sech((rpts - r0)/σr)^2 * 1/σr)
-        d2dr2ΔΩ_r = @. pre * (2sech((rpts - r0)/σr)^2 * tanh((rpts - r0)/σr) * 1/σr^2)
-    elseif rotation_profile == :radial_solar_equator_core
-        ΔΩ_r_sun, = equatorial_radial_rotation_profile(; operators, kw...)
-        σr = 0.08Rsun
-        r0 = 0.6Rsun
-        ΔΩ_r_core = maximum(abs, ΔΩ_r_sun)/5 * @. (1 - tanh((rpts - r0)/σr))/2
-        r_cutoff = 0.4Rsun
-        Δr_cutoff = 0.1Rsun
-        r_in_inds = rpts .<= (r_cutoff-Δr_cutoff)
-        r_out_inds = rpts .>= (r_cutoff+Δr_cutoff)
-        r_in = rpts[r_in_inds]
-        r_out = rpts[r_out_inds]
-        perminds_in = sortperm(r_in)
-        perminds_out = sortperm(r_out)
-        r_new = [r_in[perminds_in]; r_out[perminds_out]]
-        ΔΩ_r_new = [ΔΩ_r_core[r_in_inds][perminds_in]; ΔΩ_r_sun[r_out_inds][perminds_out]]
-        ΔΩ_spl = smoothed_spline(r_new, ΔΩ_r_new; s = get(kw, :smoothing_param, 1e-4))
-        ΔΩ_r = ΔΩ_spl(rpts)
-        ddrΔΩ_r = derivative.((ΔΩ_spl,), rpts)
-        d2dr2ΔΩ_r = derivative.((ΔΩ_spl,), rpts, nu=2)
+    # elseif rotation_profile == :radial_core
+    #     pre = (Ω0*ΔΩ_frac)*5
+    #     σr = 0.08Rsun
+    #     r0 = 0.6Rsun
+    #     ΔΩ_r = @. pre * (1 - tanh((rpts - r0)/σr))
+    #     ddrΔΩ_r = @. pre * (-sech((rpts - r0)/σr)^2 * 1/σr)
+    #     d2dr2ΔΩ_r = @. pre * (2sech((rpts - r0)/σr)^2 * tanh((rpts - r0)/σr) * 1/σr^2)
+    # elseif rotation_profile == :radial_solar_equator_core
+    #     ΔΩ_r_sun, = equatorial_radial_rotation_profile(; operators, kw...)
+    #     σr = 0.08Rsun
+    #     r0 = 0.6Rsun
+    #     ΔΩ_r_core = maximum(abs, ΔΩ_r_sun)/5 * @. (1 - tanh((rpts - r0)/σr))/2
+    #     r_cutoff = 0.4Rsun
+    #     Δr_cutoff = 0.1Rsun
+    #     r_in_inds = rpts .<= (r_cutoff-Δr_cutoff)
+    #     r_out_inds = rpts .>= (r_cutoff+Δr_cutoff)
+    #     r_in = rpts[r_in_inds]
+    #     r_out = rpts[r_out_inds]
+    #     perminds_in = sortperm(r_in)
+    #     perminds_out = sortperm(r_out)
+    #     r_new = [r_in[perminds_in]; r_out[perminds_out]]
+    #     ΔΩ_r_new = [ΔΩ_r_core[r_in_inds][perminds_in]; ΔΩ_r_sun[r_out_inds][perminds_out]]
+    #     ΔΩ_spl = smoothed_spline(r_new, ΔΩ_r_new; s = get(kw, :smoothing_param, 1e-4))
+    #     ΔΩ_r = ΔΩ_spl(rpts)
+    #     ddrΔΩ_r = derivative.((ΔΩ_spl,), rpts)
+    #     d2dr2ΔΩ_r = derivative.((ΔΩ_spl,), rpts, nu=2)
     else
-        error("$(repr(rotation_profile)) is not a valid rotation model")
+        throw_unknown_rotation(rotation_profile)
     end
     ΔΩ_r .*= ΔΩ_scale/Ω0;
     ddrΔΩ_r .*= ΔΩ_scale/Ω0;
@@ -1132,7 +1132,7 @@ function solar_differential_rotation_profile_derivatives_grid(;
                 squished = rotation_profile == :solar_latrad_squished,
                 kw...)
     else
-        error("$(repr(rotation_profile)) is not a valid rotation model")
+        throw_unknown_rotation(rotation_profile)
     end
     for v in (ΔΩ, dr_ΔΩ, d2r_ΔΩ)
         v .*= ΔΩ_scale/Ω0
@@ -1679,6 +1679,12 @@ function Base.show(io::IO, O::OpVector)
     print(io, ")")
 end
 
+"""
+    solar_differential_rotation_profile_derivatives_Fun(Feig::FilteredEigen; kw...)
+
+Return the profile of background rotation that was used to compute the spectrum contained in `Feig`.
+Additional keyword arguments `kw` may be supplied to override the ones in `Feig`.
+"""
 function solar_differential_rotation_profile_derivatives_Fun(Feig::FilteredEigen; kw...)
     solar_differential_rotation_profile_derivatives_Fun(; Feig.operators, Feig.kw..., kw...)
 end
@@ -1753,6 +1759,13 @@ function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deri
     (; raw, coriolis)
 end
 
+"""
+    solar_differential_rotation_vorticity_Fun(Feig::FilteredEigen; kw...)
+
+Return the profile of vorticity associated with background rotation that was used
+to compute the spectrum contained in `Feig`.
+Additional keyword arguments in `kw` may be used to override the ones in `Feig`.
+"""
 function solar_differential_rotation_vorticity_Fun(Feig::FilteredEigen; kw...)
     ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(Feig; kw...)
     solar_differential_rotation_vorticity_Fun(; Feig.operators, ΔΩprofile_deriv)
@@ -1903,6 +1916,8 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
+throw_unknown_rotation(rotation_profile) = throw(ArgumentError("Invalid rotation profile $(repr(rotation_profile))"))
+
 function _differential_rotation_matrix!(M, m; rotation_profile, kw...)
     rstr = String(rotation_profile)
     if startswith(rstr, "radial")
@@ -1912,7 +1927,7 @@ function _differential_rotation_matrix!(M, m; rotation_profile, kw...)
     elseif Symbol(rotation_profile) == :constant
         constant_differential_rotation_terms!(M, m; kw...)
     else
-        throw(ArgumentError("Invalid rotation profile $(repr(rotation_profile))"))
+        throw_unknown_rotation(rotation_profile)
     end
     return M
 end

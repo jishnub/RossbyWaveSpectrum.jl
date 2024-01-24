@@ -716,10 +716,11 @@ end
                 Mc.re .= 0; Mc.im .= 0;
                 Ms.re .= 0; Ms.im .= 0;
                 @testset "solar constant and constant" begin
-                    RossbyWaveSpectrum.constant_differential_rotation_terms!(Mc, m;
-                        operators, ΔΩ_frac, V_symmetric);
-                    RossbyWaveSpectrum.solar_differential_rotation_terms!(Ms, m;
-                        operators, ΔΩprofile_deriv, ωΩ_deriv, V_symmetric);
+                    RossbyWaveSpectrum._differential_rotation_matrix!(Mc, m;
+                        operators, ΔΩ_frac, V_symmetric, rotation_profile=:constant);
+                    RossbyWaveSpectrum._differential_rotation_matrix!(Ms, m;
+                        operators, ΔΩprofile_deriv, ωΩ_deriv, V_symmetric,
+                        rotation_profile = :solar_constant);
 
                     @testset for colind in 1:3, rowind in 1:3
                         Sc = matrix_block(Ms, rowind, colind, nvariables)
@@ -790,6 +791,17 @@ end
         #     end
         # end
     end
+end
+
+@testset "differential rotation profiles error path" begin
+    nr, nℓ = 20, 10
+    operators = RossbyWaveSpectrum.radial_operators(nr, nℓ)
+    msg = "Invalid rotation profile :unknown"
+    @test_throws msg RossbyWaveSpectrum.radial_differential_rotation_profile_derivatives_grid(;
+            operators, rotation_profile=:unknown)
+    @test_throws msg RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_grid(;
+            operators, rotation_profile=:unknown)
+    @test_throws msg RossbyWaveSpectrum._differential_rotation_matrix!(zeros(0,0), 1, rotation_profile=:unknown)
 end
 
 @testset "constant differential rotation solution" begin
