@@ -687,7 +687,7 @@ end
     @testset "compare with constant" begin
         ΔΩ_frac = 0.01
         ΔΩprofile_deriv = @inferred RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
-            operators, rotation_profile = :constant, smoothing_param=1e-3, ΔΩ_frac);
+            operators, rotation_profile = :solar_constant, smoothing_param=1e-3, ΔΩ_frac);
         (; ΔΩ, dr_ΔΩ, d2r_ΔΩ) = ΔΩprofile_deriv;
 
         ωΩ_deriv = @inferred RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
@@ -737,7 +737,7 @@ end
     end
     @testset "compare with radial" begin
         ΔΩprofile_deriv = @inferred RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(;
-            operators, rotation_profile = :radial_equator, smoothing_param=1e-4);
+            operators, rotation_profile = :solar_radial_equator, smoothing_param=1e-4);
         (; ΔΩ, dr_ΔΩ, d2r_ΔΩ) = ΔΩprofile_deriv;
 
         ωΩ_deriv = @inferred RossbyWaveSpectrum.solar_differential_rotation_vorticity_Fun(;
