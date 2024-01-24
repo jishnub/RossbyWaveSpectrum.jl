@@ -175,13 +175,13 @@ function updaterotatationprofile(d::RotMatrix; operators, timer = TimerOutput(),
         ωΩ_deriv = @timeit timer "vorticity" begin nothing end
     elseif startswith(String(d.kw.rotation_profile), "radial")
         ΔΩprofile_deriv = @timeit timer "velocity" begin
-            rotation_profile = rotationtag(d.kw.rotation_profile)
+            rotation_profile = d.kw.rotation_profile
             radial_differential_rotation_profile_derivatives_Fun(;
                 operators, rotation_profile, kw...)
         end
         ωΩ_deriv = @timeit timer "vorticity" begin nothing end
     elseif startswith(String(d.kw.rotation_profile), "solar")
-        rotation_profile = rotationtag(d.kw.rotation_profile)
+        rotation_profile = d.kw.rotation_profile
         ΔΩprofile_deriv = @timeit timer "velocity" begin
             solar_differential_rotation_profile_derivatives_Fun(;
                 operators, rotation_profile, kw...)
@@ -982,7 +982,7 @@ function equatorial_rotation_profile_and_derivative_grid(; squished = false, ope
 end
 
 function radial_differential_rotation_profile_derivatives_grid(;
-            operators, rotation_profile = :solar_equator, ΔΩ_frac = 0.01,
+            operators, rotation_profile = :radial_solar_equator, ΔΩ_frac = 0.01,
             ΔΩ_scale = 1.0,
             kw...)
 
@@ -990,49 +990,49 @@ function radial_differential_rotation_profile_derivatives_grid(;
     @unpack r_out, nr, r_in = operators.radial_params
     @unpack Ω0 = operators.constants
 
-    if rotation_profile == :solar_equator
+    if rotation_profile == :radial_solar_equator
         ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r =
             equatorial_rotation_profile_and_derivative_grid(; operators, kw...)
-    elseif rotation_profile == :solar_equator_squished
+    elseif rotation_profile == :radial_solar_equator_squished
         ΔΩ_r, ddrΔΩ_r, d2dr2ΔΩ_r =
             equatorial_rotation_profile_and_derivative_grid(; squished = true, operators, kw...)
-    elseif rotation_profile == :linear # for testing
+    elseif rotation_profile == :radial_linear # for testing
         f = ΔΩ_frac / (r_in / Rsun - 1)
         ΔΩ_r = @. Ω0 * f * (rpts / Rsun - 1)
         ddrΔΩ_r = fill(Ω0 * f / Rsun, nr)
         d2dr2ΔΩ_r = zero(ΔΩ_r)
-    elseif rotation_profile == :constant # for testing
+    elseif rotation_profile == :radial_constant # for testing
         ΔΩ_r = fill(ΔΩ_frac * Ω0, nr)
         ddrΔΩ_r = zero(ΔΩ_r)
         d2dr2ΔΩ_r = zero(ΔΩ_r)
-    elseif rotation_profile == :core
-        pre = (Ω0*ΔΩ_frac)*5
-        σr = 0.08Rsun
-        r0 = 0.6Rsun
-        ΔΩ_r = @. pre * (1 - tanh((rpts - r0)/σr))
-        ddrΔΩ_r = @. pre * (-sech((rpts - r0)/σr)^2 * 1/σr)
-        d2dr2ΔΩ_r = @. pre * (2sech((rpts - r0)/σr)^2 * tanh((rpts - r0)/σr) * 1/σr^2)
-    elseif rotation_profile == :solar_equator_core
-        ΔΩ_r_sun, = equatorial_radial_rotation_profile(; operators, kw...)
-        σr = 0.08Rsun
-        r0 = 0.6Rsun
-        ΔΩ_r_core = maximum(abs, ΔΩ_r_sun)/5 * @. (1 - tanh((rpts - r0)/σr))/2
-        r_cutoff = 0.4Rsun
-        Δr_cutoff = 0.1Rsun
-        r_in_inds = rpts .<= (r_cutoff-Δr_cutoff)
-        r_out_inds = rpts .>= (r_cutoff+Δr_cutoff)
-        r_in = rpts[r_in_inds]
-        r_out = rpts[r_out_inds]
-        perminds_in = sortperm(r_in)
-        perminds_out = sortperm(r_out)
-        r_new = [r_in[perminds_in]; r_out[perminds_out]]
-        ΔΩ_r_new = [ΔΩ_r_core[r_in_inds][perminds_in]; ΔΩ_r_sun[r_out_inds][perminds_out]]
-        ΔΩ_spl = smoothed_spline(r_new, ΔΩ_r_new; s = get(kw, :smoothing_param, 1e-4))
-        ΔΩ_r = ΔΩ_spl(rpts)
-        ddrΔΩ_r = derivative.((ΔΩ_spl,), rpts)
-        d2dr2ΔΩ_r = derivative.((ΔΩ_spl,), rpts, nu=2)
+    # elseif rotation_profile == :radial_core
+    #     pre = (Ω0*ΔΩ_frac)*5
+    #     σr = 0.08Rsun
+    #     r0 = 0.6Rsun
+    #     ΔΩ_r = @. pre * (1 - tanh((rpts - r0)/σr))
+    #     ddrΔΩ_r = @. pre * (-sech((rpts - r0)/σr)^2 * 1/σr)
+    #     d2dr2ΔΩ_r = @. pre * (2sech((rpts - r0)/σr)^2 * tanh((rpts - r0)/σr) * 1/σr^2)
+    # elseif rotation_profile == :radial_solar_equator_core
+    #     ΔΩ_r_sun, = equatorial_radial_rotation_profile(; operators, kw...)
+    #     σr = 0.08Rsun
+    #     r0 = 0.6Rsun
+    #     ΔΩ_r_core = maximum(abs, ΔΩ_r_sun)/5 * @. (1 - tanh((rpts - r0)/σr))/2
+    #     r_cutoff = 0.4Rsun
+    #     Δr_cutoff = 0.1Rsun
+    #     r_in_inds = rpts .<= (r_cutoff-Δr_cutoff)
+    #     r_out_inds = rpts .>= (r_cutoff+Δr_cutoff)
+    #     r_in = rpts[r_in_inds]
+    #     r_out = rpts[r_out_inds]
+    #     perminds_in = sortperm(r_in)
+    #     perminds_out = sortperm(r_out)
+    #     r_new = [r_in[perminds_in]; r_out[perminds_out]]
+    #     ΔΩ_r_new = [ΔΩ_r_core[r_in_inds][perminds_in]; ΔΩ_r_sun[r_out_inds][perminds_out]]
+    #     ΔΩ_spl = smoothed_spline(r_new, ΔΩ_r_new; s = get(kw, :smoothing_param, 1e-4))
+    #     ΔΩ_r = ΔΩ_spl(rpts)
+    #     ddrΔΩ_r = derivative.((ΔΩ_spl,), rpts)
+    #     d2dr2ΔΩ_r = derivative.((ΔΩ_spl,), rpts, nu=2)
     else
-        error("$rotation_profile is not a valid rotation model")
+        throw_unknown_rotation(rotation_profile)
     end
     ΔΩ_r .*= ΔΩ_scale/Ω0;
     ddrΔΩ_r .*= ΔΩ_scale/Ω0;
@@ -1085,19 +1085,19 @@ may be specified for testing the code.
 # Keyword arguments
 * `operators`: obtained as the output of `radial_operators`
 * `rotation_profile`: the flag that chooses the model of the rotation profile. Possible options are:
-  * `:latrad`: Smoothed solar rotation profile, limited to the radial domain
-  * `:latrad_squished`: Same as `latrad`, except the solar surface is projected to the outer boundary of the radial domain.
-  * `:radial_equator`: smoothed radial profile of the solar equatorial rotation rate, but limited to the radial domain.
+  * `:solar_latrad`: Smoothed solar rotation profile, limited to the radial domain
+  * `:solar_latrad_squished`: Same as `latrad`, except the solar surface is projected to the outer boundary of the radial domain.
+  * `:solar_radial_equator`: smoothed radial profile of the solar equatorial rotation rate, but limited to the radial domain.
     This corresponds to the radial profile of the `latrad` model at the equator.
-  * `:radial_equator_squished`: same profile as `radial_equator`, except that the solar surface is projected onto
+  * `:solar_radial_equator_squished`: same profile as `radial_equator`, except that the solar surface is projected onto
     the outer boundary of the radial domain. This corresponds to the radial profile of the `latrad_squished` model
     at the equator.
-  * `:constant`: background medium rotates like a solid body, at a rate `Ω` that differs from the tracking rate `Ω0`
-* `ΔΩ_frac`: In case `rotation_profile == :constant`, the factor by which the tracking rate `Ω0` is increased
+  * `:solar_constant`: background medium rotates like a solid body, at a rate `Ω` that differs from the tracking rate `Ω0`
+* `ΔΩ_frac`: In case `rotation_profile == :solar_constant`, the factor by which the tracking rate `Ω0` is increased
     to obtain the rotation rate of the background medium.
 """
 function solar_differential_rotation_profile_derivatives_grid(;
-        operators, rotation_profile = :latrad, ΔΩ_frac = 0.01,
+        operators, rotation_profile = :solar_latrad, ΔΩ_frac = 0.01,
         ΔΩ_scale = 1.0,
         kw...)
 
@@ -1106,33 +1106,33 @@ function solar_differential_rotation_profile_derivatives_grid(;
     θpts = points(ChebyshevInterval(), nℓ)
     nθ = length(θpts)
 
-    if rotation_profile == :constant
+    if rotation_profile == :solar_constant
         ΔΩ = fill(Ω0 * ΔΩ_frac, nr, nθ)
         dr_ΔΩ, d2r_ΔΩ = (zeros(nr, nθ) for i in 1:2)
-    elseif rotation_profile ∈ (:radial_equator, :radial_equator_squished)
+    elseif rotation_profile ∈ (:solar_radial_equator, :solar_radial_equator_squished)
         ΔΩ_r_, ddrΔΩ_r_, d2dr2ΔΩ_r_ = radial_differential_rotation_profile_derivatives_grid(;
-            operators, rotation_profile = :solar_equator,
-            squished = rotation_profile == :radial_equator_squished, kw...)
+            operators, rotation_profile = :radial_solar_equator,
+            squished = rotation_profile == :solar_radial_equator_squished, kw...)
         for x in (ΔΩ_r_, ddrΔΩ_r_, d2dr2ΔΩ_r_)
             x .*= Ω0
         end
         ΔΩ = repeat(ΔΩ_r_, 1, nℓ)
         dr_ΔΩ = repeat(ddrΔΩ_r_, 1, nℓ)
         d2r_ΔΩ = repeat(d2dr2ΔΩ_r_, 1, nℓ)
-    elseif rotation_profile ∈ (:surface, :surface_squished)
+    elseif rotation_profile ∈ (:solar_surface, :solar_surface_squished)
         ΔΩ_θ =
             solar_surface_rotation_profile_and_derivative_grid(; operators,
-                squished = rotation_profile == :surface_squished,
+                squished = rotation_profile == :solar_surface_squished,
                 kw...)
         ΔΩ = repeat(ΔΩ_θ, nr, 1)
         dr_ΔΩ, d2r_ΔΩ = (zeros(nr, nθ) for i in 1:2)
-    elseif rotation_profile ∈ (:latrad, :latrad_squished)
+    elseif rotation_profile ∈ (:solar_latrad, :solar_latrad_squished)
         ΔΩ, dr_ΔΩ, d2r_ΔΩ =
             solar_rotation_profile_and_derivative_grid(; operators,
-                squished = rotation_profile == :latrad_squished,
+                squished = rotation_profile == :solar_latrad_squished,
                 kw...)
     else
-        error("$rotation_profile is not a valid rotation model")
+        throw_unknown_rotation(rotation_profile)
     end
     for v in (ΔΩ, dr_ΔΩ, d2r_ΔΩ)
         v .*= ΔΩ_scale/Ω0
@@ -1549,7 +1549,7 @@ function constant_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
 end
 
 function radial_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
-        operators, rotation_profile = :solar_equator,
+        operators, rotation_profile = :radial_solar_equator,
         ΔΩ_frac = 0.01, # only used to test the constant case
         ΔΩ_scale = 1.0,
         ΔΩprofile_deriv = radial_differential_rotation_profile_derivatives_Fun(;
@@ -1679,10 +1679,14 @@ function Base.show(io::IO, O::OpVector)
     print(io, ")")
 end
 
+"""
+    solar_differential_rotation_profile_derivatives_Fun(Feig::FilteredEigen; kw...)
+
+Return the profile of background rotation that was used to compute the spectrum contained in `Feig`.
+Additional keyword arguments `kw` may be supplied to override the ones in `Feig`.
+"""
 function solar_differential_rotation_profile_derivatives_Fun(Feig::FilteredEigen; kw...)
-    rotation_profile = rotationtag(Feig.kw[:rotation_profile])
-    solar_differential_rotation_profile_derivatives_Fun(; Feig.operators,
-        Feig.kw..., rotation_profile, kw...)
+    solar_differential_rotation_profile_derivatives_Fun(; Feig.operators, Feig.kw..., kw...)
 end
 
 """
@@ -1755,6 +1759,13 @@ function solar_differential_rotation_vorticity_Fun(; operators, ΔΩprofile_deri
     (; raw, coriolis)
 end
 
+"""
+    solar_differential_rotation_vorticity_Fun(Feig::FilteredEigen; kw...)
+
+Return the profile of vorticity associated with background rotation that was used
+to compute the spectrum contained in `Feig`.
+Additional keyword arguments in `kw` may be used to override the ones in `Feig`.
+"""
 function solar_differential_rotation_vorticity_Fun(Feig::FilteredEigen; kw...)
     ΔΩprofile_deriv = solar_differential_rotation_profile_derivatives_Fun(Feig; kw...)
     solar_differential_rotation_vorticity_Fun(; Feig.operators, ΔΩprofile_deriv)
@@ -1905,28 +1916,18 @@ function solar_differential_rotation_terms!(M::StructMatrix{<:Complex}, m;
     return M
 end
 
-function rotationtag(rotation_profile)
-    rstr = String(rotation_profile)
-    if startswith(rstr, "radial")
-        return Symbol(split(rstr, "radial_")[2])
-    elseif startswith(rstr, "solar")
-        return Symbol(split(rstr, "solar_")[2])
-    else
-        return Symbol(rotation_profile)
-    end
-end
+throw_unknown_rotation(rotation_profile) = throw(ArgumentError("Invalid rotation profile $(repr(rotation_profile))"))
 
 function _differential_rotation_matrix!(M, m; rotation_profile, kw...)
     rstr = String(rotation_profile)
-    tag = rotationtag(rotation_profile)
     if startswith(rstr, "radial")
-        radial_differential_rotation_terms!(M, m; rotation_profile = tag, kw...)
+        radial_differential_rotation_terms!(M, m; rotation_profile, kw...)
     elseif startswith(rstr, "solar")
-        solar_differential_rotation_terms!(M, m; rotation_profile = tag, kw...)
+        solar_differential_rotation_terms!(M, m; rotation_profile, kw...)
     elseif Symbol(rotation_profile) == :constant
         constant_differential_rotation_terms!(M, m; kw...)
     else
-        throw(ArgumentError("Invalid rotation profile"))
+        throw_unknown_rotation(rotation_profile)
     end
     return M
 end
