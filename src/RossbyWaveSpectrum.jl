@@ -1217,6 +1217,16 @@ function solar_differential_rotation_profile_derivatives_Fun(; operators, kw...)
     (; ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ)
 end
 
+"""
+    solar_differential_rotation_profile_derivatives_Fun(Feig::FilteredEigen; kw...)
+
+Return the profile of background rotation that was used to compute the spectrum contained in `Feig`.
+Additional keyword arguments `kw` may be supplied to override the ones in `Feig`.
+"""
+function solar_differential_rotation_profile_derivatives_Fun(Feig::FilteredEigen; kw...)
+    solar_differential_rotation_profile_derivatives_Fun(; Feig.operators, Feig.kw..., kw...)
+end
+
 ℓrange(m, nℓ, symmetric) = range(m + !symmetric, length = nℓ, step = 2)
 
 """
@@ -1677,16 +1687,6 @@ function Base.show(io::IO, O::OpVector)
     print(io, ", iW = ")
     show(io, O.iW)
     print(io, ")")
-end
-
-"""
-    solar_differential_rotation_profile_derivatives_Fun(Feig::FilteredEigen; kw...)
-
-Return the profile of background rotation that was used to compute the spectrum contained in `Feig`.
-Additional keyword arguments `kw` may be supplied to override the ones in `Feig`.
-"""
-function solar_differential_rotation_profile_derivatives_Fun(Feig::FilteredEigen; kw...)
-    solar_differential_rotation_profile_derivatives_Fun(; Feig.operators, Feig.kw..., kw...)
 end
 
 """
