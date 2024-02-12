@@ -156,6 +156,8 @@ end
     @testset "diffrot" begin
         rotation_profile = :solar_constant
         kw = Dict{Symbol,Any}(:rotation_profile=>rotation_profile, :V_symmetric=>V_symmetric)
+        lams = [rand(ComplexF64, nsols) for i in axes(mr,1)]
+        vs = [StructArray{ComplexF64}((rand(ncoeffs,nsols),rand(ncoeffs,nsols))) for i in axes(mr,1)]
         Feig = FilteredEigen(lams, vs, mr, kw, operators)
         ΔΩ, dr_ΔΩ, d2r_ΔΩ, dz_ΔΩ = RossbyWaveSpectrum.solar_differential_rotation_profile_derivatives_Fun(Feig)
         @test ncoefficients(ΔΩ) == 1
