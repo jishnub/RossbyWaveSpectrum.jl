@@ -3,7 +3,7 @@
 A Julia code to compute the spectrum of inertial waves in the Sun.
 
 # Installation
-To install the code, run `./INSTALL.sh`. This requires `bash` and `curl` to run, and will download and install `julia` using the installer `juliaup`. It will also install the requisite project dependencies. The project uses Julia v1.10.0, which may be installed independently as well, in which case one only needs to instantiate the environments as listed in `INSTALL.sh`.
+To install the code, run `./INSTALL.sh`. This requires `bash` and `curl` to run, and will download and install `julia` using the installer `juliaup`. It will also install the requisite project dependencies. The project uses Julia v1.10.1, which may be installed independently as well, in which case one only needs to instantiate the environments as listed in `INSTALL.sh`.
 
 A part of installation process requires `matplotlib` to be available. If one is using an anaconda distribution located in their user directory, they may need to export `PYTHON=<path to python>` before running `INSTALL.sh`. So, for example, one may run
 ```
@@ -29,7 +29,7 @@ if e.g. the login node has `skylake-avx512` and the compute node has `icelake-se
 Typically the code is run multi-threaded, so one needs to specify the number of threads while launching Julia.
 As an example, if we want to use `5` Julia threads, this may be done as
 ```
-julia +1.10.0 --project=. --startup-file=no -t 5
+julia +1.10.1 --project=. --startup-file=no -t 5
 ```
 The flag `--project` should point to the path to the code.
 The example above assumes that you are in the top-level code directory (`RossbyWaveSpectrum.jl`).

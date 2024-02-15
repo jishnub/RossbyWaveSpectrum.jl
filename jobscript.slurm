@@ -18,4 +18,4 @@ project="$HOME/RossbyWaveSpectrum.jl" # set this path to wherever the code is lo
 export MKL_DYNAMIC="FALSE"
 export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
-srun time $juliapath +1.10.0 --project=$project --startup-file=no -t 5 $project/jobscript.jl
+srun time $juliapath +1.10.1 --project=$project --startup-file=no -t 5 $project/jobscript.jl
