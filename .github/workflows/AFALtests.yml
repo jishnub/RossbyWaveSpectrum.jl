@@ -1,4 +1,4 @@
-name: CI
+name: AFALTests
 
 concurrency:
   group: build-${{ github.event.pull_request.number || github.ref }}-${{ github.workflow }}
@@ -10,26 +10,16 @@ on:
       - master
     paths:
       - 'ApproxFunAssociatedLegendre/**'
-      - 'src/**'
-      - 'tests/**'
-      - 'Project.toml'
-      - 'Manifest.toml'
-      - 'compute_rossby_spectrum.jl'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/AFALtests.yml'
     tags: '*'
   pull_request:
     paths:
       - 'ApproxFunAssociatedLegendre/**'
-      - 'src/**'
-      - 'tests/**'
-      - 'Project.toml'
-      - 'Manifest.toml'
-      - 'compute_rossby_spectrum.jl'
-      - '.github/workflows/ci.yml'
+      - '.github/workflows/AFALtests.yml'
 
 jobs:
-  test:
-    name: RossbyWaveSpectrum - ${{ github.event_name }}
+  ApproxFunAssociatedLegendre:
+    name: ApproxFunAssociatedLegendre - ${{ github.event_name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -57,7 +47,11 @@ jobs:
             ${{ runner.os }}-test-
             ${{ runner.os }}-
       - uses: julia-actions/julia-buildpkg@v1
+        with:
+          project: ApproxFunAssociatedLegendre
       - uses: julia-actions/julia-runtest@v1
+        with:
+          project: ApproxFunAssociatedLegendre
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v4
         with:

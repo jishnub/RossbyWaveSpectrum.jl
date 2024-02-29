@@ -4,15 +4,21 @@ on:
     branches:
       - master
     tags: '*'
-    paths-ignore:
-      - 'LICENSE.md'
-      - 'README.md'
-      - '.github/workflows/TagBot.yml'
+    paths:
+      - 'ApproxFunAssociatedLegendre/**'
+      - 'src/**'
+      - 'docs/**'
+      - 'Project.toml'
+      - 'Manifest.toml'
+      - '.github/workflows/docs.yml'
   pull_request:
-    paths-ignore:
-      - 'LICENSE.md'
-      - 'README.md'
-      - '.github/workflows/TagBot.yml'
+    paths:
+      - 'ApproxFunAssociatedLegendre/**'
+      - 'src/**'
+      - 'docs/**'
+      - 'Project.toml'
+      - 'Manifest.toml'
+      - '.github/workflows/docs.yml'
 
 jobs:
   docs:
