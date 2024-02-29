@@ -1,4 +1,4 @@
-name: CI
+name: Install
 
 concurrency:
   group: build-${{ github.event.pull_request.number || github.ref }}-${{ github.workflow }}
