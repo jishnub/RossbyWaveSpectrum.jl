@@ -8,18 +8,28 @@ on:
   push:
     branches:
       - master
-    paths-ignore:
-      - 'LICENSE'
-      - 'README.md'
-      - 'CITATION.bib'
-      - '.github/workflows/TagBot.yml'
+    paths:
+      - 'ApproxFunAssociatedLegendre/**'
+      - 'src/**'
+      - 'RossbyPlots/**'
+      - 'Project.toml'
+      - 'Manifest.toml'
+      - 'INSTALL.sh'
+      - 'installjulia.sh'
+      - 'juliaversion'
+      - '.github/workflows/install.yml'
     tags: '*'
   pull_request:
-    paths-ignore:
-      - 'LICENSE'
-      - 'README.md'
-      - 'CITATION.bib'
-      - '.github/workflows/TagBot.yml'
+    paths:
+      - 'ApproxFunAssociatedLegendre/**'
+      - 'src/**'
+      - 'RossbyPlots/**'
+      - 'Project.toml'
+      - 'Manifest.toml'
+      - 'INSTALL.sh'
+      - 'installjulia.sh'
+      - 'juliaversion'
+      - '.github/workflows/install.yml'
 
 jobs:
   install:
@@ -29,4 +39,6 @@ jobs:
         uses: actions/checkout@v4
       - name: Install the project
         run: ./INSTALL.sh
+      - name: Install for a different julia version
+        run: ./INSTALL.sh 1.10.0
 
