@@ -11,8 +11,13 @@ cd $PBS_O_WORKDIR
 juliapath="$HOME/.juliaup/bin/julia"
 module purge
 project="$HOME/RossbyWaveSpectrum.jl" # set this path to wherever the code is located
+if [ -f "$project/juliaversioninstalled" ]; then
+	source "$project/juliaversioninstalled"
+else
+	source "$project/juliaversion"
+fi
 export SCRATCH="" # set this to the desired top-level output directory (output saved to $SCRATCH/RossbyWaves)
 export MKL_DYNAMIC=false
 export MKL_NUM_THREADS=1
 
-time $juliapath +1.10.1 --project=$project --startup-file=no -t 5 $project/jobscript.jl
+time $juliapath +$RossbyWaveJuliaVersion --project=$project --startup-file=no -t 5 $project/jobscript.jl

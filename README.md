@@ -12,6 +12,8 @@ A Julia code to compute the spectrum of solar inertial waves, including realisti
 # Installation
 To install the code, run `./INSTALL.sh`. This requires `bash` and `curl` to run, and will download and install `julia` using the installer `juliaup`. It will also install the requisite project dependencies. The project uses Julia v1.10.1, which may be installed independently as well, in which case one only needs to instantiate the environments as listed in `INSTALL.sh`.
 
+One may install the code for a specific Julia version using `./INSTALL.sh version`, e.g. for julia version `1.10.0` as `./INSTALL.sh 1.10.0`. This will instantiate the environments accordingly, and will also set up the jobscripts to use the specified version of Julia.
+
 Users running the code on a heterogeneous cluster (where the login and compute nodes have different CPU architectures) may want to set the environment variable `JULIA_CPU_TARGET` appropriately in their shell rc file. One may check the CPU architecture by running
 ```julia
 julia> Sys.CPU_NAME

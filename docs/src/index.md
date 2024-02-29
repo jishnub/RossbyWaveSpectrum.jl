@@ -5,6 +5,8 @@ A Julia code to compute the spectrum of inertial waves in the Sun.
 # Installation
 To install the code, run `./INSTALL.sh`. This requires `bash` and `curl` to run, and will download and install `julia` using the installer `juliaup`. It will also install the requisite project dependencies. The project uses Julia v1.10.1, which may be installed independently as well, in which case one only needs to instantiate the environments as listed in `INSTALL.sh`.
 
+One may install the code for a specific Julia version using `./INSTALL.sh version`, e.g. for julia version `1.10.0` as `./INSTALL.sh 1.10.0`. This will instantiate the environments accordingly, and will also set up the jobscripts to use the specified version of Julia.
+
 A part of installation process requires `matplotlib` to be available. If one is using an anaconda distribution located in their user directory, they may need to export `PYTHON=<path to python>` before running `INSTALL.sh`. So, for example, one may run
 ```
 PYTHON=$HOME/anaconda3/bin/python ./INSTALL.sh
