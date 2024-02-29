@@ -669,9 +669,10 @@ function radial_operators(operatorparams...)
     γ = 1.64
     Cp = 1.7e8
 
-    # ddr_S0_by_Cp = γ/Cp * δ * ηρ;
+    # typo in the paper, where entropy is in the units of Cp already
+    # ddr_S0_by_Cp = γ * δ * ηρ;
     ddr_S0_by_Cp = chop!(
-        Fun(x -> γ / Cp * superadiabaticity(x; superadiabaticityparams...) * ηρ(x),
+        Fun(x -> γ * superadiabaticity(x; superadiabaticityparams...) * ηρ(x),
             radialspace), 1e-3);
     @checkncoeff ddr_S0_by_Cp nr
 
