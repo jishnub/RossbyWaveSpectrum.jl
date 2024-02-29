@@ -491,7 +491,7 @@ Base.show(io::IO, o::OperatorWrap) = print(io, "Operators")
 Base.getproperty(y::OperatorWrap, name::Symbol) = getproperty(getfield(y, :x), name)
 Base.propertynames(y::OperatorWrap) = Base.propertynames(getfield(y, :x))
 
-const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e1, Weqglobalscaling = 1e-4, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
+const DefaultScalings = (; Wscaling = 1, Sscaling = 1, Weqglobalscaling = 1e-4, Seqglobalscaling = 1, trackingratescaling = 1)
 """
     radial_operators(nr, nℓ;
         r_in_frac = 0.6,
