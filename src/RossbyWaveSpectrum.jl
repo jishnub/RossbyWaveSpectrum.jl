@@ -491,7 +491,7 @@ Base.show(io::IO, o::OperatorWrap) = print(io, "Operators")
 Base.getproperty(y::OperatorWrap, name::Symbol) = getproperty(getfield(y, :x), name)
 Base.propertynames(y::OperatorWrap) = Base.propertynames(getfield(y, :x))
 
-const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e3, Weqglobalscaling = 1e-4, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
+const DefaultScalings = (; Wscaling = 1e1, Sscaling = 1e1, Weqglobalscaling = 1e-4, Seqglobalscaling = 1.0, trackingratescaling = 1.0)
 """
     radial_operators(nr, nℓ;
         r_in_frac = 0.6,
@@ -667,10 +667,10 @@ function radial_operators(operatorparams...)
 
     # δ = Fun(r -> superadiabaticity(r; superadiabaticityparams...), radialspace);
     γ = 1.64
-    Cp = 1.7e8
+    # Cp = 1.7e8
 
     # typo in the paper, where entropy is in the units of Cp already
-    # ddr_S0_by_Cp = γ * δ * ηρ;
+    # ddr_S0_by_Cp = -γ * δ/Hρ =  γ * δ * ηρ;
     ddr_S0_by_Cp = chop!(
         Fun(x -> γ * superadiabaticity(x; superadiabaticityparams...) * ηρ(x),
             radialspace), 1e-3);
