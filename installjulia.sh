@@ -1,5 +1,7 @@
-juliaup add 1.10.1
-julia +1.10.1 -e \
+source ./juliaversion
+juliaversion=${1:-$RossbyWaveJuliaVersion}
+juliaup add $juliaversion
+julia +$juliaversion -e \
 'import Pkg;
 Pkg.activate("ApproxFunAssociatedLegendre"); Pkg.instantiate();
 Pkg.activate("."); Pkg.instantiate();

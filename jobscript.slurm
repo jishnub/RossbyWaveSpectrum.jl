@@ -15,7 +15,12 @@ echo "############"
 juliapath="$HOME/.juliaup/bin/julia"
 module purge
 project="$HOME/RossbyWaveSpectrum.jl" # set this path to wherever the code is located
+if [ -f "$project/juliaversioninstalled" ]; then
+	source "$project/juliaversioninstalled"
+else
+	source "$project/juliaversion"
+fi
 export MKL_DYNAMIC="FALSE"
 export MKL_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
-srun time $juliapath +1.10.1 --project=$project --startup-file=no -t 5 $project/jobscript.jl
+srun time $juliapath +$RossbyWaveJuliaVersion --project=$project --startup-file=no -t 5 $project/jobscript.jl
