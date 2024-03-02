@@ -40,31 +40,43 @@ jobs:
       - name: Install the project
         run: |
           ./INSTALL.sh
+          cat juliaversioninstalled
           if [ "$(cat juliaversioninstalled)" != "RossbyWaveJuliaVersion=1.10.2" ]; then exit 1; fi
-          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.2"' ]; then exit 1; fi
+          grep julia_version Manifest.toml
+          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.2"' ]; then exit 2; fi
       - name: Install for a different julia version
         run: |
           ./INSTALL.sh -v 1.10.0
+          cat juliaversioninstalled
           if [ "$(cat juliaversioninstalled)" != "RossbyWaveJuliaVersion=1.10.0" ]; then exit 1; fi
-          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.2"' ]; then exit 1; fi
+          grep julia_version Manifest.toml
+          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.2"' ]; then exit 2; fi
       - name: Install and resolve for a different julia version
         run: |
           ./INSTALL.sh -v 1.10.0 -r
+          cat juliaversioninstalled
           if [ "$(cat juliaversioninstalled)" != "RossbyWaveJuliaVersion=1.10.0" ]; then exit 1; fi
-          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.0"' ]; then exit 1; fi
+          grep julia_version Manifest.toml
+          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.0"' ]; then exit 2; fi
       - name: Reinstall the project
         run: |
           ./INSTALL.sh -r
+          cat juliaversioninstalled
           if [ "$(cat juliaversioninstalled)" != "RossbyWaveJuliaVersion=1.10.2" ]; then exit 1; fi
-          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.2"' ]; then exit 1; fi
+          grep julia_version Manifest.toml
+          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.2"' ]; then exit 2; fi
       - name: Install for a different julia version (positional)
         run: |
           ./INSTALL.sh 1.10.0
+          cat juliaversioninstalled
           if [ "$(cat juliaversioninstalled)" != "RossbyWaveJuliaVersion=1.10.0" ]; then exit 1; fi
-          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.2"' ]; then exit 1; fi
+          grep julia_version Manifest.toml
+          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.2"' ]; then exit 2; fi
       - name: Install and resolve for a different julia version (positional)
         run: |
           ./INSTALL.sh 1.10.0 -r
+          cat juliaversioninstalled
           if [ "$(cat juliaversioninstalled)" != "RossbyWaveJuliaVersion=1.10.0" ]; then exit 1; fi
-          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.0"' ]; then exit 1; fi
+          grep julia_version Manifest.toml
+          if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.0"' ]; then exit 2; fi
 
