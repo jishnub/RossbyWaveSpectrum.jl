@@ -3,9 +3,9 @@
 A Julia code to compute the spectrum of inertial waves in the Sun.
 
 # Installation
-To install the code, run `./INSTALL.sh`. This requires `bash` and `curl` to run, and will download and install `julia` using the installer `juliaup`. It will also install the requisite project dependencies. The project uses Julia v1.10.1, which may be installed independently as well, in which case one only needs to instantiate the environments as listed in `INSTALL.sh`.
+To install the code, run `./INSTALL.sh`. This requires `bash` and `curl` to run, and will download and install `julia` using the installer `juliaup`. It will also install the requisite project dependencies. The project uses Julia v1.10.2, which may be installed independently as well, in which case one only needs to instantiate the environments as listed in `installjulia.sh`.
 
-One may install the code for a specific Julia version using `./INSTALL.sh version`, e.g. for julia version `1.10.0` as `./INSTALL.sh 1.10.0`. This will instantiate the environments accordingly, and will also set up the jobscripts to use the specified version of Julia.
+You may install the code for a specific Julia version using `./INSTALL.sh -v version`, e.g. for julia version `1.10.0` as `./INSTALL.sh -v 1.10.0`. This will instantiate the environments accordingly, and will also set up the jobscripts to use the specified version of Julia. If you also wish to resolve the environments (i.e. fetch those dependencies that are compatible with the specified Julia version), then you may pass the flag `-r` to `INSTALL.sh`. This may be necessary if the dependnecy versions that were used while developing the project are incompatible with the julia version that is to be installed. Note that changing the dependency versions may lead to bugs or to the results being non-replicable (although this should usually not be the case).
 
 A part of installation process requires `matplotlib` to be available. If one is using an anaconda distribution located in their user directory, they may need to export `PYTHON=<path to python>` before running `INSTALL.sh`. So, for example, one may run
 ```
@@ -31,7 +31,7 @@ if e.g. the login node has `skylake-avx512` and the compute node has `icelake-se
 Typically the code is run multi-threaded, so one needs to specify the number of threads while launching Julia.
 As an example, if we want to use `5` Julia threads, this may be done as
 ```
-julia +1.10.1 --project=. --startup-file=no -t 5
+julia +1.10.2 --project=. --startup-file=no -t 5
 ```
 The flag `--project` should point to the path to the code.
 The example above assumes that you are in the top-level code directory (`RossbyWaveSpectrum.jl`).
