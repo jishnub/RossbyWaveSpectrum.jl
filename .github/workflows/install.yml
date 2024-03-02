@@ -74,7 +74,7 @@ jobs:
           if [ "$(grep julia_version Manifest.toml)" != 'julia_version = "1.10.2"' ]; then exit 2; fi
       - name: Install and resolve for a different julia version (positional)
         run: |
-          ./INSTALL.sh 1.10.0 -r
+          ./INSTALL.sh -r 1.10.0
           cat juliaversioninstalled
           if [ "$(cat juliaversioninstalled)" != "RossbyWaveJuliaVersion=1.10.0" ]; then exit 1; fi
           grep julia_version Manifest.toml
