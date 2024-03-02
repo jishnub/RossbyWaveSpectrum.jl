@@ -1,12 +1,14 @@
 source ./juliaversion
 juliaversion=$RossbyWaveJuliaVersion
 RESOLVE=false
+VERSIONFLAG=false
 while getopts ":rv:" flag; do
     case ${flag} in
         r)
         	RESOLVE=true
             ;;
         v)
+			VERSIONFLAG=true
             juliaversion=$OPTARG
             ;;
         ?)
@@ -15,6 +17,12 @@ while getopts ":rv:" flag; do
             ;;
     esac
 done
+# backward compatibility with version as a positional argument
+if [ $VERSIONFLAG == false ]; then
+	shift $((OPTIND - 1))
+	juliaversion=${1:-$juliaversion}
+fi
+
 juliaup add $juliaversion
 if [ $RESOLVE == true ]; then
 	julia +$juliaversion -e \
