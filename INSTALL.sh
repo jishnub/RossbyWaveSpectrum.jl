@@ -1,7 +1,7 @@
 #! /bin/bash
 set -euo pipefail
 
-RESOLVE=false
+args=$@
 source ./juliaversion
 juliaversion=$RossbyWaveJuliaVersion
 VERSIONFLAG=false
@@ -18,8 +18,9 @@ if [ $VERSIONFLAG == false ]; then
     shift $((OPTIND - 1))
     juliaversion=${1:-$juliaversion}
 fi
+echo "using Julia version $juliaversion"
 curl -fsSL https://install.julialang.org | sh -s -- --yes --default-channel=$juliaversion
-bash --rcfile ~/.bashrc -i ./installjulia.sh $@
+bash --rcfile ~/.bashrc -i ./installjulia.sh $args
 if [ $? == 0 ]; then
 	echo "Installation successful."
 	echo "You may want to either source your shell's rc script, or launch a new interactive shell."

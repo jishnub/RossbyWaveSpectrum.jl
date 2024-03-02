@@ -25,6 +25,7 @@ fi
 
 juliaup add $juliaversion
 if [ $RESOLVE == true ]; then
+	echo "Resolving environments on Julia version $juliaversion"
 	julia +$juliaversion -e \
 	'import Pkg;
 	Pkg.activate("ApproxFunAssociatedLegendre"); Pkg.resolve(); Pkg.instantiate();
